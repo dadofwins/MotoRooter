@@ -40,6 +40,18 @@ def test_a_configured_bucket_is_used_when_not_offline(monkeypatch):
     assert isinstance(create_app(LIVE).state.trip_store, GcsTripStore)
 
 
+def test_real_routing_with_throwaway_trips_starts(monkeypatch):
+    """The local-development shape, and the reason the two flags were split.
+
+    Judging whether a route looks right needs real engines — fake straight-line geometry
+    tells you nothing — but there is no bucket on a laptop.
+    """
+    monkeypatch.setenv("MOTOROOTER_TRIPS_EPHEMERAL", "1")
+    app = create_app(LIVE)
+    assert isinstance(app.state.trip_store, InMemoryTripStore)
+    assert "fake" not in app.state.provider_registry.names()
+
+
 def test_no_bucket_and_not_offline_refuses_to_start():
     """Better a failed deploy than a revision that comes up healthy and loses every trip."""
     with pytest.raises(TripStorageConfigError):

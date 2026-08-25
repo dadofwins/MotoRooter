@@ -97,14 +97,15 @@ def _install_openapi_postprocess(app: FastAPI) -> None:
 
 
 def _storage_settings_for(routing_config: RoutingSettings) -> TripStorageSettings:
-    """Offline means no external services, storage included.
+    """Offline routing implies ephemeral storage; the reverse does not hold.
 
     Reading the bucket out of the ambient environment in offline mode would make the test
     suite depend on the developer's shell, and a stray `MOTOROOTER_TRIPS_BUCKET` would
-    quietly point it at someone's real bucket.
+    quietly point it at someone's real bucket. Ephemeral storage on its own is set through
+    the environment like any other storage setting.
     """
     if routing_config.offline:
-        return TripStorageSettings(offline=True)
+        return TripStorageSettings(ephemeral=True)
     return storage_settings_from_env()
 
 

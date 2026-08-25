@@ -7,6 +7,7 @@ to memory.
 
 import pytest
 
+from motorooter.app import routing_settings_from_env
 from motorooter.trips.errors import TripStorageConfigError
 from motorooter.trips.factory import TripStorageSettings, build_trip_store, settings_from_env
 from motorooter.trips.gcs import (
@@ -19,8 +20,8 @@ from motorooter.trips.gcs import (
 from motorooter.trips.store import GcsTripStore, InMemoryTripStore
 
 
-def test_offline_gives_the_in_memory_store():
-    assert isinstance(build_trip_store(TripStorageSettings(offline=True)), InMemoryTripStore)
+def test_ephemeral_gives_the_in_memory_store():
+    assert isinstance(build_trip_store(TripStorageSettings(ephemeral=True)), InMemoryTripStore)
 
 
 def test_no_bucket_and_not_offline_fails_the_deploy():
@@ -33,8 +34,8 @@ def test_no_bucket_and_not_offline_fails_the_deploy():
         build_trip_store(TripStorageSettings())
 
 
-def test_offline_ignores_a_bucket_that_is_also_configured():
-    store = build_trip_store(TripStorageSettings(bucket="motorooter-trips", offline=True))
+def test_ephemeral_ignores_a_bucket_that_is_also_configured():
+    store = build_trip_store(TripStorageSettings(bucket="motorooter-trips", ephemeral=True))
     assert isinstance(store, InMemoryTripStore)
 
 
@@ -115,9 +116,45 @@ class TestSettingsFromEnv:
         monkeypatch.setenv("MOTOROOTER_TRIPS_BUCKET", "motorooter-trips")
         assert settings_from_env().bucket == "motorooter-trips"
 
-    def test_offline_is_read_from_the_environment(self, monkeypatch):
-        """`MOTOROOTER_OFFLINE=1` must need no credentials and touch no external service."""
+    def test_offline_still_implies_ephemeral_storage(self, monkeypatch):
+        """`MOTOROOTER_OFFLINE=1` means no external services at all, storage included."""
         monkeypatch.setenv("MOTOROOTER_TRIPS_BUCKET", "motorooter-trips")
         monkeypatch.setenv("MOTOROOTER_OFFLINE", "1")
-        assert settings_from_env().offline is True
+        assert settings_from_env().ephemeral is True
         assert isinstance(build_trip_store(settings_from_env()), InMemoryTripStore)
+
+    def test_ephemeral_storage_can_be_opted_into_on_its_own(self, monkeypatch):
+        """Real routing with throwaway trips: the local-development case.
+
+        "I accept fake routing" and "I accept losing my trips" are different decisions, and
+        one flag expressing both meant testing against real roads demanded a bucket that
+        does not exist locally.
+        """
+        monkeypatch.delenv("MOTOROOTER_OFFLINE", raising=False)
+        monkeypatch.setenv("MOTOROOTER_TRIPS_EPHEMERAL", "1")
+        settings = settings_from_env()
+        assert settings.ephemeral is True
+        assert isinstance(build_trip_store(settings), InMemoryTripStore)
+
+    def test_ephemeral_storage_does_not_imply_fake_routing(self, monkeypatch):
+        """The whole point: the two opt-outs are independent."""
+        monkeypatch.delenv("MOTOROOTER_OFFLINE", raising=False)
+        monkeypatch.setenv("MOTOROOTER_TRIPS_EPHEMERAL", "1")
+        assert routing_settings_from_env().offline is False
+
+    def test_neither_opt_out_still_demands_a_bucket(self, monkeypatch):
+        """The finding that stops a Cloud Run deploy coming up healthy and lossy."""
+        monkeypatch.delenv("MOTOROOTER_OFFLINE", raising=False)
+        monkeypatch.delenv("MOTOROOTER_TRIPS_EPHEMERAL", raising=False)
+        monkeypatch.delenv("MOTOROOTER_TRIPS_BUCKET", raising=False)
+        with pytest.raises(TripStorageConfigError, match="MOTOROOTER_TRIPS_BUCKET"):
+            build_trip_store(settings_from_env())
+
+    def test_the_error_names_both_ways_out(self, monkeypatch):
+        """A deploy that hits this needs to know which opt-out it actually wants."""
+        monkeypatch.delenv("MOTOROOTER_OFFLINE", raising=False)
+        monkeypatch.delenv("MOTOROOTER_TRIPS_EPHEMERAL", raising=False)
+        monkeypatch.delenv("MOTOROOTER_TRIPS_BUCKET", raising=False)
+        with pytest.raises(TripStorageConfigError) as caught:
+            build_trip_store(settings_from_env())
+        assert "MOTOROOTER_TRIPS_EPHEMERAL" in str(caught.value)

@@ -9,7 +9,7 @@
  *
  * Everything unknown is preview-only. Not knowing the cadence is not a licence to pick one.
  */
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import type { ApiClient } from '../api/client'
 import type { LegIntent, RoutingCapabilitiesResponse } from '../api/types'
 
@@ -50,15 +50,20 @@ export function useRoutingCapabilities(client: CapabilitiesReader): RoutingCapab
     }
   }, [client])
 
-  return {
-    capabilities,
-    isLoaded: capabilities !== null,
-    error,
-    intervalFor(intent: LegIntent): number | null {
-      // `?? null` collapses three different unknowns — not loaded, failed, intent absent
-      // from the table — into the one safe answer. An interval the API did not authorise is
-      // the only outcome that cannot be allowed.
-      return capabilities?.intents[intent]?.live_update_interval_ms ?? null
-    },
-  }
+  // Memoised because callers key effects and long-lived objects on this. Returning a fresh
+  // object every render is how a DragSession came to be rebuilt mid-gesture, losing the
+  // gesture with it.
+  return useMemo(
+    () => ({
+      capabilities,
+      isLoaded: capabilities !== null,
+      error,
+      intervalFor: (intent: LegIntent): number | null =>
+        // `?? null` collapses three different unknowns — not loaded, failed, intent absent
+        // from the table — into the one safe answer. An interval the API did not authorise
+        // is the only outcome that cannot be allowed.
+        capabilities?.intents[intent]?.live_update_interval_ms ?? null,
+    }),
+    [capabilities, error],
+  )
 }

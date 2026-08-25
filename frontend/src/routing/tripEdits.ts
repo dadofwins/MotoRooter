@@ -129,6 +129,35 @@ export function insertVia(edit: RouteEdit, input: InsertViaInput): RouteEdit {
 }
 
 /**
+ * Bends a line towards the cursor at the point that was grabbed.
+ *
+ * The local half of preview-only. When the API reports `live_update_interval_ms: null` for
+ * an intent — a metered engine saying "route on release, not before" — nothing is requested
+ * during the gesture, and without this the line sits motionless while the rider drags it,
+ * which reads as a broken app rather than a thrifty one.
+ *
+ * Deliberately crude: it moves the nearest vertex and leaves the rest, so it is a rubber
+ * band and not a route. Real geometry replaces it the moment the release lands.
+ */
+export function bendGeometry(
+  geometry: readonly Coordinate[],
+  grabbed: Coordinate,
+  to: Coordinate,
+): readonly Coordinate[] {
+  if (geometry.length < 3) return geometry // only endpoints, and those belong to waypoints
+
+  const position = nearestPointOnPath(geometry, grabbed)
+  if (position === null) return geometry
+
+  // Snap to a vertex, and never an end: the ends are the leg's waypoints, owned by the trip.
+  const vertex = Math.min(
+    Math.max(Math.round(position.segmentIndex + position.t), 1),
+    geometry.length - 2,
+  )
+  return geometry.map((point, index) => (index === vertex ? to : point))
+}
+
+/**
  * Half of the backend's rounding step, which is the largest a rounded value can differ from
  * the original.
  *

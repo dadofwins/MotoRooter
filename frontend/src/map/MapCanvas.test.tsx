@@ -63,6 +63,13 @@ function createFakeMaps({ withMarkerLibrary = true }: { withMarkerLibrary?: bool
     fitBounds(bounds: FakeLatLngBounds): void {
       this.fitted.push(bounds)
     }
+    #zoom = 12
+    getZoom(): number {
+      return this.#zoom
+    }
+    setZoom(zoom: number): void {
+      this.#zoom = zoom
+    }
     setOptions(options: google.maps.MapOptions): void {
       this.applied.push(options)
     }
@@ -347,6 +354,92 @@ describe('MapCanvas dragging the route', () => {
     expect(onMapClick).toHaveBeenCalledWith({ lat: 49, lon: -121 })
   })
 
+  it('treats a press-and-release on the line as a click, not a drag', async () => {
+    // Without a movement threshold, touching the line spends a routing request and pins a
+    // waypoint the rider never asked for — invisible, because the via lands on the line
+    // that is already there.
+    const fake = createFakeMaps()
+    const onLegDrop = vi.fn()
+    const onLegCancel = vi.fn()
+    render(
+      <MapCanvas
+        mapId={MAP_ID}
+        loader={fake.loader}
+        legs={[leg(coords(3))]}
+        onLegGrab={() => true}
+        onLegDrop={onLegDrop}
+        onLegCancel={onLegCancel}
+      />,
+    )
+    await waitFor(() => expect(fake.polylines).toHaveLength(1))
+    const map = fake.maps[0]
+
+    act(() => {
+      fake.polylines[0]?.mouseDown({ lat: 47.01, lon: -120 })
+      map?.mouseUp({ lat: 47.01, lon: -120 }) // same place
+    })
+
+    expect(onLegDrop).not.toHaveBeenCalled()
+    expect(onLegCancel).toHaveBeenCalledTimes(1)
+    expect(map?.draggable).toBe(true) // and the map is usable again
+  })
+
+  it('still treats a small but deliberate drag as a drag', async () => {
+    // The threshold is in screen pixels, so it must not swallow a real drag just because
+    // the map is zoomed in and a few pixels is only a few metres.
+    const fake = createFakeMaps()
+    const onLegDrop = vi.fn()
+    render(
+      <MapCanvas
+        mapId={MAP_ID}
+        loader={fake.loader}
+        legs={[leg(coords(3))]}
+        onLegGrab={() => true}
+        onLegDrop={onLegDrop}
+      />,
+    )
+    await waitFor(() => expect(fake.polylines).toHaveLength(1))
+    const map = fake.maps[0]
+    map?.setZoom(18) // ~0.6 m per pixel
+
+    act(() => {
+      fake.polylines[0]?.mouseDown({ lat: 47.01, lon: -120 })
+      map?.mouseUp({ lat: 47.01, lon: -120.0002 }) // ~15 m: tens of pixels at this zoom
+    })
+
+    expect(onLegDrop).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not eat the next click after a release outside the map', async () => {
+    // Releasing over the chat rail ends the gesture through the window backstop, and Google
+    // emits no map click at all — so a flag set in expectation of one is still armed when
+    // the rider next clicks the map deliberately, and swallows that instead.
+    const fake = createFakeMaps()
+    const onMapClick = vi.fn()
+    render(
+      <MapCanvas
+        mapId={MAP_ID}
+        loader={fake.loader}
+        legs={[leg(coords(3))]}
+        onMapClick={onMapClick}
+        onLegGrab={() => true}
+      />,
+    )
+    await waitFor(() => expect(fake.polylines).toHaveLength(1))
+    const map = fake.maps[0]
+
+    act(() => {
+      fake.polylines[0]?.mouseDown({ lat: 47.01, lon: -120 })
+      map?.mouseMove({ lat: 47.01, lon: -120.2 })
+      window.dispatchEvent(new MouseEvent('mouseup')) // released off the canvas
+    })
+    act(() => {
+      map?.click({ lat: 49, lon: -121 })
+    })
+
+    expect(onMapClick).toHaveBeenCalledWith({ lat: 49, lon: -121 })
+  })
+
   it('does not make the route grabbable when no handler was given', async () => {
     const fake = createFakeMaps()
     render(<MapCanvas mapId={MAP_ID} loader={fake.loader} legs={[leg(coords(3))]} />)
@@ -497,6 +590,28 @@ describe('MapCanvas', () => {
     // The changed leg's old overlay is gone and a new one is up.
     expect(fake.polylines[1]?.map).toBeNull()
     expect(fake.polylines[2]?.map).not.toBeNull()
+  })
+
+  it('does not redraw a leg whose indices shifted but whose geometry did not', async () => {
+    // Inserting a via-point renumbers every leg after it, so `insertVia` returns a new
+    // TripLeg object for each — same geometry, shifted indices. Keying on the leg object
+    // therefore rebuilt the whole route on every throttle tick of a drag: a six-leg route
+    // dragged for five seconds is thirty Polyline constructions where five would do.
+    const fake = createFakeMaps()
+    const geometry = leg(coords(3, 48))
+    const { rerender } = render(
+      <MapCanvas mapId={MAP_ID} loader={fake.loader} legs={[leg(coords(3, 47)), geometry]} />,
+    )
+    await waitFor(() => expect(fake.polylines).toHaveLength(2))
+    const secondLegPolyline = fake.polylines[1]
+
+    // A renumbered leg: new object, same routed geometry, exactly as insertVia produces.
+    const shifted = { ...geometry, start_waypoint_index: 2, end_waypoint_index: 3 }
+    rerender(<MapCanvas mapId={MAP_ID} loader={fake.loader} legs={[leg(coords(4, 47)), shifted]} />)
+
+    await waitFor(() => expect(fake.polylines.length).toBeGreaterThan(2))
+    expect(fake.polylines[1]).toBe(secondLegPolyline)
+    expect(secondLegPolyline?.map).not.toBeNull()
   })
 
   it('detaches a leg’s polylines when the leg is removed entirely', async () => {

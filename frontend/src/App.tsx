@@ -17,7 +17,7 @@ import { MapCanvas } from './map/MapCanvas'
 import { MAP_ID, loadMaps } from './map/googleMaps'
 import type { GoogleMapsLoader } from './map/loadGoogleMaps'
 import { DragSession } from './routing/dragSession'
-import type { RouteEdit } from './routing/tripEdits'
+import { bendGeometry, type RouteEdit } from './routing/tripEdits'
 import { routeErrorMessage } from './trip/routeErrorMessage'
 import { useRouteLeg } from './trip/useRouteLeg'
 import { useRoutingCapabilities } from './trip/useRoutingCapabilities'
@@ -64,6 +64,16 @@ export function App({
   const [draggedLegs, setDraggedLegs] = useState<readonly TripLeg[] | null>(null)
 
   const capabilities = useRoutingCapabilities(client)
+  /**
+   * The value, not the object it came from.
+   *
+   * A DragSession keyed on the capabilities object is rebuilt whenever that object's
+   * identity changes — which, before it was memoised, was every render. A preview landing
+   * mid-drag re-renders, so the gesture was destroyed by its own progress: the release then
+   * had nothing to end, and the rider's drag disappeared. Keying on the number means only a
+   * genuine change of cadence rebuilds it.
+   */
+  const dragIntervalMs = capabilities.intervalFor(DRAG_INTENT)
   const { legs, isRouting, error } = useRouteLeg(client, waypoints, draggedLegs)
 
   /** Provisional geometry during a gesture. Never saved, never in undo history. */
@@ -94,7 +104,7 @@ export function App({
       new DragSession({
         client,
         // From the API, never a constant: unknown resolves to preview-only.
-        intervalMs: capabilities.intervalFor(DRAG_INTENT),
+        intervalMs: dragIntervalMs,
         onPreview: (edit) => {
           setPreview(edit.legs)
         },
@@ -110,16 +120,60 @@ export function App({
         },
       }),
     // Rebuilt when the cadence arrives, so the first drag after load is not stuck on
-    // preview-only for the rest of the session.
-    [client, capabilities],
+    // preview-only for the rest of the session — and at no other time.
+    [client, dragIntervalMs],
   )
 
+  /** Where the line was taken hold of, so a local rubber-band can bend it there. */
+  const grabbedAt = useRef<{ legIndex: number; at: Coordinate } | null>(null)
+
   const onLegGrab = useCallback(
-    (legIndex: number, at: Coordinate) => drag.begin(current.current, { legIndex, grabbed: at }),
+    (legIndex: number, at: Coordinate) => {
+      const started = drag.begin(current.current, { legIndex, grabbed: at })
+      grabbedAt.current = started ? { legIndex, at } : null
+      return started
+    },
     [drag],
   )
-  const onLegDrag = useCallback((at: Coordinate) => { drag.update(at) }, [drag])
-  const onLegDrop = useCallback((at: Coordinate) => { drag.release(at) }, [drag])
+
+  const onLegDrag = useCallback(
+    (at: Coordinate) => {
+      drag.update(at)
+
+      // Preview-only: the API has asked us not to route during the gesture, so the line is
+      // bent locally instead. Without it nothing moves until release and the drag looks
+      // broken — thrift the rider cannot see is indistinguishable from a bug.
+      const grabbed = grabbedAt.current
+      if (dragIntervalMs !== null || grabbed === null) return
+      const { legIndex } = grabbed
+      setPreview(
+        current.current.legs.map((leg, index) =>
+          index === legIndex && leg.routed != null
+            ? { ...leg, routed: { ...leg.routed, geometry: [...bendGeometry(leg.routed.geometry, grabbed.at, at)] } }
+            : leg,
+        ),
+      )
+    },
+    [drag, dragIntervalMs],
+  )
+
+  const onLegDrop = useCallback(
+    (at: Coordinate) => {
+      grabbedAt.current = null
+      drag.release(at)
+    },
+    [drag],
+  )
+
+  const onLegCancel = useCallback(() => {
+    // A press that went nowhere. Nothing was routed and nothing should be shown.
+    grabbedAt.current = null
+    drag.cancel()
+    setPreview(null)
+  }, [drag])
+
+  // A gesture outliving its component would deliver a commit into a dead tree.
+  useEffect(() => () => { drag.cancel() }, [drag])
 
   const shownLegs = preview ?? legs
   const distanceM = shownLegs.reduce((total, leg) => total + (leg.routed?.distance_m ?? 0), 0)
@@ -136,6 +190,7 @@ export function App({
           onLegGrab={onLegGrab}
           onLegDrag={onLegDrag}
           onLegDrop={onLegDrop}
+          onLegCancel={onLegCancel}
         />
       </main>
       <aside className="chat-pane" aria-label="Trip assistant">

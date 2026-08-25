@@ -61,6 +61,12 @@ function createFakeMaps() {
     mouseUp(coordinate: Coordinate): void {
       this.handlers.get('mouseup')?.(latLngEvent(coordinate))
     }
+    mouseMove(coordinate: Coordinate): void {
+      this.handlers.get('mousemove')?.(latLngEvent(coordinate))
+    }
+    getZoom(): number {
+      return 12
+    }
   }
 
   const namespace = {
@@ -357,6 +363,72 @@ describe('App dragging the route', () => {
     await waitFor(() => expect(fake.polylines).toHaveLength(1))
     return { fake, router }
   }
+
+  it('survives the re-render a mid-drag preview causes', async () => {
+    // The shape of a real drag: move, let a preview land, move again, release. Every other
+    // drag test here fires mousedown+mouseup with nothing in between, which is why they all
+    // passed while the gesture was being destroyed by its own preview. A preview sets state,
+    // the re-render rebuilt the DragSession, and the release then had no gesture to end —
+    // no request, no via-point, the rider's drag simply vanishing.
+    const { fake, router } = await routedApp()
+    const map = fake.maps[0]
+
+    const drawnBefore = fake.polylines.length
+    act(() => {
+      fake.polylines[0]?.mouseDown({ lat: 47.9, lon: -120.4 })
+    })
+    act(() => {
+      map?.mouseMove({ lat: 47.9, lon: -120.6 })
+    })
+    // Wait for the preview to be *drawn*, not merely requested: it is the re-render it
+    // causes that used to destroy the gesture, and that has not happened until the canvas
+    // has redrawn.
+    await waitFor(() => expect(fake.polylines.length).toBeGreaterThan(drawnBefore))
+    act(() => {
+      map?.mouseMove({ lat: 47.9, lon: -120.8 })
+      map?.mouseUp({ lat: 47.9, lon: -121.0 })
+    })
+
+    await waitFor(() => expect(screen.getByText(/3 points placed/i)).toBeInTheDocument())
+    const last = router.routeLeg.mock.calls.at(-1)?.[0]
+    // The release is authoritative: the via sits where the rider let go, not where a
+    // throttled preview happened to land.
+    expect(last?.waypoints[1]).toEqual({ lat: 47.9, lon: -121 })
+  })
+
+  it('rubber-bands locally when the provider says preview-only', async () => {
+    // `live_update_interval_ms: null` is a metered engine saying "route on release, not
+    // before". Honouring only the routing half leaves the line motionless under the cursor,
+    // and thrift the rider cannot see is indistinguishable from a bug.
+    const fake = createFakeMaps()
+    const router = fakeRouter()
+    router.routingCapabilities.mockResolvedValue({
+      providers: [],
+      intents: { unpaved: { provider: 'ors', live_update_interval_ms: null } },
+    })
+    render(<App mapLoader={fake.loader} mapId="motorooter-test-vector" client={router} />)
+    await mapReady(fake)
+    fake.clickMap(47.6, -120.7)
+    fake.clickMap(48.1, -120.2)
+    await waitFor(() => expect(fake.polylines).toHaveLength(1))
+    const map = fake.maps[0]
+
+    act(() => {
+      fake.polylines[0]?.mouseDown({ lat: 47.9, lon: -120.4 })
+      map?.mouseMove({ lat: 47.9, lon: -121.0 })
+    })
+
+    // Drawn locally, and nothing asked of the provider.
+    await waitFor(() => expect(fake.polylines.length).toBeGreaterThan(1))
+    expect(router.routeLeg).toHaveBeenCalledTimes(1)
+    expect(fake.polylines.at(-1)?.options['path']).toContainEqual({ lat: 47.9, lng: -121 })
+
+    // The release is still authoritative, and still routes.
+    act(() => {
+      map?.mouseUp({ lat: 47.9, lon: -121.0 })
+    })
+    await waitFor(() => expect(router.routeLeg).toHaveBeenCalledTimes(2))
+  })
 
   it('inserts a via-point where the line was dragged and routes through it', async () => {
     const { fake, router } = await routedApp()

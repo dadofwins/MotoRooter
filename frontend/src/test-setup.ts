@@ -20,7 +20,42 @@ import '@testing-library/jest-dom/vitest'
  * handed to a fake marker, probe containers — which RTL does not know about and so leaves
  * behind.
  */
+/**
+ * A `localStorage` for tests, because this jsdom does not provide one.
+ *
+ * Verified rather than assumed: `typeof localStorage` is `undefined` in this environment even
+ * though the page has a real origin. Production code treats storage as something that may
+ * refuse — Safari in private browsing throws on write — so the absence is survivable there,
+ * but a test that wants to assert a preference persisted needs somewhere for it to persist.
+ */
+if (typeof globalThis.localStorage === 'undefined') {
+  const entries = new Map<string, string>()
+  const memory: Storage = {
+    get length() {
+      return entries.size
+    },
+    clear: () => entries.clear(),
+    getItem: (key) => entries.get(key) ?? null,
+    key: (index) => [...entries.keys()][index] ?? null,
+    removeItem: (key) => {
+      entries.delete(key)
+    },
+    setItem: (key, value) => {
+      entries.set(key, value)
+    },
+  }
+  Object.defineProperty(globalThis, 'localStorage', { value: memory, configurable: true })
+}
+
 afterEach(() => {
   cleanup()
   document.body.replaceChildren()
+  // Storage is shared state exactly as the document is. A unit preference written by one
+  // test made a later one see kilometres where it expected the default — the same
+  // cross-test pollution as leftover DOM, through a different door.
+  try {
+    localStorage.clear()
+  } catch {
+    // Nothing to clear if storage is unavailable.
+  }
 })

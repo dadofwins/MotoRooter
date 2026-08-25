@@ -92,6 +92,32 @@ body {
   box-shadow: 0 1px 4px rgb(0 0 0 / 0.4);
 }
 
+/* Unit preference. It sits with the numbers it changes rather than in a settings screen
+   nobody opens. */
+.units {
+  display: flex;
+  gap: 0.375rem;
+  margin-top: 0.625rem;
+}
+
+.units button {
+  padding: 0.1875rem 0.5rem;
+  font: inherit;
+  font-size: 0.75rem;
+  color: inherit;
+  background: transparent;
+  border: 1px solid rgb(0 0 0 / 0.2);
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+/* The pressed state is a real attribute, so it is announced as well as drawn. */
+.units button[aria-pressed='true'] {
+  background: rgb(0 0 0 / 0.08);
+  border-color: rgb(0 0 0 / 0.35);
+  font-weight: 600;
+}
+
 /* Surface breakdown. Colours are the route line's own, so one encoding is learned rather
    than two, and validated for colour-blind separation in both modes (worst adjacent pair
    ΔE 30 protan). Unsurveyed stays neutral grey on purpose: greyness is the meaning. */
@@ -397,6 +423,15 @@ body {
 
   .surface__distance {
     color: rgb(255 255 255 / 0.55);
+  }
+
+  .units button {
+    border-color: rgb(255 255 255 / 0.25);
+  }
+
+  .units button[aria-pressed='true'] {
+    background: rgb(255 255 255 / 0.14);
+    border-color: rgb(255 255 255 / 0.4);
   }
 
   .poi-dialog__kind,

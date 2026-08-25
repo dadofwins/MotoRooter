@@ -50,13 +50,13 @@ const MIXED = [
 
 describe('SurfaceSummary', () => {
   it('says nothing at all when there is no route', () => {
-    const { container } = render(<SurfaceSummary legs={[]} />)
+    const { container } = render(<SurfaceSummary legs={[]} unit="km" />)
 
     expect(container).toBeEmptyDOMElement()
   })
 
   it('names every share, so colour is never the only thing carrying it', () => {
-    render(<SurfaceSummary legs={MIXED} />)
+    render(<SurfaceSummary legs={MIXED} unit="km" />)
 
     // Exact strings: /paved/i also matches "Unpaved", which is the sort of ambiguity that
     // makes a passing assertion mean nothing.
@@ -67,7 +67,7 @@ describe('SurfaceSummary', () => {
   })
 
   it('reports shares that add up to 100', () => {
-    render(<SurfaceSummary legs={MIXED} />)
+    render(<SurfaceSummary legs={MIXED} unit="km" />)
 
     expect(screen.getByText('40%')).toBeInTheDocument()
     // Two shares of 30% each, so both rows carry the same figure.
@@ -76,14 +76,14 @@ describe('SurfaceSummary', () => {
 
   it('gives the distance as well as the share, because a percentage is not a plan', () => {
     // 40% of 100 km. A rider deciding on tyres cares how far, not only how much.
-    render(<SurfaceSummary legs={MIXED} />)
+    render(<SurfaceSummary legs={MIXED} unit="km" />)
 
     expect(screen.getByText(/40 km/)).toBeInTheDocument()
   })
 
   it('keeps unsurveyed distance visible rather than folding it into paved', () => {
     // The whole point. An untagged route must not read as tarmac.
-    render(<SurfaceSummary legs={[leg([], 50_000)]} />)
+    render(<SurfaceSummary legs={[leg([], 50_000)]} unit="km" />)
 
     expect(screen.getByText('100%')).toBeInTheDocument()
     expect(screen.getByText('Unsurveyed')).toBeInTheDocument()
@@ -92,7 +92,7 @@ describe('SurfaceSummary', () => {
 
   it('leaves out a share that is genuinely zero', () => {
     // Nothing unsurveyed is worth saying nothing about; a 0% row is furniture.
-    render(<SurfaceSummary legs={[leg([{ start_index: 0, end_index: 10, surface: 'paved' }], 20_000)]} />)
+    render(<SurfaceSummary legs={[leg([{ start_index: 0, end_index: 10, surface: 'paved' }], 20_000)]} unit="km" />)
 
     expect(screen.getByText('100%')).toBeInTheDocument()
     expect(screen.queryByText('Unsurveyed')).not.toBeInTheDocument()
@@ -101,7 +101,7 @@ describe('SurfaceSummary', () => {
   it('puts the numbers in a list and leaves the bar decorative', () => {
     // The bar is a picture of the list. A screen reader that read both would say everything
     // twice, so only one of them is the accessible representation.
-    render(<SurfaceSummary legs={MIXED} />)
+    render(<SurfaceSummary legs={MIXED} unit="km" />)
 
     expect(screen.getByRole('list')).toBeInTheDocument()
     expect(screen.getAllByRole('listitem')).toHaveLength(3)

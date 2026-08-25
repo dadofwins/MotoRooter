@@ -17,7 +17,7 @@ import { MapCanvas } from './map/MapCanvas'
 import { MAP_ID, loadMaps } from './map/googleMaps'
 import type { GoogleMapsLoader } from './map/loadGoogleMaps'
 import { DragSession } from './routing/dragSession'
-import { bendGeometry, type RouteEdit } from './routing/tripEdits'
+import type { RouteEdit } from './routing/tripEdits'
 import { routeErrorMessage } from './trip/routeErrorMessage'
 import { useRouteLeg } from './trip/useRouteLeg'
 import { useRoutingCapabilities } from './trip/useRoutingCapabilities'
@@ -124,50 +124,19 @@ export function App({
     [client, dragIntervalMs],
   )
 
-  /** Where the line was taken hold of, so a local rubber-band can bend it there. */
-  const grabbedAt = useRef<{ legIndex: number; at: Coordinate } | null>(null)
-
   const onLegGrab = useCallback(
-    (legIndex: number, at: Coordinate) => {
-      const started = drag.begin(current.current, { legIndex, grabbed: at })
-      grabbedAt.current = started ? { legIndex, at } : null
-      return started
-    },
+    (legIndex: number, at: Coordinate) => drag.begin(current.current, { legIndex, grabbed: at }),
     [drag],
   )
 
-  const onLegDrag = useCallback(
-    (at: Coordinate) => {
-      drag.update(at)
-
-      // Preview-only: the API has asked us not to route during the gesture, so the line is
-      // bent locally instead. Without it nothing moves until release and the drag looks
-      // broken — thrift the rider cannot see is indistinguishable from a bug.
-      const grabbed = grabbedAt.current
-      if (dragIntervalMs !== null || grabbed === null) return
-      const { legIndex } = grabbed
-      setPreview(
-        current.current.legs.map((leg, index) =>
-          index === legIndex && leg.routed != null
-            ? { ...leg, routed: { ...leg.routed, geometry: [...bendGeometry(leg.routed.geometry, grabbed.at, at)] } }
-            : leg,
-        ),
-      )
-    },
-    [drag, dragIntervalMs],
-  )
-
-  const onLegDrop = useCallback(
-    (at: Coordinate) => {
-      grabbedAt.current = null
-      drag.release(at)
-    },
-    [drag],
-  )
+  // The line that follows the cursor is drawn by the canvas, imperatively, at pointer
+  // speed. Nothing local happens here on purpose: routing a cursor position through the
+  // state that also feeds `legs` is what made the session rebuild itself mid-gesture.
+  const onLegDrag = useCallback((at: Coordinate) => { drag.update(at) }, [drag])
+  const onLegDrop = useCallback((at: Coordinate) => { drag.release(at) }, [drag])
 
   const onLegCancel = useCallback(() => {
     // A press that went nowhere. Nothing was routed and nothing should be shown.
-    grabbedAt.current = null
     drag.cancel()
     setPreview(null)
   }, [drag])

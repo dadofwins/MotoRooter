@@ -92,6 +92,18 @@ body {
   box-shadow: 0 1px 4px rgb(0 0 0 / 0.4);
 }
 
+/* The circle under the cursor while the route is being dragged. Same affordance Google
+   Maps uses, and the thing that says "picked up" before any route could come back. */
+.drag-handle {
+  width: 1rem;
+  height: 1rem;
+  background: #fff;
+  border: 3px solid #1f6feb;
+  border-radius: 50%;
+  box-shadow: 0 1px 5px rgb(0 0 0 / 0.45);
+  cursor: grabbing;
+}
+
 .pin--start {
   background: #17803d;
 }

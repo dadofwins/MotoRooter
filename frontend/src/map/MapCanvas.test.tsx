@@ -94,13 +94,18 @@ function createFakeMaps({ withMarkerLibrary = true }: { withMarkerLibrary?: bool
 
   class FakePolyline {
     map: unknown = null
+    path: google.maps.LatLngLiteral[]
     readonly listeners: FakeListener[] = []
     constructor(readonly options: google.maps.PolylineOptions) {
       this.map = options.map ?? null
+      this.path = (options.path ?? []) as google.maps.LatLngLiteral[]
       polylines.push(this)
     }
     setMap(map: unknown): void {
       this.map = map
+    }
+    setPath(path: google.maps.LatLngLiteral[]): void {
+      this.path = path
     }
     addListener(event: string, handler: (event: unknown) => void): { remove: () => void } {
       const listener: FakeListener = { event, handler, removed: false }
@@ -119,8 +124,10 @@ function createFakeMaps({ withMarkerLibrary = true }: { withMarkerLibrary?: bool
 
   class FakeMarker {
     map: unknown
+    position: unknown
     constructor(readonly options: Record<string, unknown>) {
       this.map = options['map'] ?? null
+      this.position = options['position'] ?? null
       markers.push(this)
     }
   }
@@ -128,12 +135,17 @@ function createFakeMaps({ withMarkerLibrary = true }: { withMarkerLibrary?: bool
   /** The deprecated `google.maps.Marker`, which unlike the advanced one needs no Map ID. */
   class FakeLegacyMarker {
     map: unknown
+    position: unknown
     constructor(readonly options: Record<string, unknown>) {
       this.map = options['map'] ?? null
+      this.position = options['position'] ?? null
       legacyMarkers.push(this)
     }
     setMap(map: unknown): void {
       this.map = map
+    }
+    setPosition(position: unknown): void {
+      this.position = position
     }
   }
 
@@ -154,6 +166,17 @@ function createFakeMaps({ withMarkerLibrary = true }: { withMarkerLibrary?: bool
     /** Overlays still attached to a map — anything left here after unmount is a leak. */
     attached: () =>
       [...polylines, ...markers, ...legacyMarkers].filter((overlay) => overlay.map !== null),
+    /** The live drag handle, if the gesture is showing one. */
+    handles: () =>
+      [...markers, ...legacyMarkers].filter(
+        (marker) =>
+          marker.map !== null &&
+          (marker.options['content'] as HTMLElement | undefined)?.className?.includes(
+            'drag-handle',
+          ) === true,
+      ),
+    /** The live rubber band, if any. */
+    bands: () => polylines.filter((line) => line.map !== null && line.options.zIndex === 20),
   }
 }
 
@@ -214,6 +237,9 @@ describe('MapCanvas dragging the route', () => {
       <MapCanvas
         mapId={MAP_ID}
         loader={fake.loader}
+        // Waypoints at the ends of leg 0's geometry, so a via dropped on it has real
+        // neighbours to sit between.
+        waypoints={[waypoint(47), waypoint(47.02)]}
         legs={[leg(coords(3, 47)), leg(coords(3, 48))]}
         onLegGrab={onLegGrab}
         onLegDrag={onLegDrag}
@@ -223,6 +249,92 @@ describe('MapCanvas dragging the route', () => {
     await waitFor(() => expect(fake.polylines).toHaveLength(2))
     return { fake, onLegGrab, onLegDrag, onLegDrop, view }
   }
+
+  /**
+   * The frame-rate half of the gesture.
+   *
+   * A 1 Hz routed update is a fine cadence, but nothing moving between updates reads as a
+   * broken app rather than a thrifty one. So the handle and the two segments either side of
+   * it follow the cursor locally, at pointer speed, with no request and — critically — no
+   * trip through the state that feeds routing. Routing that through React is what made the
+   * drag session rebuild itself last round.
+   */
+  describe('the local rubber band', () => {
+    it('puts a handle and a band on the map when the line is grabbed', async () => {
+      const { fake } = await dragging()
+      expect(fake.handles()).toHaveLength(0)
+
+      act(() => {
+        fake.polylines[0]?.mouseDown({ lat: 47.01, lon: -120 })
+      })
+
+      expect(fake.handles()).toHaveLength(1)
+      expect(fake.bands()).toHaveLength(1)
+    })
+
+    it('moves them with the cursor without building anything new', async () => {
+      // Rebuilding overlays per pointer event is the difference between a gesture that
+      // tracks the hand and one that stutters.
+      const { fake } = await dragging()
+      const map = fake.maps[0]
+      act(() => {
+        fake.polylines[0]?.mouseDown({ lat: 47.01, lon: -120 })
+      })
+      const overlaysAfterGrab = fake.polylines.length
+
+      act(() => {
+        map?.mouseMove({ lat: 47.01, lon: -120.1 })
+        map?.mouseMove({ lat: 47.01, lon: -120.2 })
+        map?.mouseMove({ lat: 47.01, lon: -120.3 })
+      })
+
+      expect(fake.polylines).toHaveLength(overlaysAfterGrab)
+      expect(fake.handles()[0]?.position).toEqual({ lat: 47.01, lng: -120.3 })
+      expect(fake.bands()[0]?.path.at(1)).toEqual({ lat: 47.01, lng: -120.3 })
+    })
+
+    it('spans the waypoints either side of the grab, so the band is the shape of the edit', async () => {
+      const { fake } = await dragging()
+
+      act(() => {
+        fake.polylines[0]?.mouseDown({ lat: 47.01, lon: -120 })
+      })
+
+      // Leg 0 runs between the first two waypoints, so the band joins them through the
+      // handle: previous waypoint, cursor, next waypoint.
+      expect(fake.bands()[0]?.path).toEqual([
+        { lat: 47, lng: -120 },
+        { lat: 47.01, lng: -120 },
+        { lat: 47.02, lng: -120 },
+      ])
+    })
+
+    it('clears them on release, on cancel, and on unmount', async () => {
+      const { fake, view } = await dragging()
+      const map = fake.maps[0]
+
+      act(() => {
+        fake.polylines[0]?.mouseDown({ lat: 47.01, lon: -120 })
+        map?.mouseMove({ lat: 47.01, lon: -120.3 })
+        map?.mouseUp({ lat: 47.01, lon: -120.3 })
+      })
+      expect(fake.handles()).toHaveLength(0)
+      expect(fake.bands()).toHaveLength(0)
+
+      act(() => {
+        fake.polylines[0]?.mouseDown({ lat: 47.01, lon: -120 })
+        map?.mouseUp({ lat: 47.01, lon: -120 }) // below threshold: cancelled
+      })
+      expect(fake.handles()).toHaveLength(0)
+
+      act(() => {
+        fake.polylines[0]?.mouseDown({ lat: 47.01, lon: -120 })
+      })
+      view.unmount()
+      expect(fake.handles()).toHaveLength(0)
+      expect(fake.bands()).toHaveLength(0)
+    })
+  })
 
   it('reports which leg was grabbed, and where', async () => {
     const { fake, onLegGrab } = await dragging()

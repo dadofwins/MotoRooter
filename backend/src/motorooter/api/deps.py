@@ -9,6 +9,7 @@ from typing import Annotated
 
 from fastapi import Depends, Request
 
+from motorooter.planning.discovery.pipeline import DiscoveryPipeline
 from motorooter.routing.policy import PolicyResolver
 from motorooter.routing.registry import ProviderRegistry
 from motorooter.trips.store import TripStore
@@ -24,6 +25,17 @@ def get_resolver(request: Request) -> PolicyResolver:
     return resolver
 
 
+def get_discovery(request: Request) -> "DiscoveryPipeline | None":
+    """The discovery pipeline, or `None` when it could not be built.
+
+    `None` rather than raising at startup: discovery needs four API keys, and a backend that
+    refuses to boot without them would make every other endpoint unavailable for want of a
+    feature most requests do not use. Replan reports it; the rest of the app runs.
+    """
+    pipeline: DiscoveryPipeline | None = getattr(request.app.state, "discovery", None)
+    return pipeline
+
+
 def get_trip_store(request: Request) -> TripStore:
     store: TripStore = request.app.state.trip_store
     return store
@@ -32,3 +44,4 @@ def get_trip_store(request: Request) -> TripStore:
 Registry = Annotated[ProviderRegistry, Depends(get_registry)]
 Resolver = Annotated[PolicyResolver, Depends(get_resolver)]
 Trips = Annotated[TripStore, Depends(get_trip_store)]
+Discovery = Annotated["DiscoveryPipeline | None", Depends(get_discovery)]

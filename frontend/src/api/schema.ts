@@ -171,12 +171,8 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Start a replan (not yet implemented)
-         * @description Runs LLM route search, POI discovery, and Places enrichment.
-         *
-         *     **Streams newline-delimited JSON** (`application/x-ndjson`): one `ReplanEvent` object per line, terminated by `\n`. Not Server-Sent Events — this is a POST with a request body, so `EventSource` cannot consume it, and hand-parsing SSE framing over `fetch` would cost the framing overhead for none of the benefit. Clients must tolerate a chunk boundary landing mid-line.
-         *
-         *     Explicitly user-triggered — never fired automatically by a route edit.
+         * Discover points of interest along the route
+         * @description Runs web search, place extraction, Places resolution and scoring over the trip's corridor. Streams application/x-ndjson: one ReplanEvent per line, POIs accumulating as they resolve so the map fills in rather than waiting. Not Server-Sent Events — there is no `data:` prefix and no blank-line framing. Explicitly user-triggered; never fired automatically by a route edit. Answers 501 when the discovery credentials are not configured.
          */
         post: operations["replan_api_trips__slug__replan_post"];
         delete?: never;
@@ -1540,7 +1536,7 @@ export interface operations {
             };
         };
         responses: {
-            /** @description Stream of ReplanEvent objects, one per line. */
+            /** @description Successful Response */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -1594,7 +1590,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description Not implemented yet. */
+            /** @description Not Implemented */
             501: {
                 headers: {
                     [name: string]: unknown;

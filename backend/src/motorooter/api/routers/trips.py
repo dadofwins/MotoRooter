@@ -8,9 +8,13 @@ OpenAPI document and generate TypeScript types, letting the frontend build again
 shapes before the backend implementation lands.
 """
 
-from fastapi import APIRouter, status
+import logging
+from collections.abc import AsyncIterator, Sequence
 
-from motorooter.api.deps import Trips
+from fastapi import APIRouter, status
+from fastapi.responses import StreamingResponse
+
+from motorooter.api.deps import Discovery, Trips
 from motorooter.api.errors import NotImplementedYet
 from motorooter.api.schemas import (
     ERROR_RESPONSES,
@@ -20,13 +24,18 @@ from motorooter.api.schemas import (
     ReplanRequest,
     UpdateTripRequest,
 )
+from motorooter.planning.discovery.pipeline import DiscoveryPipeline
+from motorooter.routing.errors import RouteIncomplete
+from motorooter.routing.models import RouteLeg
 from motorooter.trips.errors import TripModifiedConcurrently
-from motorooter.trips.models import Trip, TripSummary, utc_now
+from motorooter.trips.models import PoiCategory, Trip, TripSummary, utc_now
 from motorooter.trips.slug import slugify, validate_slug
 
 router = APIRouter(prefix="/api/trips", tags=["trips"], responses=ERROR_RESPONSES)
 
 NOT_IMPLEMENTED = status.HTTP_501_NOT_IMPLEMENTED
+
+logger = logging.getLogger(__name__)
 
 
 STREAMING_MEDIA_TYPE = "application/x-ndjson"
@@ -125,35 +134,78 @@ async def delete_trip(slug: str, store: Trips) -> None:
 
 @router.post(
     "/{slug}/replan",
-    status_code=NOT_IMPLEMENTED,
-    summary="Start a replan (not yet implemented)",
+    response_model=ReplanEvent,
+    summary="Discover points of interest along the route",
     description=(
-        "Runs LLM route search, POI discovery, and Places enrichment.\n\n"
-        "**Streams newline-delimited JSON** (`application/x-ndjson`): one `ReplanEvent` "
-        "object per line, terminated by `\\n`. Not Server-Sent Events — this is a POST with "
-        "a request body, so `EventSource` cannot consume it, and hand-parsing SSE framing "
-        "over `fetch` would cost the framing overhead for none of the benefit. Clients must "
-        "tolerate a chunk boundary landing mid-line.\n\n"
-        "Explicitly user-triggered — never fired automatically by a route edit."
+        "Runs web search, place extraction, Places resolution and scoring over the trip's "
+        "corridor. Streams application/x-ndjson: one ReplanEvent per line, POIs "
+        "accumulating as they resolve so the map fills in rather than waiting. Not "
+        "Server-Sent Events — there is no `data:` prefix and no blank-line framing. "
+        "Explicitly user-triggered; never fired automatically by a route edit. Answers 501 "
+        "when the discovery credentials are not configured."
     ),
-    responses={
-        # `model` rather than a raw $ref: FastAPI only emits a schema into components when
-        # a model is referenced this way. A bare $ref would leave ReplanEvent out of the
-        # document entirely and silently delete the frontend's generated type.
-        200: {
-            # Declared as an ordinary model; api.streaming rewrites the media-type key to
-            # STREAMING_MEDIA_TYPE after generation. See that module for why.
-            "description": "Stream of ReplanEvent objects, one per line.",
-            "model": ReplanEvent,
-        },
-        501: {"model": ErrorResponse, "description": "Not implemented yet."},
-    },
+    responses={NOT_IMPLEMENTED: {"model": ErrorResponse}},
 )
-async def replan(slug: str, request: ReplanRequest, store: Trips) -> None:
-    """Reserved. Owned by the backend engineer; schema is frozen so the frontend can build."""
-    # 404 before 501, so the frontend can distinguish "no such trip" from "not built yet".
-    await store.get(validate_slug(slug))
-    raise NotImplementedYet("replan")
+async def replan(
+    slug: str, request: ReplanRequest, store: Trips, discovery: Discovery
+) -> StreamingResponse:
+    """Stream discovery progress for a trip.
+
+    The trip is fetched before the stream opens so a missing slug is an ordinary 404 with a
+    JSON body. Once the stream is open the status is already sent, and a failure can only be
+    reported as an event inside it — which is why everything that can be checked up front is.
+    """
+    trip = await store.get(validate_slug(slug))
+    if discovery is None:
+        raise NotImplementedYet("discovery (no search, model or Places credentials configured)")
+
+    leg = _longest_routed_leg(trip)
+    if leg is None:
+        raise RouteIncomplete(trip.unrouted_leg_indices or (0,))
+
+    return StreamingResponse(
+        _stream(discovery, leg, request.categories),
+        media_type=STREAMING_MEDIA_TYPE,
+    )
+
+
+def _longest_routed_leg(trip: Trip) -> RouteLeg | None:
+    """The leg worth searching along.
+
+    The longest rather than the first: a trip's legs are frequently one long ride and a short
+    connector, and discovery along the connector would search the wrong half of the map.
+    """
+    routed = trip.routed_legs
+    return max(routed, key=lambda leg: leg.distance_m) if routed else None
+
+
+async def _stream(
+    discovery: DiscoveryPipeline, leg: RouteLeg, categories: Sequence[PoiCategory]
+) -> AsyncIterator[bytes]:
+    """One `ReplanEvent` per line.
+
+    Errors after the first byte cannot change the status code, so an unexpected failure is
+    emitted as a final event rather than allowed to truncate the stream. A client that sees
+    the connection close mid-line cannot tell a crash from a network drop; one that reads
+    `stage: done` with a failure message can.
+    """
+    try:
+        async for step in discovery.run(leg, list(categories)):
+            event = ReplanEvent(
+                stage=step.stage,
+                message=step.message,
+                progress=step.progress,
+                pois=list(step.pois),
+            )
+            yield event.model_dump_json().encode() + b"\n"
+    except Exception:
+        logger.exception("replan stream failed")
+        failed = ReplanEvent(
+            stage="done",
+            message="discovery stopped early after an unexpected error",
+            progress=1.0,
+        )
+        yield failed.model_dump_json().encode() + b"\n"
 
 
 @router.get(

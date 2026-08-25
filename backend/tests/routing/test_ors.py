@@ -313,9 +313,15 @@ class TestCapabilities:
     def test_declares_the_free_tier_quota(self, provider):
         assert provider.capabilities.daily_quota == 2000
 
-    def test_throttles_live_updates_more_than_a_cheap_provider(self, provider):
-        """Free-tier budget is the binding constraint during a drag."""
-        assert provider.capabilities.live_update_interval_ms == 3000
+    def test_refreshes_about_once_a_second_during_a_drag(self, provider):
+        """This was 3000 ms, to protect the free-tier budget during a drag.
+
+        That reasoning expired twice: cost is not a constraint on this prototype, and the
+        per-minute rate limiter now guards bursts far better than a blunt throttle. Measured,
+        ORS answers in ~1.25 s whatever the route size, so 3000 ms made an update take about
+        five seconds — which a rider noticed before anyone re-examined the number.
+        """
+        assert provider.capabilities.live_update_interval_ms == 1000
 
 
 class TestSnapRadius:

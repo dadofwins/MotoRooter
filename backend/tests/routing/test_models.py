@@ -184,3 +184,31 @@ class TestReportsSurface:
         capabilities = ProviderCapabilities(name="x", prefers_unpaved=True, reports_surface=False)
         assert capabilities.prefers_unpaved is True
         assert capabilities.reports_surface is False
+
+
+class TestDragThrottling:
+    """How long the UI waits between live re-routes during a drag.
+
+    Measured against the live API: ORS answers in ~1.25 s regardless of route size (201 km
+    and 352 km both came back in that band), so the throttle is pure added latency on top.
+    At 3000 ms a rider waited about five seconds per update and said so.
+    """
+
+    def test_ors_refreshes_about_once_a_second(self):
+        from motorooter.routing.providers.ors import CAPABILITIES
+
+        assert CAPABILITIES.live_update_interval_ms == 1000
+
+    def test_the_throttle_is_below_the_request_time_it_sits_on_top_of(self):
+        """~1.25 s is the floor no throttle setting can beat; the throttle should not be the
+        dominant term above it."""
+        from motorooter.routing.providers.ors import CAPABILITIES
+
+        assert (CAPABILITIES.live_update_interval_ms or 0) <= 1250
+
+    def test_a_self_hosted_instance_is_no_slower_than_hosted(self):
+        """Own hardware, no quota. It must never end up throttled harder than the free tier."""
+        from motorooter.routing.factory import SELF_HOSTED_LIVE_UPDATE_INTERVAL_MS
+        from motorooter.routing.providers.ors import CAPABILITIES
+
+        assert (CAPABILITIES.live_update_interval_ms or 0) >= SELF_HOSTED_LIVE_UPDATE_INTERVAL_MS

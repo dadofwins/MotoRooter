@@ -90,6 +90,11 @@ _SURFACE_CODES: Mapping[int, Surface] = {
 _ROUTE_NOT_FOUND_CODES = frozenset({2009})
 
 CAPABILITIES = ProviderCapabilities(
+    # `live_update_interval_ms` was 3000, chosen to protect the free-tier quota. That
+    # reasoning has since expired twice over: cost is explicitly not a constraint on this
+    # prototype, and the per-minute rate limiter now guards the burst case far better than a
+    # blunt throttle ever did. Measured, ORS answers in ~1.25 s regardless of route size, so
+    # 3000 ms made a drag update take about five seconds — which a rider noticed and said so.
     name="ors",
     prefers_unpaved=True,
     reports_surface=True,  # via extra_info=surface
@@ -97,7 +102,7 @@ CAPABILITIES = ProviderCapabilities(
     alternatives=True,
     elevation=True,
     max_waypoints=50,
-    live_update_interval_ms=3000,
+    live_update_interval_ms=1000,
     daily_quota=2000,
     per_minute_quota=40,
 )

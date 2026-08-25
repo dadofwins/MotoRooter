@@ -18,6 +18,8 @@
  */
 import { ApiError, ApiNetworkError, ApiNotImplementedError, isAbortError, type ErrorCode } from './errors'
 import type {
+  ChatEvent,
+  ChatRequest,
   CreateTripRequest,
   HealthResponse,
   PoiDetailResponse,
@@ -80,6 +82,18 @@ export interface ApiClient {
     request: ReplanInput,
     options?: RequestOptions,
   ): AsyncGenerator<ReplanEvent, void, undefined>
+  /**
+   * One turn of conversation about a trip, streamed as it happens.
+   *
+   * The trip is addressed by slug rather than sent, so the assistant reads and edits the same
+   * document the mouse does — chat is a second path to existing functions, never a separate
+   * model of the trip. Framing is NDJSON, identical to replan.
+   */
+  chat(
+    slug: string,
+    request: ChatRequest,
+    options?: RequestOptions,
+  ): AsyncGenerator<ChatEvent, void, undefined>
   /** GPX track plus ordered waypoints. Stubbed today (`ApiNotImplementedError`). */
   exportGpx(slug: string, options?: RequestOptions): Promise<Blob>
   /**
@@ -384,6 +398,19 @@ export function createApiClient(options: ApiClientOptions = {}): ApiClient {
         requestOptions,
       )
       yield* streamNdjson<ReplanEvent>(response)
+    },
+
+    async *chat(
+      slug: string,
+      request: ChatRequest,
+      requestOptions?: RequestOptions,
+    ): AsyncGenerator<ChatEvent, void, undefined> {
+      const response = await send(
+        `/api/trips/${segment(slug)}/chat`,
+        { method: 'POST', json: request, accept: `application/x-ndjson, ${JSON_TYPE}` },
+        requestOptions,
+      )
+      yield* streamNdjson<ChatEvent>(response)
     },
 
     async exportGpx(slug: string, requestOptions?: RequestOptions): Promise<Blob> {

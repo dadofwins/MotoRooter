@@ -31,17 +31,122 @@ body {
   overflow-y: auto;
 }
 
-.placeholder {
+/* The map fills its pane; everything else sits on top of it. */
+.map-canvas,
+.map-canvas__surface {
+  position: absolute;
+  inset: 0;
+}
+
+/* Loading and failure states. Centred and legible rather than a blank grey rectangle,
+   because every way the Maps API can fail otherwise looks identical to the user. */
+.map-canvas__overlay {
   position: absolute;
   inset: 0;
   display: grid;
   place-content: center;
-  color: rgb(0 0 0 / 0.4);
+  justify-items: center;
+  gap: 0.75rem;
+  margin: 0;
+  padding: 2rem;
+  text-align: center;
+  color: rgb(0 0 0 / 0.55);
+  background: #e8e6e1;
+}
+
+/* Degraded-but-working state. A banner, not an overlay: the map underneath is usable and
+   nothing should have to be dismissed to get at it. */
+.map-canvas__notice {
+  position: absolute;
+  inset: auto 0.75rem 0.75rem;
+  margin: 0;
+  padding: 0.5rem 0.75rem;
+  font-size: 0.8125rem;
+  line-height: 1.4;
+  color: #3d2b00;
+  background: #fdf1c7;
+  border: 1px solid #e0c766;
+  border-radius: 6px;
+  box-shadow: 0 1px 6px rgb(0 0 0 / 0.2);
+}
+
+.map-canvas__message {
+  max-width: 32rem;
+  margin: 0;
+  line-height: 1.5;
+}
+
+/* Waypoint pins. Shape and colour both carry the meaning: a rider glancing down in
+   sunlight should not have to resolve a hue to find the start of the route. */
+.pin {
+  display: grid;
+  place-content: center;
+  width: 1.75rem;
+  height: 1.75rem;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: #fff;
+  background: #6b7280;
+  border: 2px solid #fff;
+  border-radius: 50%;
+  box-shadow: 0 1px 4px rgb(0 0 0 / 0.4);
+}
+
+.pin--start {
+  background: #17803d;
+}
+
+.pin--end {
+  background: #b42318;
+  /* Squared off, so start and end differ by more than colour alone. */
+  border-radius: 15%;
+}
+
+.pin--via {
+  width: 1.25rem;
+  height: 1.25rem;
+  font-size: 0.6875rem;
 }
 
 .greeting {
   margin: 0;
   line-height: 1.5;
+}
+
+.route-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 1rem;
+  padding-top: 1rem;
+  border-top: 1px solid rgb(0 0 0 / 0.12);
+}
+
+.route-summary p {
+  margin: 0;
+}
+
+/* Dark mode is not optional for a tool read outdoors and after dark. */
+@media (prefers-color-scheme: dark) {
+  .map-pane,
+  .map-canvas__overlay {
+    background: #1c1c1e;
+    color: rgb(255 255 255 / 0.6);
+  }
+
+  .chat-pane {
+    border-left-color: rgb(255 255 255 / 0.14);
+  }
+
+  .route-summary {
+    border-top-color: rgb(255 255 255 / 0.14);
+  }
+
+  .pin {
+    border-color: rgb(0 0 0 / 0.6);
+  }
 }
 
 @media (max-width: 720px) {

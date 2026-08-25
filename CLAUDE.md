@@ -37,18 +37,23 @@ if the generated files drift.
 
 ## Status
 
-**Built:** the routing layer end to end — domain models, `RoutingProvider` protocol, shared adapter
-contract suite, `FakeProvider`, ORS and Google Directions adapters, polyline codec, registry,
-policy resolver, caching/retry/quota decorators, config factory. Trip and POI models, slug
-validation, `TripStore` protocol with an in-memory implementation and a shared store contract
-suite. The REST API surface with generated TypeScript types. Frontend `DragScheduler` (throttle,
-sequence numbers, commit-on-release), app shell, multi-stage Dockerfile, Cloud Build config.
+**Built and merged:** the routing layer end to end (models, provider protocol, shared adapter
+contract suite, `FakeProvider`, ORS and Google adapters, polyline codec, registry, policy
+resolver, caching/retry/quota decorators, config factory). Trip and POI models, slug validation,
+`TripStore` with in-memory and Cloud Storage implementations behind a shared contract suite,
+compare-and-swap on writes. Leg stitching and the trip-level router. `RouteFingerprint`, so
+stale cached geometry is detectable. The REST API with generated TypeScript types and a
+generated `ErrorCode` union. Frontend: typed API client, `DragScheduler`, the Google Maps
+canvas, and the pure half of drag-to-reroute.
 
-**Stubbed with frozen schemas** (501, so the frontend can build against real shapes): replan,
+**In review:** `fe/vertical-slice` (click two points, see a real route — the first integration),
+`fe/drag-reroute` (three findings sent).
+
+**Stubbed with frozen schemas** (501, so the frontend builds against real shapes): replan,
 GPX export, Places enrichment.
 
-**Not built:** `GcsTripStore`, leg stitching, GPX export, the LLM tool layer, discovery and
-Places enrichment, the Google Maps canvas, and the chat UI.
+**Not built:** the LLM tool layer, discovery, Places enrichment, the chat UI, the interactive
+half of drag-to-reroute, GPX export, derived trip duration.
 
 Update this section as reality changes, and do not describe a component as existing until it does.
 

@@ -375,3 +375,45 @@ class TestOpenApiContract:
 
     def test_spa_fallback_is_not_in_the_schema(self, schema):
         assert "/{full_path}" not in schema["paths"]
+
+
+class TestLegDurationIsDerived:
+    """The provider's duration is a bicycle's. The response carries ours.
+
+    Per-leg rather than a trip total, because the frontend would otherwise reimplement
+    surface-weighted speeds client-side — which is exactly the drift the generated contract
+    exists to prevent, and it would land first on the surface question.
+    """
+
+    @pytest.fixture
+    def routed(self, client):
+        body = {
+            "waypoints": [
+                {"lat": 45.5152, "lon": -122.6784},
+                {"lat": 45.3311, "lon": -121.7113},
+            ],
+            "intent": "unpaved",
+        }
+        return client.post("/api/routing/leg", json=body).json()
+
+    def test_the_response_carries_an_estimate(self, routed):
+        assert routed["estimated_duration_s"] > 0
+
+    def test_it_is_not_the_providers_figure(self, routed):
+        """`FakeProvider` assumes ~54 km/h flat; the estimate weights by surface."""
+        assert routed["estimated_duration_s"] != routed["leg"]["duration_s"]
+
+    def test_the_providers_figure_is_still_reported(self, routed):
+        """Honest about what the engine said, even though nothing user-facing reads it."""
+        assert routed["leg"]["duration_s"] > 0
+
+    def test_a_longer_leg_takes_longer(self, client):
+        def duration(lat: float) -> float:
+            body = {
+                "waypoints": [{"lat": 45.0, "lon": -121.0}, {"lat": lat, "lon": -121.0}],
+                "intent": "unpaved",
+            }
+            estimate = client.post("/api/routing/leg", json=body).json()["estimated_duration_s"]
+            return float(estimate)
+
+        assert duration(46.0) < duration(48.0)

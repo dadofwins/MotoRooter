@@ -28,7 +28,10 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Fetch POI display data (not yet implemented) */
+        /**
+         * Fetch POI display data
+         * @description Live Places data for the POI dialog. Never cached server-side: Google's terms permit storing `place_id` and little else, so ratings, hours and reviews are fetched per request. Fields are frequently absent — dispersed camping in particular — and that is a normal response rather than an error.
+         */
         get: operations["get_place_detail_api_places__place_id__get"];
         put?: never;
         post?: never;
@@ -507,6 +510,11 @@ export interface components {
         };
         /** RouteLegResponse */
         RouteLegResponse: {
+            /**
+             * Estimated Duration S
+             * @description Riding time derived from distance and surface, in seconds. Use this, not `leg.duration_s` — hosted ORS routes dirt through a bicycle profile and reports bicycle times, measured at 8 hours for 133 km. Computed server-side so the speed table has one home rather than being reimplemented per client.
+             */
+            estimated_duration_s: number;
             leg: components["schemas"]["RouteLeg"];
             /**
              * Live Update Interval Ms
@@ -747,7 +755,10 @@ export interface operations {
     };
     get_place_detail_api_places__place_id__get: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description The category the client already holds, used only when Places' own types do not map to one. Never overrides what Places says. */
+                category?: components["schemas"]["PoiCategory"] | null;
+            };
             header?: never;
             path: {
                 place_id: string;
@@ -756,6 +767,15 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PoiDetailResponse"];
+                };
+            };
             /** @description Bad Request */
             400: {
                 headers: {
@@ -801,7 +821,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description Successful Response */
+            /** @description Not Implemented */
             501: {
                 headers: {
                     [name: string]: unknown;

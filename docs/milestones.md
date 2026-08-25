@@ -45,8 +45,11 @@ and nothing else in the backend queue should precede it.
    replan endpoint. Every tool wraps the same service function the REST endpoint calls — the
    chat path and the mouse path must not diverge, because item 5 is the same operation
    reached both ways.
-2. **Discovery**, behind the Replan button. LLM proposes candidates; nothing reaches the map
-   unresolved. Waypoint density per M0 applies to *route* waypoints, not POIs.
+2. **Discovery**, behind the Replan button. Three stages — Brave web search, Google Places
+   resolution, then scoring from computed metrics plus LLM judgement. See "Discovery
+   architecture" in the root `CLAUDE.md`; the rule that matters is *measure what is
+   measurable, ask the model only what is not*. Nothing reaches the map unresolved.
+   Waypoint density per M0 applies to *route* waypoints, not POIs.
 3. **Places enrichment** (`GET /api/places/{place_id}`, currently a 501 stub with a frozen
    schema). Independent of the LLM work — worth doing first if the tool layer stalls, since
    it unblocks the frontend's dialog.

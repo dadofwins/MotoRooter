@@ -67,6 +67,7 @@ Update this section as reality changes, and do not describe a component as exist
 | Routing | Pluggable providers (see Routing architecture); first adapters: hosted OpenRouteService for unpaved, Google Directions for on-road |
 | POI enrichment | Google Places API |
 | LLM | OpenAI, function/tool calling |
+| Web search | Brave Search API (discovery stage 1) |
 | Hosting | Google Cloud Run |
 | Storage | Cloud Storage bucket, trip-name-prefixed |
 
@@ -212,6 +213,73 @@ told a four-hour day takes eight. Derive ETA from distance and surface; ignore
 Unresolved: reported ascent (6,400–8,800 m against the reference's 3,188 m) looks wrong.
 Either the profile takes much steeper lines or ORS elevation is noisy over gravel. Do not show
 climb figures to a user until someone checks.
+
+## Discovery architecture
+
+Discovery has three stages, and they answer different questions with different tools. Mixing
+them is the main way this goes wrong.
+
+```
+  SEARCH            RESOLVE                  JUDGE
+  Brave web search  Google Places lookup     computed metrics + LLM
+  what exists and   does it exist, where     how good is it, and
+  what is it like   exactly, and is it open  is it worth the detour
+```
+
+**1. Search — Brave.** This is the only source for the half of the product that matters most.
+Places knows a restaurant exists and its rating; it does not know a road is a great
+motorcycle road. That knowledge lives in ride reports, forum threads, BDR guides and blogs,
+and web search is the only way to reach it. Queries are generated per corridor and per
+category: "best motorcycle roads near <pass>", "wild camping <forest> BDR", "<town>
+motorcycle friendly hotel".
+
+**2. Resolve — Google Places.** Search results and model output are both *claims*. Places
+turns a claim into a real `place_id` with real coordinates, hours and rating. Nothing reaches
+the map unresolved — the `Poi` model already refuses to pin an unverified LLM suggestion to
+the route. A candidate that will not resolve is dropped, not guessed at.
+
+**3. Judge — computed first, LLM second.**
+
+> **Measure what is measurable; ask the model only what is not.**
+
+This is the rule that keeps discovery cheap, deterministic and testable. A great deal of
+"how interesting is this road" is arithmetic on geometry we already have:
+
+| Signal | How |
+|---|---|
+| Twistiness | Summed absolute heading change per km, from the leg geometry |
+| Elevation gain/loss | From ORS elevation, already requested |
+| Surface mix | `SurfaceSpan`s, already parsed |
+| Detour cost | Added distance and time versus the direct line |
+| Remoteness | Distance to the nearest fuel POI |
+
+None of that needs a model, and a model would be slower, non-deterministic, and capable of
+being confidently wrong about a number it could have computed. Compute them, test them,
+and feed them to the LLM as *evidence*.
+
+The LLM then judges what genuinely needs judgement: is this scenic, is it locally famous, is
+the detour worth it for this rider, does the ride report say it washes out in spring. It
+receives the computed metrics and the search snippets and returns a score with a reason —
+never a coordinate it invented, and never a number it could have been given.
+
+### Building it
+
+Mirror the routing layer, which exists and works:
+
+- A `DiscoverySource` protocol with adapters (`brave`, `places`, `llm`), no source name
+  outside its own module, and a shared contract test suite every adapter passes.
+- The same decorator stack: caching, retry, quota. Brave and Places are both metered, and
+  discovery fans out far more requests per user action than routing does.
+- Hermetic tests. Recorded fixtures for Brave, Places and OpenAI; no test touches a live API.
+
+### Constraints
+
+- **Places caching stays limited to `place_id`.** Unchanged by any of this.
+- **Check Brave's terms before caching result text.** Caching a `place_id` is settled;
+  caching search snippets is not, and nobody should assume.
+- **Every tool the assistant can call must also be reachable by mouse.** Discovery is the
+  biggest test of that rule: "find me more restaurants on the route" and a Restaurants button
+  must run the same service function, not two implementations that drift.
 
 ## Surface reporting: unknown stays unknown
 

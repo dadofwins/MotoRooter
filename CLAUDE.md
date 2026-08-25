@@ -15,9 +15,16 @@ tool to the LLM layer, you owe it a UI affordance in the same change.
 
 ## Status
 
-Greenfield. The repo currently holds only `README.md`, GPL-3.0 `LICENSE`, and a Python
-`.gitignore`. Nothing below is built yet — it is the agreed target design. Update this file as
-reality catches up, and do not describe a component as existing until it does.
+**Built:** the routing layer end to end — domain models, `RoutingProvider` protocol, shared adapter
+contract suite, `FakeProvider`, ORS and Google Directions adapters, polyline codec, registry,
+policy resolver, caching/retry/quota decorators, and the config factory. Plus the frontend
+`DragScheduler` (fast-path throttle, sequence numbers, commit-on-release), an app shell, the
+multi-stage Dockerfile, and Cloud Build config.
+
+**Not built:** trip persistence to Cloud Storage, the LLM tool layer, discovery and Places
+enrichment, GPX export, the Google Maps canvas, and the chat UI.
+
+Update this section as reality changes, and do not describe a component as existing until it does.
 
 ## Stack
 
@@ -275,17 +282,25 @@ re-run. Drive throttle tests with an injected clock — never `setTimeout` and a
 
 ## Commands
 
-None exist yet. When scaffolding, create them at these names so this section stays true:
-
 ```
-make dev            # backend + frontend dev servers
-make test           # full suite
-make lint           # ruff + eslint + type checks
-make deploy         # build and deploy to Cloud Run
+make install        # uv sync + npm install
+make dev            # backend :8000 (offline mode) + frontend :5173
+make check          # lint + typecheck + test — everything CI runs
+make test           # pytest + vitest
+make lint           # ruff check + eslint
+make typecheck      # mypy --strict + tsc --noEmit
+make fmt            # ruff format + --fix
+make deploy         # Cloud Build -> Cloud Run
 
-pytest path/to/test_file.py::test_name     # single backend test
-npm test -- -t "test name"                 # single frontend test
+cd backend  && uv run pytest tests/routing/test_ors.py::TestOrsContract   # single backend test
+cd frontend && npx vitest run -t "drag end"                               # single frontend test
 ```
+
+Python dependencies are managed with **uv** — `uv sync`, `uv add`, `uv run`. Never `pip` or a
+hand-rolled venv; `uv.lock` is committed and `--frozen` is used in the container build.
+
+`MOTOROOTER_OFFLINE=1` registers only `FakeProvider`, so the app and the whole test suite run
+with no API keys. `make dev-backend` sets it by default.
 
 Secrets (OpenAI, Google Maps, routing provider keys) come from Secret Manager in Cloud Run and a
 gitignored `.env` locally. The Maps JS API key is necessarily public — restrict it by HTTP referrer

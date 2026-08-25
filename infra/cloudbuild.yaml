@@ -1,0 +1,37 @@
+# Build and deploy the single Cloud Run service.
+# Secrets stay in Secret Manager and are bound at deploy time, never baked into the image.
+
+substitutions:
+  _SERVICE: motorooter
+  _REGION: us-west1
+
+steps:
+  - name: gcr.io/cloud-builders/docker
+    args:
+      - build
+      - -f
+      - infra/Dockerfile
+      - -t
+      - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_SERVICE}/${_SERVICE}:$SHORT_SHA
+      - .
+
+  - name: gcr.io/cloud-builders/docker
+    args:
+      - push
+      - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_SERVICE}/${_SERVICE}:$SHORT_SHA
+
+  - name: gcr.io/google.com/cloudsdktool/cloud-sdk
+    entrypoint: gcloud
+    args:
+      - run
+      - deploy
+      - ${_SERVICE}
+      - --image=${_REGION}-docker.pkg.dev/$PROJECT_ID/${_SERVICE}/${_SERVICE}:$SHORT_SHA
+      - --region=${_REGION}
+      - --platform=managed
+      - --allow-unauthenticated
+      - --set-env-vars=TRIPS_BUCKET=${PROJECT_ID}-motorooter-trips
+      - --set-secrets=ORS_API_KEY=ors-api-key:latest,GOOGLE_MAPS_SERVER_KEY=google-maps-server-key:latest,OPENAI_API_KEY=openai-api-key:latest
+
+options:
+  logging: CLOUD_LOGGING_ONLY

@@ -1,0 +1,52 @@
+:root {
+  --chat-width: 380px;
+  color-scheme: light dark;
+  font-family: system-ui, -apple-system, 'Segoe UI', sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+}
+
+.app {
+  display: grid;
+  grid-template-columns: 1fr var(--chat-width);
+  height: 100vh;
+}
+
+.map-pane {
+  position: relative;
+  background: #e8e6e1;
+}
+
+.chat-pane {
+  display: flex;
+  flex-direction: column;
+  border-left: 1px solid rgb(0 0 0 / 0.12);
+  padding: 1rem;
+  overflow-y: auto;
+}
+
+.placeholder {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-content: center;
+  color: rgb(0 0 0 / 0.4);
+}
+
+.greeting {
+  margin: 0;
+  line-height: 1.5;
+}
+
+@media (max-width: 720px) {
+  .app {
+    grid-template-columns: 1fr;
+    grid-template-rows: 1fr auto;
+  }
+}

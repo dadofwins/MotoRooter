@@ -103,12 +103,46 @@ class TestTheRequest:
         assert mock_places.calls.last.request.headers["x-goog-fieldmask"]
 
     async def test_the_field_mask_requests_only_what_is_used(self, mock_places):
-        """Asking for photos or reviews would raise the tier for data we may not store."""
+        """Ratings are in, photos and reviews are out.
+
+        The mask sets the billing tier, so this is a cost decision as much as a data one. A
+        rating is a fact about whether a place is worth stopping at and the judge should be
+        handed it. Photos and reviews cannot be stored under Google's terms and nothing
+        displays them, so requesting them would pay a higher tier for data thrown away.
+        """
         await resolver().resolve([candidate()], route=ROUTE)
         mask = mock_places.calls.last.request.headers["x-goog-fieldmask"]
         assert "places.id" in mask
+        assert "places.rating" in mask
         assert "photos" not in mask
         assert "reviews" not in mask
+
+    async def test_a_rating_is_carried_through(self):
+        with respx.mock(assert_all_called=False) as mock:
+            mock.post(PLACES_SEARCH_URL).mock(
+                return_value=httpx.Response(200, json=body(place(rating=4.4, userRatingCount=15)))
+            )
+            resolved = await resolver().resolve([candidate()], route=ROUTE)
+        assert resolved[0].rating == pytest.approx(4.4)
+        assert resolved[0].user_rating_count == 15
+
+    async def test_a_missing_rating_is_absent_not_zero(self):
+        """Unrated is not badly rated, and a zero would rank it below a one-star diner."""
+        with respx.mock(assert_all_called=False) as mock:
+            mock.post(PLACES_SEARCH_URL).mock(return_value=httpx.Response(200, json=body(place())))
+            resolved = await resolver().resolve([candidate()], route=ROUTE)
+        assert resolved[0].rating is None
+
+    @pytest.mark.parametrize("bogus", [7.0, -1.0, "great", True, None])
+    async def test_an_impossible_rating_is_dropped_rather_than_clamped(self, bogus):
+        """A 7-star rating means the field is not what we think it is; inventing a 5 hides
+        that, and a clamped value is indistinguishable from a real one."""
+        with respx.mock(assert_all_called=False) as mock:
+            mock.post(PLACES_SEARCH_URL).mock(
+                return_value=httpx.Response(200, json=body(place(rating=bogus)))
+            )
+            resolved = await resolver().resolve([candidate()], route=ROUTE)
+        assert resolved[0].rating is None
 
     async def test_the_candidate_name_is_the_query(self, mock_places):
         await resolver().resolve([candidate("Road to Snag Lake")], route=ROUTE)
@@ -278,9 +312,16 @@ class TestNothingButADiscoveryErrorEscapes:
 class TestNothingBeyondPlaceIdIsPersisted:
     """Google's terms permit storing `place_id` indefinitely and very little else."""
 
-    async def test_the_resolved_record_has_no_rating_field(self, mock_places):
-        resolved = await resolver().resolve([candidate()], route=ROUTE)
-        assert not hasattr(resolved[0], "rating")
+    async def test_a_rating_never_reaches_the_persisted_shape(self):
+        """It is carried in memory for the judge. `to_poi` is the boundary that drops it,
+        and `Poi` is the only thing ever written to storage."""
+        with respx.mock(assert_all_called=False) as mock:
+            mock.post(PLACES_SEARCH_URL).mock(
+                return_value=httpx.Response(200, json=body(place(rating=4.4, userRatingCount=15)))
+            )
+            resolved = await resolver().resolve([candidate()], route=ROUTE)
+        assert resolved[0].rating == pytest.approx(4.4)
+        assert "rating" not in resolved[0].to_poi(poi_id="p1").model_dump()
 
     async def test_the_poi_it_produces_carries_only_the_place_id(self, mock_places):
         resolved = await resolver().resolve([candidate()], route=ROUTE)

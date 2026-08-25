@@ -6,7 +6,9 @@ against: there is no WABDR track that says "yes, that is a good place to camp". 
 reference, so the output has to be something he can read and say "no, I would not stop
 there" — before any of it is wired into scoring.
 
-Search and extract. Resolve and judge print as TODO so the shape stays visible.
+All four stages: search, extract, resolve, judge. Ranked output, with the evidence each
+score was based on, so a wrong ranking can be traced to a missing measurement rather than
+argued about.
 
 The extract stage exists because the first run of this script showed search returning pages
 *about* places rather than places — the output below is the check on whether that is fixed.
@@ -29,6 +31,8 @@ from motorooter.planning.discovery.corridor import anchors, spacing_of  # noqa: 
 from motorooter.llm.providers.openai import OpenAiClient  # noqa: E402
 from motorooter.planning.discovery.errors import DiscoveryError  # noqa: E402
 from motorooter.planning.discovery.extract import PlaceExtractor  # noqa: E402
+from motorooter.planning.discovery.judge import CandidateJudge, _describe  # noqa: E402
+from motorooter.planning.discovery.resolve import PlacesResolver  # noqa: E402
 from motorooter.planning.discovery.queries import queries_for, total_queries  # noqa: E402
 from motorooter.planning.discovery.sources.brave import BraveSearchSource  # noqa: E402
 from motorooter.routing.models import Coordinate, LegIntent, RouteRequest  # noqa: E402
@@ -40,9 +44,11 @@ from motorooter.trips.models import PoiCategory  # noqa: E402
 START = Coordinate(lat=46.9720, lon=-121.5340)
 END = Coordinate(lat=46.8722, lon=-121.5165)
 
-# Named places along it. Turning an anchor coordinate into a place name is the next stage to
-# build — Brave cannot search "47.0,-121.0" — so for now the names are supplied by hand and
-# the anchors only decide how many of them a real corridor would need.
+# Hand-supplied, because turning an anchor coordinate into a place name is not built yet —
+# Brave cannot search "47.0,-121.0". This is also the spike's main flaw and worth stating:
+# these three span roughly 40 km of road while the corridor below is 18 km long, so places
+# found near the outer two are legitimately outside it and get dropped. A real run would
+# derive names *from* the anchors, keeping the two consistent by construction.
 PLACES = ["Chinook Pass", "Cayuse Pass", "Crystal Mountain"]
 
 CATEGORIES = [
@@ -65,8 +71,13 @@ async def main() -> int:
     ors_key = os.environ.get("ORS_API_KEY")
     openai_key = os.environ.get("OPENAI_API_KEY")
     model = os.environ.get("MOTOROOTER_LLM_MODEL", "gpt-5-mini")
-    if not brave_key or not ors_key or not openai_key:
-        print("need BRAVE_SEARCH_API_KEY, ORS_API_KEY and OPENAI_API_KEY", file=sys.stderr)
+    places_key = os.environ.get("GOOGLE_MAPS_SERVER_KEY")
+    if not brave_key or not ors_key or not openai_key or not places_key:
+        print(
+            "need BRAVE_SEARCH_API_KEY, ORS_API_KEY, OPENAI_API_KEY and "
+            "GOOGLE_MAPS_SERVER_KEY",
+            file=sys.stderr,
+        )
         return 1
 
     leg = await OrsProvider(api_key=ors_key).route(
@@ -79,41 +90,53 @@ async def main() -> int:
     print(f"a full run would cost {total_queries(placed, CATEGORIES)} searches")
     print(f"this spike runs {len(PLACES) * len(CATEGORIES)} of them, on named places\n")
 
+    llm = OpenAiClient(api_key=openai_key, model=model)
     source = BraveSearchSource(api_key=brave_key)
-    extractor = PlaceExtractor(OpenAiClient(api_key=openai_key, model=model))
+    extractor = PlaceExtractor(llm)
+    resolver = PlacesResolver(api_key=places_key)
+    scorer = CandidateJudge(llm)
 
     searched = 0
-    extracted = 0
+    named = []
     for place in PLACES:
         for query in queries_for(place, CATEGORIES):
             try:
                 results = await source.search(query, near=placed[0], limit=3)
             except DiscoveryError as exc:
-                print(f"  [{query.category.value}] {query.text}\n      FAILED: {exc}\n")
+                print(f"  search failed [{query.category.value}] {place}: {exc}")
                 continue
-
             searched += len(results)
-            print(f"  [{query.category.value}] {query.text}")
-            for result in results:
-                print(f"      page:  {result.name}")
-
-            named = await extractor.extract(
-                results, region=REGION, searched_for=query.place
+            named.extend(
+                await extractor.extract(results, region=REGION, searched_for=query.place)
             )
-            extracted += len(named)
-            if not named:
-                print("      -> no place named\n")
-                continue
-            for candidate in named:
-                print(f"      PLACE: {candidate.name}")
-                if candidate.snippet:
-                    print(wrap(candidate.snippet, indent="             "))
-            print()
 
-    print(f"{searched} search results -> {extracted} named places.")
-    print("All still unverified: none has a place_id or a real coordinate.")
-    print("TODO resolve: Places lookup turns each name into a place_id, or drops it.")
-    print("TODO judge:   computed metrics plus the snippets above, scored with a reason.")
+    try:
+        resolved = await resolver.resolve(named, route=leg.geometry)
+    except DiscoveryError as exc:
+        print(f"resolve failed: {exc}", file=sys.stderr)
+        return 1
+
+    dropped = len(named) - len(resolved)
+    rate = dropped / len(named) if named else 0.0
+    print(f"{searched} search results -> {len(named)} named -> {len(resolved)} resolved")
+    print(f"dropped at resolve: {dropped} ({rate:.0%})")
+    if rate > 0.8:
+        print("  NOTE: measured once at 83%, and every drop was correct — the names all")
+        print("        resolved, they were just 30-1465 km away. Suspect the search")
+        print("        anchors before suspecting the filter.")
+    print()
+
+    scored = await scorer.judge(resolved, leg)
+    if not scored:
+        print("nothing scored.")
+        return 0
+
+    print(f"{len(scored)} places, best first:\n")
+    for rank, item in enumerate(scored, start=1):
+        candidate = item.resolved.candidate
+        print(f"{rank:2}. {item.score:.2f}  {candidate.name}  [{candidate.category.value}]")
+        print(f"      why:      {item.reason}")
+        print(f"      measured: {_describe(item.evidence)}")
     return 0
 
 

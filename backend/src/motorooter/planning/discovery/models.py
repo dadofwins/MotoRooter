@@ -70,6 +70,20 @@ class ResolvedCandidate(BaseModel):
     coordinate: Coordinate
     """From Places. Not the claim — a source naming the wrong valley must not move the pin."""
 
+    rating: float | None = Field(default=None, ge=0.0, le=5.0)
+    user_rating_count: int | None = Field(default=None, ge=0)
+    """Places' own rating, carried in memory for the judge and **never persisted**.
+
+    Google's terms permit storing `place_id` indefinitely and very little else, so these live
+    only on the way through: `to_poi` copies the id and drops them, which is the boundary
+    that enforces the rule. Anything that writes a `ResolvedCandidate` to storage would
+    breach it, so nothing does — `Poi` is the only persisted shape.
+
+    Worth having: "4.4 stars from 15 reviews" is real evidence about whether a place is
+    worth stopping at, and it is a fact rather than a judgement, so the model should be
+    handed it rather than asked to guess.
+    """
+
     distance_off_route_m: float | None = Field(default=None, ge=0.0)
     """How far off the corridor it sits, measured when the coordinate first existed.
 

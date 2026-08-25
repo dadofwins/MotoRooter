@@ -20,6 +20,7 @@ little else, so ratings and photos are not requested here at all — the field m
 determines the billing tier, so asking for data we may not keep would cost money for nothing.
 """
 
+import dataclasses
 import logging
 from collections.abc import Sequence
 from typing import Any
@@ -38,14 +39,30 @@ from motorooter.routing.models import Coordinate
 
 logger = logging.getLogger(__name__)
 
+
+@dataclasses.dataclass(frozen=True)
+class _Place:
+    """What one Places match gave us."""
+
+    place_id: str
+    coordinate: Coordinate
+    rating: float | None = None
+    user_rating_count: int | None = None
+
+
 PLACES_SEARCH_URL = "https://places.googleapis.com/v1/places:searchText"
 
-FIELD_MASK = "places.id,places.displayName,places.location"
+FIELD_MASK = "places.id,places.displayName,places.location,places.rating,places.userRatingCount"
 """Exactly what is used, and nothing more.
 
-Mandatory on this API, and it selects the billing tier. Photos, reviews and opening hours are
-deliberately absent: they may not be stored under Google's terms, so requesting them here
-would raise the tier to fetch data that has to be thrown away.
+Mandatory on this API, and it selects the billing tier. `rating` and `userRatingCount` move
+the request to a higher SKU than id-and-location alone, which is a deliberate trade: a rating
+is a *fact* about whether a place is worth stopping at, and handing the judge a fact beats
+asking a model to guess one. Cost is explicitly not a constraint on this prototype.
+
+Photos, reviews and opening hours stay out. They cannot be stored under Google's terms and
+nothing displays them yet, so requesting them would raise the tier again to fetch data that
+is thrown away.
 """
 
 DEFAULT_CORRIDOR_M = 15_000.0
@@ -103,8 +120,7 @@ class PlacesResolver:
             if found is None:
                 continue
 
-            place_id, coordinate = found
-            distance = nearest_distance_m(route, coordinate) if route else None
+            distance = nearest_distance_m(route, found.coordinate) if route else None
             if distance is not None and distance > corridor_m:
                 logger.info("dropped %r: %.0f m off the corridor", candidate.name, distance)
                 continue
@@ -112,14 +128,16 @@ class PlacesResolver:
             resolved.append(
                 ResolvedCandidate(
                     candidate=candidate,
-                    place_id=place_id,
-                    coordinate=coordinate,
+                    place_id=found.place_id,
+                    coordinate=found.coordinate,
+                    rating=found.rating,
+                    user_rating_count=found.user_rating_count,
                     distance_off_route_m=distance,
                 )
             )
         return tuple(resolved)
 
-    async def _lookup(self, candidate: Candidate) -> tuple[str, Coordinate] | None:
+    async def _lookup(self, candidate: Candidate) -> _Place | None:
         payload: dict[str, Any] = {
             "textQuery": candidate.name,
             "maxResultCount": 1,
@@ -187,7 +205,7 @@ class PlacesResolver:
         raise DiscoveryRefused(msg)
 
     @staticmethod
-    def _first_place(response: httpx.Response) -> tuple[str, Coordinate] | None:
+    def _first_place(response: httpx.Response) -> "_Place | None":
         """The first usable match, or `None`.
 
         Anything missing an id or a location is treated as no match rather than an error: a
@@ -221,8 +239,29 @@ class PlacesResolver:
             return None
 
         try:
-            return place_id, Coordinate(lat=float(lat), lon=float(lon))
+            coordinate = Coordinate(lat=float(lat), lon=float(lon))
         except ValueError:
             # Out of range. Places should not do this, but a coordinate that fails the
             # domain's own validation is not one to put on a map.
             return None
+
+        return _Place(
+            place_id=place_id,
+            coordinate=coordinate,
+            rating=_number(first.get("rating"), 0.0, 5.0),
+            user_rating_count=_count(first.get("userRatingCount")),
+        )
+
+
+def _number(value: Any, low: float, high: float) -> float | None:  # noqa: ANN401 -- raw JSON
+    """A rating, if it is one. Out-of-range values are dropped rather than clamped: a 7-star
+    rating means the field is not what we think it is, and inventing a 5 would hide that."""
+    if isinstance(value, bool) or not isinstance(value, int | float):
+        return None
+    return float(value) if low <= value <= high else None
+
+
+def _count(value: Any) -> int | None:  # noqa: ANN401 -- raw JSON
+    if isinstance(value, bool) or not isinstance(value, int):
+        return None
+    return value if value >= 0 else None

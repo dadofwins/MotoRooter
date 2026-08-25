@@ -659,6 +659,11 @@
       },
       "RouteLegResponse": {
         "properties": {
+          "estimated_duration_s": {
+            "description": "Riding time derived from distance and surface, in seconds. Use this, not `leg.duration_s` \u2014 hosted ORS routes dirt through a bicycle profile and reports bicycle times, measured at 8 hours for 133 km. Computed server-side so the speed table has one home rather than being reimplemented per client.",
+            "title": "Estimated Duration S",
+            "type": "number"
+          },
           "leg": {
             "$ref": "#/components/schemas/RouteLeg"
           },
@@ -676,7 +681,8 @@
           }
         },
         "required": [
-          "leg"
+          "leg",
+          "estimated_duration_s"
         ],
         "title": "RouteLegResponse",
         "type": "object"
@@ -1085,6 +1091,7 @@
     },
     "/api/places/{place_id}": {
       "get": {
+        "description": "Live Places data for the POI dialog. Never cached server-side: Google's terms permit storing `place_id` and little else, so ratings, hours and reviews are fetched per request. Fields are frequently absent \u2014 dispersed camping in particular \u2014 and that is a normal response rather than an error.",
         "operationId": "get_place_detail_api_places__place_id__get",
         "parameters": [
           {
@@ -1095,9 +1102,37 @@
               "title": "Place Id",
               "type": "string"
             }
+          },
+          {
+            "description": "The category the client already holds, used only when Places' own types do not map to one. Never overrides what Places says.",
+            "in": "query",
+            "name": "category",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/PoiCategory"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "The category the client already holds, used only when Places' own types do not map to one. Never overrides what Places says.",
+              "title": "Category"
+            }
           }
         ],
         "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PoiDetailResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
           "400": {
             "content": {
               "application/json": {
@@ -1156,7 +1191,7 @@
                 }
               }
             },
-            "description": "Successful Response"
+            "description": "Not Implemented"
           },
           "502": {
             "content": {
@@ -1179,7 +1214,7 @@
             "description": "Service Unavailable"
           }
         },
-        "summary": "Fetch POI display data (not yet implemented)",
+        "summary": "Fetch POI display data",
         "tags": [
           "places"
         ]

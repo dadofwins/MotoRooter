@@ -87,6 +87,14 @@ class RouteLegResponse(BaseModel):
         default=None,
         description="Throttle budget for the engine that served this leg.",
     )
+    estimated_duration_s: float = Field(
+        description=(
+            "Riding time derived from distance and surface, in seconds. Use this, not "
+            "`leg.duration_s` — hosted ORS routes dirt through a bicycle profile and "
+            "reports bicycle times, measured at 8 hours for 133 km. Computed server-side "
+            "so the speed table has one home rather than being reimplemented per client."
+        )
+    )
 
 
 class CreateTripRequest(BaseModel):

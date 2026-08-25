@@ -15,7 +15,7 @@ imports `trips`, and the reverse would be a cycle.
 
 import dataclasses
 
-from motorooter.routing.models import Surface
+from motorooter.routing.models import RouteLeg, Surface
 
 _SECONDS_PER_HOUR = 3600.0
 _METRES_PER_KM = 1000.0
@@ -72,3 +72,19 @@ class RidingSpeeds:
 
 DEFAULT_RIDING_SPEEDS = RidingSpeeds()
 """The table in use. Provisional — see `RidingSpeeds`."""
+
+
+def estimate_leg_duration_s(leg: RouteLeg, speeds: RidingSpeeds = DEFAULT_RIDING_SPEEDS) -> float:
+    """Riding time for one leg, from its distance and surface mix.
+
+    Lives here rather than on `RouteLeg` because the dependency only runs one way: this
+    module imports `routing.models` for `Surface`, so a `RouteLeg` reaching back for the
+    speed table would close a cycle. It is also the honest boundary — the domain model
+    should keep reporting what the provider said, and the layers above should say what we
+    believe instead.
+    """
+    return (
+        speeds.seconds_for(leg.paved_distance_m, Surface.PAVED)
+        + speeds.seconds_for(leg.unpaved_distance_m, Surface.UNPAVED)
+        + speeds.seconds_for(leg.unknown_distance_m, Surface.UNKNOWN)
+    )

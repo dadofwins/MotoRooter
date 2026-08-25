@@ -28,7 +28,11 @@ from pydantic import (
 
 from motorooter.error_codes import ErrorCode
 from motorooter.routing.models import Coordinate, LegIntent, RouteLeg, Surface
-from motorooter.speeds import DEFAULT_RIDING_SPEEDS, RidingSpeeds
+from motorooter.speeds import (
+    DEFAULT_RIDING_SPEEDS,
+    RidingSpeeds,
+    estimate_leg_duration_s,
+)
 
 CURRENT_SCHEMA_VERSION = 1
 
@@ -292,12 +296,7 @@ class Trip(BaseModel):
 
     def estimate_duration_s(self, speeds: RidingSpeeds = DEFAULT_RIDING_SPEEDS) -> float:
         """Riding time under a given speed table, so the table can be varied in tests."""
-        return sum(
-            speeds.seconds_for(leg.paved_distance_m, Surface.PAVED)
-            + speeds.seconds_for(leg.unpaved_distance_m, Surface.UNPAVED)
-            + speeds.seconds_for(leg.unknown_distance_m, Surface.UNKNOWN)
-            for leg in self.routed_legs
-        )
+        return sum(estimate_leg_duration_s(leg, speeds) for leg in self.routed_legs)
 
     def _surface_fraction(self, surface: Surface) -> float:
         measured = sum(leg.geometry_length_m for leg in self.routed_legs)

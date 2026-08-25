@@ -46,6 +46,24 @@ typecheck: ## mypy --strict and tsc --noEmit
 	cd backend && uv run mypy
 	cd frontend && npm run typecheck
 
+PREVIEW_DIR ?= /tmp/motorooter-preview
+
+preview: ## Run an unmerged branch for hands-on testing. make preview BRANCH=fe/map-canvas
+	@test -n "$(BRANCH)" || { echo 'usage: make preview BRANCH=fe/map-canvas'; exit 1; }
+	@git fetch -q origin
+	@rm -rf $(PREVIEW_DIR) && git worktree prune
+	@git worktree add -q --detach $(PREVIEW_DIR) origin/$(BRANCH)
+	@# Local secrets live outside git, so carry them into the scratch checkout.
+	@test -f frontend/.env.local && cp frontend/.env.local $(PREVIEW_DIR)/frontend/ || true
+	@test -f backend/.env && cp backend/.env $(PREVIEW_DIR)/backend/ || true
+	@echo "=== $(BRANCH) checked out at $(PREVIEW_DIR) ==="
+	@cd $(PREVIEW_DIR) && $(MAKE) --no-print-directory install >/dev/null
+	@echo "=== starting: API on :8000 (offline, no keys needed), UI on :5173 ==="
+	@cd $(PREVIEW_DIR) && $(MAKE) --no-print-directory dev
+
+preview-clean: ## Remove the preview worktree
+	@rm -rf $(PREVIEW_DIR) && git worktree prune && echo "removed $(PREVIEW_DIR)"
+
 contract: ## Regenerate shared/openapi.json and the frontend TypeScript types
 	cd backend && uv run python scripts/export_openapi.py
 	cd frontend && npm run generate:types

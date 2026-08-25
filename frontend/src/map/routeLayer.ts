@@ -110,7 +110,11 @@ export function polylineStyle(surface: Surface): google.maps.PolylineOptions {
       return { ...shared, strokeColor: '#1f6feb', strokeWeight: 5, strokeOpacity: 0.95 }
     case 'unknown':
     default:
-      // Absence of surface data is not evidence of dirt: muted, but still solid.
-      return { ...shared, strokeColor: '#6b7280', strokeWeight: 4, strokeOpacity: 0.8 }
+      // Absence of surface data is not evidence of dirt — but it is not a reason to recede
+      // either. Grey at the same weight and opacity as the rest: three equally present
+      // states differing in what is *known*, not in how much they matter. Thinner and
+      // fainter, over a basemap whose own roads are grey and white, made the unsurveyed
+      // third of a real route dissolve into the map and read as missing.
+      return { ...shared, strokeColor: '#6b7280', strokeWeight: 5, strokeOpacity: 0.95 }
   }
 }

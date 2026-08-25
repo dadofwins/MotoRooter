@@ -100,6 +100,16 @@ export interface MapCanvasProps {
   readonly colorScheme?: MapColorScheme
   /** A click on the basemap, in domain coordinates. The mouse path for setting points. */
   readonly onMapClick?: (coordinate: Coordinate) => void
+
+  /**
+   * The route line was pressed. Return whether a drag should start — a leg with no geometry
+   * cannot be dragged, and refusing here keeps the map pannable.
+   */
+  readonly onLegGrab?: (legIndex: number, at: Coordinate) => boolean
+  /** The pointer moved during a drag. Throttling belongs to the caller, not here. */
+  readonly onLegDrag?: (at: Coordinate) => void
+  /** The drag ended. Always fires once a drag has started, wherever the button came up. */
+  readonly onLegDrop?: (at: Coordinate) => void
 }
 
 export function MapCanvas({
@@ -111,6 +121,9 @@ export function MapCanvas({
   mapId,
   colorScheme,
   onMapClick,
+  onLegGrab,
+  onLegDrag,
+  onLegDrop,
 }: MapCanvasProps): React.JSX.Element {
   const containerRef = useRef<HTMLDivElement>(null)
   const mapRef = useRef<google.maps.Map | null>(null)
@@ -134,10 +147,25 @@ export function MapCanvas({
    */
   const hasMapId = (mapId ?? '') !== ''
 
-  // Read at click time rather than captured, so a new handler does not mean a new listener.
+  // Read at event time rather than captured, so a new handler does not mean a new listener.
   useEffect(() => {
     onMapClickRef.current = onMapClick
   }, [onMapClick])
+
+  const dragHandlers = useRef<Pick<MapCanvasProps, 'onLegGrab' | 'onLegDrag' | 'onLegDrop'>>({})
+  useEffect(() => {
+    dragHandlers.current = { onLegGrab, onLegDrag, onLegDrop }
+  }, [onLegGrab, onLegDrag, onLegDrop])
+
+  /** The gesture in progress, if any. Held in a ref: no render depends on it. */
+  const gesture = useRef<{ last: Coordinate } | null>(null)
+  /** Ends the current gesture. Owned by the map effect, called from the line listeners. */
+  const endGestureRef = useRef<((at: Coordinate) => void) | null>(null)
+  /**
+   * Google emits a click after the mouseup that ended a drag. Without this, letting go of
+   * the line would also drop a new waypoint wherever the drag finished.
+   */
+  const justDragged = useRef(false)
 
   // The camera the map is born with. Computed once: see the note about rebuilding above.
   const [initialOptions] = useState(() =>
@@ -150,6 +178,9 @@ export function MapCanvas({
   )
 
   const segments = useMemo(() => toRouteSegments(legs), [legs])
+
+  // No handler, no listeners: a route nobody is listening to should not look interactive.
+  const draggable = onLegGrab !== undefined
 
   useEffect(() => {
     // `cancelled` is what keeps a superseded attempt from landing: a slow rejection
@@ -180,13 +211,55 @@ export function MapCanvas({
 
     const map = new maps.Map(container, initialOptions)
     mapRef.current = map
-    const listener = map.addListener('click', (event: google.maps.MapMouseEvent) => {
-      if (event.latLng === null) return
-      onMapClickRef.current?.(toCoordinate(event.latLng))
-    })
+
+    const endGesture = (at: Coordinate): void => {
+      if (gesture.current === null) return
+      gesture.current = null
+      // Panning comes back on before the handler runs, so an exception in the caller
+      // cannot leave the map dead to the touch.
+      map.setOptions({ draggable: true })
+      dragHandlers.current.onLegDrop?.(at)
+    }
+    endGestureRef.current = endGesture
+
+    const listeners = [
+      map.addListener('click', (event: google.maps.MapMouseEvent) => {
+        if (gesture.current !== null) return
+        // Releasing the line emits a click as well as a mouseup, and it would otherwise
+        // drop a waypoint where the drag finished. Exactly one is swallowed: leaving the
+        // flag set would stop the map accepting points at all, which is the worse failure
+        // and a silent one.
+        if (justDragged.current) {
+          justDragged.current = false
+          return
+        }
+        if (event.latLng === null) return
+        onMapClickRef.current?.(toCoordinate(event.latLng))
+      }),
+      map.addListener('mousemove', (event: google.maps.MapMouseEvent) => {
+        if (gesture.current === null || event.latLng === null) return
+        const at = toCoordinate(event.latLng)
+        gesture.current = { last: at }
+        dragHandlers.current.onLegDrag?.(at)
+      }),
+      map.addListener('mouseup', (event: google.maps.MapMouseEvent) => {
+        if (gesture.current === null) return
+        endGesture(event.latLng === null ? gesture.current.last : toCoordinate(event.latLng))
+      }),
+    ]
+
+    // Releasing outside the map never reaches Google's mouseup, and without this the
+    // gesture would never end: panning stays off and the map is dead until a reload.
+    const releasedOutside = (): void => {
+      const active = gesture.current
+      if (active !== null) endGesture(active.last)
+    }
+    window.addEventListener('mouseup', releasedOutside)
 
     return () => {
-      listener.remove()
+      for (const listener of listeners) listener.remove()
+      window.removeEventListener('mouseup', releasedOutside)
+      endGestureRef.current = null
       mapRef.current = null
     }
   }, [maps, initialOptions])
@@ -200,7 +273,12 @@ export function MapCanvas({
    * — `insertVia` and `spliceRoutedLeg` both guarantee that — so identity is an exact,
    * cheap signal for what needs redrawing.
    */
-  const legOverlays = useRef(new Map<number, { leg: TripLeg; lines: google.maps.Polyline[] }>())
+  const legOverlays = useRef(
+    new Map<
+      number,
+      { leg: TripLeg; lines: google.maps.Polyline[]; listeners: google.maps.MapsEventListener[] }
+    >(),
+  )
 
   useEffect(() => {
     const map = mapRef.current
@@ -216,6 +294,7 @@ export function MapCanvas({
       const cached = overlays.get(legIndex)
       if (cached?.leg === leg) return // untouched: leave its overlays exactly as they are
 
+      for (const listener of cached?.listeners ?? []) listener.remove()
       for (const line of cached?.lines ?? []) line.setMap(null)
       const lines = (byLeg.get(legIndex) ?? []).map(
         (segment) =>
@@ -225,16 +304,31 @@ export function MapCanvas({
             map,
           }),
       )
-      overlays.set(legIndex, { leg, lines })
+      const listeners = draggable
+        ? lines.map((line) =>
+            line.addListener('mousedown', (event: google.maps.MapMouseEvent) => {
+              if (event.latLng === null) return
+              const at = toCoordinate(event.latLng)
+              if (dragHandlers.current.onLegGrab?.(legIndex, at) !== true) return
+              gesture.current = { last: at }
+              justDragged.current = true
+              // Panning off for the duration, or the basemap slides under the cursor and
+              // the line runs away from it.
+              map.setOptions({ draggable: false })
+            }),
+          )
+        : []
+      overlays.set(legIndex, { leg, lines, listeners })
     })
 
     // Legs that no longer exist take their overlays with them.
     for (const [legIndex, entry] of overlays) {
       if (legIndex < legs.length) continue
+      for (const listener of entry.listeners) listener.remove()
       for (const line of entry.lines) line.setMap(null)
       overlays.delete(legIndex)
     }
-  }, [maps, legs, segments])
+  }, [maps, legs, segments, draggable])
 
   // Unmount only: the per-leg cache above outlives individual syncs, so its teardown cannot
   // live in that effect's cleanup.
@@ -242,6 +336,7 @@ export function MapCanvas({
     const overlays = legOverlays.current
     return () => {
       for (const entry of overlays.values()) {
+        for (const listener of entry.listeners) listener.remove()
         for (const line of entry.lines) line.setMap(null)
       }
       overlays.clear()

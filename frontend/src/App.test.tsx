@@ -21,11 +21,15 @@ interface FakeMarker {
 }
 
 function createFakeMaps() {
+  const maps: FakeMap[] = []
   const markers: FakeMarker[] = []
   const polylines: { options: Record<string, unknown>; map: unknown }[] = []
   let clickHandler: ((event: unknown) => void) | null = null
 
   class FakeMap {
+    constructor() {
+      maps.push(this)
+    }
     addListener(event: string, handler: (event: unknown) => void): { remove: () => void } {
       if (event === 'click') clickHandler = handler
       return { remove: () => undefined }
@@ -65,6 +69,7 @@ function createFakeMaps() {
 
   return {
     loader: () => Promise.resolve(namespace as unknown as GoogleMaps),
+    maps,
     markers,
     polylines,
     clickMap(lat: number, lon: number): void {
@@ -76,6 +81,20 @@ function createFakeMaps() {
       })
     },
   }
+}
+
+/**
+ * Waits until the map object exists, not merely until the loading text has gone.
+ *
+ * They are not the same moment. The text disappears when React commits the state change,
+ * while the map is constructed in a passive effect that can flush a tick later — so a test
+ * that waits for the text and then clicks occasionally finds no click listener yet. Rare
+ * enough to look like a heisenbug and frequent enough to fail CI.
+ */
+async function mapReady(fake: ReturnType<typeof createFakeMaps>): Promise<void> {
+  await waitFor(() => {
+    expect(fake.maps).toHaveLength(1)
+  })
 }
 
 /** The pin elements currently attached to the map. */
@@ -146,7 +165,7 @@ describe('App routing the placed points', () => {
     const fake = createFakeMaps()
     const router = fakeRouter()
     render(<App mapLoader={fake.loader} mapId="motorooter-test-vector" client={router} />)
-    await waitFor(() => expect(screen.queryByRole('status')).not.toBeInTheDocument())
+    await mapReady(fake)
 
     fake.clickMap(47.6, -120.7)
     fake.clickMap(48.1, -120.2)
@@ -169,7 +188,7 @@ describe('App routing the placed points', () => {
     const fake = createFakeMaps()
     const router = fakeRouter()
     render(<App mapLoader={fake.loader} mapId="motorooter-test-vector" client={router} />)
-    await waitFor(() => expect(screen.queryByRole('status')).not.toBeInTheDocument())
+    await mapReady(fake)
 
     fake.clickMap(47.6, -120.7)
     await waitFor(() => expect(attachedPins(fake)).toHaveLength(1))
@@ -182,7 +201,7 @@ describe('App routing the placed points', () => {
     render(
       <App mapLoader={fake.loader} mapId="motorooter-test-vector" client={fakeRouter()} />,
     )
-    await waitFor(() => expect(screen.queryByRole('status')).not.toBeInTheDocument())
+    await mapReady(fake)
 
     fake.clickMap(47.6, -120.7)
     fake.clickMap(48.1, -120.2)
@@ -196,7 +215,7 @@ describe('App routing the placed points', () => {
     // no longer existed, and only a page reload cleared it.
     const fake = createFakeMaps()
     render(<App mapLoader={fake.loader} mapId="motorooter-test-vector" client={fakeRouter()} />)
-    await waitFor(() => expect(screen.queryByRole('status')).not.toBeInTheDocument())
+    await mapReady(fake)
 
     fake.clickMap(47.6, -120.7)
     fake.clickMap(48.1, -120.2)
@@ -217,7 +236,7 @@ describe('App routing the placed points', () => {
       ),
     }
     render(<App mapLoader={fake.loader} mapId="motorooter-test-vector" client={router} />)
-    await waitFor(() => expect(screen.queryByRole('status')).not.toBeInTheDocument())
+    await mapReady(fake)
 
     fake.clickMap(47.6, -120.7)
     fake.clickMap(48.1, -120.2)
@@ -242,7 +261,7 @@ describe('App routing the placed points', () => {
       ),
     }
     render(<App mapLoader={fake.loader} mapId="motorooter-test-vector" client={router} />)
-    await waitFor(() => expect(screen.queryByRole('status')).not.toBeInTheDocument())
+    await mapReady(fake)
 
     fake.clickMap(47.6, -120.7)
     fake.clickMap(48.1, -120.2)
@@ -260,7 +279,7 @@ describe('App routing the placed points', () => {
       ),
     }
     render(<App mapLoader={fake.loader} mapId="motorooter-test-vector" client={router} />)
-    await waitFor(() => expect(screen.queryByRole('status')).not.toBeInTheDocument())
+    await mapReady(fake)
 
     fake.clickMap(47.6, -120.7)
     fake.clickMap(48.1, -120.2)
@@ -279,13 +298,13 @@ describe('App', () => {
     expect(screen.getByText(/set a start and end point on the map/i)).toBeInTheDocument()
     // Let the map finish loading before the test ends, or its state update lands on an
     // unmounted tree and React warns about it.
-    await waitFor(() => expect(screen.queryByRole('status')).not.toBeInTheDocument())
+    await mapReady(fake)
   })
 
   it('places the start and the end from map clicks alone', async () => {
     const fake = createFakeMaps()
     render(<App mapLoader={fake.loader} mapId="motorooter-test-vector" client={fakeRouter()} />)
-    await waitFor(() => expect(screen.queryByRole('status')).not.toBeInTheDocument())
+    await mapReady(fake)
 
     fake.clickMap(47.6, -120.7)
     expect(await pinLabels(fake, 1)).toEqual(['Start'])
@@ -300,7 +319,7 @@ describe('App', () => {
   it('reports the point count, so the map is not the only feedback', async () => {
     const fake = createFakeMaps()
     render(<App mapLoader={fake.loader} mapId="motorooter-test-vector" client={fakeRouter()} />)
-    await waitFor(() => expect(screen.queryByRole('status')).not.toBeInTheDocument())
+    await mapReady(fake)
 
     fake.clickMap(47.6, -120.7)
 
@@ -310,7 +329,7 @@ describe('App', () => {
   it('offers an undo for a misplaced point, and only when there is one to undo', async () => {
     const fake = createFakeMaps()
     render(<App mapLoader={fake.loader} mapId="motorooter-test-vector" client={fakeRouter()} />)
-    await waitFor(() => expect(screen.queryByRole('status')).not.toBeInTheDocument())
+    await mapReady(fake)
 
     expect(screen.queryByRole('button', { name: /remove last point/i })).not.toBeInTheDocument()
 

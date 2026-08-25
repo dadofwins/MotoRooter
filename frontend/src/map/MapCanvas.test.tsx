@@ -20,6 +20,13 @@ interface FakeListener {
   removed: boolean
 }
 
+/** Delivers a Maps event to every live listener registered for it. */
+function emit(listeners: readonly FakeListener[], event: string, coordinate: Coordinate): void {
+  for (const listener of listeners.filter((l) => l.event === event && !l.removed)) {
+    listener.handler({ latLng: { lat: () => coordinate.lat, lng: () => coordinate.lon } })
+  }
+}
+
 function createFakeMaps({ withMarkerLibrary = true }: { withMarkerLibrary?: boolean } = {}) {
   const maps: FakeMap[] = []
   const polylines: FakePolyline[] = []
@@ -37,6 +44,7 @@ function createFakeMaps({ withMarkerLibrary = true }: { withMarkerLibrary?: bool
   class FakeMap {
     readonly listeners: FakeListener[] = []
     readonly fitted: FakeLatLngBounds[] = []
+    readonly applied: google.maps.MapOptions[] = []
     constructor(
       readonly element: HTMLElement,
       readonly options: google.maps.MapOptions,
@@ -55,22 +63,50 @@ function createFakeMaps({ withMarkerLibrary = true }: { withMarkerLibrary?: bool
     fitBounds(bounds: FakeLatLngBounds): void {
       this.fitted.push(bounds)
     }
+    setOptions(options: google.maps.MapOptions): void {
+      this.applied.push(options)
+    }
+    /** Whether the user could pan the map right now. */
+    get draggable(): boolean {
+      return this.applied.reduce<boolean>(
+        (value, options) => options.draggable ?? value,
+        this.options.draggable ?? true,
+      )
+    }
     /** Drives a click the way the API would. */
     click(coordinate: Coordinate): void {
-      for (const listener of this.listeners.filter((l) => l.event === 'click' && !l.removed)) {
-        listener.handler({ latLng: { lat: () => coordinate.lat, lng: () => coordinate.lon } })
-      }
+      emit(this.listeners, 'click', coordinate)
+    }
+    mouseMove(coordinate: Coordinate): void {
+      emit(this.listeners, 'mousemove', coordinate)
+    }
+    mouseUp(coordinate: Coordinate): void {
+      emit(this.listeners, 'mouseup', coordinate)
     }
   }
 
   class FakePolyline {
     map: unknown = null
+    readonly listeners: FakeListener[] = []
     constructor(readonly options: google.maps.PolylineOptions) {
       this.map = options.map ?? null
       polylines.push(this)
     }
     setMap(map: unknown): void {
       this.map = map
+    }
+    addListener(event: string, handler: (event: unknown) => void): { remove: () => void } {
+      const listener: FakeListener = { event, handler, removed: false }
+      this.listeners.push(listener)
+      return {
+        remove: () => {
+          listener.removed = true
+        },
+      }
+    }
+    /** Drives a press on the line the way the API would. */
+    mouseDown(coordinate: Coordinate): void {
+      emit(this.listeners, 'mousedown', coordinate)
     }
   }
 
@@ -142,6 +178,192 @@ function leg(geometry: Coordinate[]): TripLeg {
 function waypoint(lat: number, name: string | null = null): Waypoint {
   return { coordinate: { lat, lon: -120 }, name, pinned: true }
 }
+
+/**
+ * Dragging the route line.
+ *
+ * Google's DirectionsRenderer only makes routes *it* computed draggable, and ours come from
+ * ORS, so the gesture is hand-built: press the line, move, release. What this layer owes the
+ * rest of the app is only the three events with real coordinates — the throttling, the
+ * stale-response rejection and the trip arithmetic all live elsewhere and are tested there.
+ *
+ * The failure that matters most here is a gesture that never ends: map panning stays off and
+ * the map is dead to the touch, with a page reload as the only way out.
+ */
+describe('MapCanvas dragging the route', () => {
+  async function dragging(
+    handlers: {
+      onLegGrab?: (legIndex: number, at: Coordinate) => boolean
+      onLegDrag?: (at: Coordinate) => void
+      onLegDrop?: (at: Coordinate) => void
+    } = {},
+  ) {
+    const fake = createFakeMaps()
+    const onLegGrab = vi.fn(handlers.onLegGrab ?? (() => true))
+    const onLegDrag = vi.fn(handlers.onLegDrag)
+    const onLegDrop = vi.fn(handlers.onLegDrop)
+
+    const view = render(
+      <MapCanvas
+        mapId={MAP_ID}
+        loader={fake.loader}
+        legs={[leg(coords(3, 47)), leg(coords(3, 48))]}
+        onLegGrab={onLegGrab}
+        onLegDrag={onLegDrag}
+        onLegDrop={onLegDrop}
+      />,
+    )
+    await waitFor(() => expect(fake.polylines).toHaveLength(2))
+    return { fake, onLegGrab, onLegDrag, onLegDrop, view }
+  }
+
+  it('reports which leg was grabbed, and where', async () => {
+    const { fake, onLegGrab } = await dragging()
+
+    act(() => {
+      fake.polylines[1]?.mouseDown({ lat: 48.01, lon: -120 })
+    })
+
+    // The second polyline belongs to the second leg: dragging must re-request that leg
+    // alone, so the index has to survive the trip through the map layer.
+    expect(onLegGrab).toHaveBeenCalledWith(1, { lat: 48.01, lon: -120 })
+  })
+
+  it('holds the map still while the line is being dragged, and lets go afterwards', async () => {
+    // Without this the basemap pans under the cursor and the route runs away from it.
+    const { fake } = await dragging()
+    const map = fake.maps[0]
+    expect(map?.draggable).toBe(true)
+
+    act(() => {
+      fake.polylines[0]?.mouseDown({ lat: 47.01, lon: -120 })
+    })
+    expect(map?.draggable).toBe(false)
+
+    act(() => {
+      map?.mouseUp({ lat: 47.01, lon: -120.2 })
+    })
+    expect(map?.draggable).toBe(true)
+  })
+
+  it('reports movement only while a drag is in progress', async () => {
+    const { fake, onLegDrag } = await dragging()
+    const map = fake.maps[0]
+
+    act(() => {
+      map?.mouseMove({ lat: 47.5, lon: -120 })
+    })
+    expect(onLegDrag).not.toHaveBeenCalled() // just a cursor crossing the map
+
+    act(() => {
+      fake.polylines[0]?.mouseDown({ lat: 47.01, lon: -120 })
+      map?.mouseMove({ lat: 47.01, lon: -120.1 })
+    })
+    expect(onLegDrag).toHaveBeenCalledWith({ lat: 47.01, lon: -120.1 })
+  })
+
+  it('ends the gesture on release and ignores what happens after', async () => {
+    const { fake, onLegDrag, onLegDrop } = await dragging()
+    const map = fake.maps[0]
+
+    act(() => {
+      fake.polylines[0]?.mouseDown({ lat: 47.01, lon: -120 })
+      map?.mouseUp({ lat: 47.01, lon: -120.3 })
+    })
+    expect(onLegDrop).toHaveBeenCalledWith({ lat: 47.01, lon: -120.3 })
+
+    act(() => {
+      map?.mouseMove({ lat: 47.01, lon: -120.9 })
+    })
+    expect(onLegDrag).not.toHaveBeenCalled()
+  })
+
+  it('starts nothing when the grab is refused', async () => {
+    // DragSession refuses a leg it cannot place a via-point on — an unrouted one, with no
+    // line drawn and no way to tell where along it the press landed.
+    const { fake, onLegDrag } = await dragging({ onLegGrab: () => false })
+    const map = fake.maps[0]
+
+    act(() => {
+      fake.polylines[0]?.mouseDown({ lat: 47.01, lon: -120 })
+    })
+
+    expect(map?.draggable).toBe(true)
+    act(() => {
+      map?.mouseMove({ lat: 47.01, lon: -120.1 })
+    })
+    expect(onLegDrag).not.toHaveBeenCalled()
+  })
+
+  it('ends the gesture even when the button is released off the map', async () => {
+    // Release outside the map and Google's mouseup never fires. Without a backstop the
+    // gesture never ends: panning stays disabled and the map is dead until a reload.
+    const { fake, onLegDrop } = await dragging()
+    const map = fake.maps[0]
+
+    act(() => {
+      fake.polylines[0]?.mouseDown({ lat: 47.01, lon: -120 })
+      map?.mouseMove({ lat: 47.01, lon: -120.2 }) // last position the map saw
+    })
+    act(() => {
+      window.dispatchEvent(new MouseEvent('mouseup'))
+    })
+
+    // Committed at the last known position rather than abandoned: the rider let go meaning
+    // to place the point there.
+    expect(onLegDrop).toHaveBeenCalledWith({ lat: 47.01, lon: -120.2 })
+    expect(map?.draggable).toBe(true)
+  })
+
+  it('swallows the click Google emits after a drag, but only that one', async () => {
+    // Releasing the line produces a click as well as a mouseup. Left alone it drops a new
+    // waypoint wherever the drag finished. Swallowing every click afterwards would be the
+    // worse bug: the map would stop accepting points entirely, with no sign why.
+    const fake = createFakeMaps()
+    const onMapClick = vi.fn()
+    render(
+      <MapCanvas
+        mapId={MAP_ID}
+        loader={fake.loader}
+        legs={[leg(coords(3))]}
+        onMapClick={onMapClick}
+        onLegGrab={() => true}
+      />,
+    )
+    await waitFor(() => expect(fake.polylines).toHaveLength(1))
+    const map = fake.maps[0]
+
+    act(() => {
+      fake.polylines[0]?.mouseDown({ lat: 47.01, lon: -120 })
+      map?.mouseMove({ lat: 47.01, lon: -120.2 })
+      map?.mouseUp({ lat: 47.01, lon: -120.2 })
+      map?.click({ lat: 47.01, lon: -120.2 }) // Google's post-drag click
+    })
+    expect(onMapClick).not.toHaveBeenCalled()
+
+    act(() => {
+      map?.click({ lat: 49, lon: -121 }) // a real click, later
+    })
+    expect(onMapClick).toHaveBeenCalledWith({ lat: 49, lon: -121 })
+  })
+
+  it('does not make the route grabbable when no handler was given', async () => {
+    const fake = createFakeMaps()
+    render(<MapCanvas mapId={MAP_ID} loader={fake.loader} legs={[leg(coords(3))]} />)
+    await waitFor(() => expect(fake.polylines).toHaveLength(1))
+
+    expect(fake.polylines[0]?.listeners.filter((l) => !l.removed)).toHaveLength(0)
+  })
+
+  it('leaves no line listeners behind when the route is redrawn or unmounted', async () => {
+    const { fake, view } = await dragging()
+    const first = fake.polylines[0]
+
+    view.unmount()
+
+    expect(first?.listeners.every((listener) => listener.removed)).toBe(true)
+  })
+})
 
 describe('MapCanvas', () => {
   it('says it is loading rather than showing an unexplained empty pane', () => {

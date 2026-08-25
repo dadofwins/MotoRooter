@@ -9,20 +9,30 @@
  * This is the vertical slice: click, `POST /api/routing/leg`, draw. Persistence, drag and
  * the assistant are all still to come, and none of them changes this path.
  */
-import { useCallback, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { apiClient } from './api/apiClient'
-import type { Coordinate, Waypoint } from './api/types'
+import type { ApiClient } from './api/client'
+import type { Coordinate, TripLeg, Waypoint } from './api/types'
 import { MapCanvas } from './map/MapCanvas'
 import { MAP_ID, loadMaps } from './map/googleMaps'
 import type { GoogleMapsLoader } from './map/loadGoogleMaps'
+import { DragSession } from './routing/dragSession'
+import { bendGeometry, type RouteEdit } from './routing/tripEdits'
 import { routeErrorMessage } from './trip/routeErrorMessage'
-import { useRouteLeg, type LegRouter } from './trip/useRouteLeg'
+import { useRouteLeg } from './trip/useRouteLeg'
+import { useRoutingCapabilities } from './trip/useRoutingCapabilities'
+
+/** Only the two calls the shell makes, so a test double stays small. */
+type AppClient = Pick<ApiClient, 'routeLeg' | 'routingCapabilities'>
+
+/** The intent a dragged leg keeps. Matches the one the slice routes with. */
+const DRAG_INTENT = 'unpaved'
 
 export interface AppProps {
   /** Injectable so tests can drive a fake Maps API. */
   readonly mapLoader?: GoogleMapsLoader
   readonly mapId?: string
-  readonly client?: LegRouter
+  readonly client?: AppClient
 }
 
 /**
@@ -44,18 +54,129 @@ export function App({
   client = apiClient,
 }: AppProps = {}): React.JSX.Element {
   const [waypoints, setWaypoints] = useState<readonly Waypoint[]>([])
-  const { legs, isRouting, error } = useRouteLeg(client, waypoints)
+  /**
+   * Geometry a drag produced, which the hook must not re-request.
+   *
+   * A drag routes its leg itself on release, so handing the result back means the hook can
+   * recognise it as already-answered — by fingerprint, not by call order — instead of
+   * spending a second request per drag.
+   */
+  const [draggedLegs, setDraggedLegs] = useState<readonly TripLeg[] | null>(null)
+
+  const capabilities = useRoutingCapabilities(client)
+  /**
+   * The value, not the object it came from.
+   *
+   * A DragSession keyed on the capabilities object is rebuilt whenever that object's
+   * identity changes — which, before it was memoised, was every render. A preview landing
+   * mid-drag re-renders, so the gesture was destroyed by its own progress: the release then
+   * had nothing to end, and the rider's drag disappeared. Keying on the number means only a
+   * genuine change of cadence rebuilds it.
+   */
+  const dragIntervalMs = capabilities.intervalFor(DRAG_INTENT)
+  const { legs, isRouting, error } = useRouteLeg(client, waypoints, draggedLegs)
+
+  /** Provisional geometry during a gesture. Never saved, never in undo history. */
+  const [preview, setPreview] = useState<readonly TripLeg[] | null>(null)
+
+  // The state a gesture starts from, read when the line is grabbed rather than captured in
+  // a handler. Synced in an effect, not during render: a ref written while rendering is
+  // unsafe under concurrent rendering.
+  const current = useRef<RouteEdit>({ waypoints, legs })
+  useEffect(() => {
+    current.current = { waypoints, legs }
+  }, [waypoints, legs])
 
   const addWaypoint = useCallback((coordinate: Coordinate) => {
     // Pinned: the user placed it by hand, so a later replan must not move or drop it.
     setWaypoints((previous) => [...previous, { coordinate, name: null, pinned: true }])
+    // Whatever a drag produced no longer describes this route; let the hook route it.
+    setDraggedLegs(null)
   }, [])
 
   const removeLastWaypoint = useCallback(() => {
     setWaypoints((previous) => previous.slice(0, -1))
+    setDraggedLegs(null)
   }, [])
 
-  const distanceM = legs.reduce((total, leg) => total + (leg.routed?.distance_m ?? 0), 0)
+  const drag = useMemo(
+    () =>
+      new DragSession({
+        client,
+        // From the API, never a constant: unknown resolves to preview-only.
+        intervalMs: dragIntervalMs,
+        onPreview: (edit) => {
+          setPreview(edit.legs)
+        },
+        onCommit: (edit) => {
+          setPreview(null)
+          setDraggedLegs(edit.legs)
+          setWaypoints(edit.waypoints)
+        },
+        onError: () => {
+          // The route reverts to what was last committed rather than keeping a preview the
+          // server never agreed to.
+          setPreview(null)
+        },
+      }),
+    // Rebuilt when the cadence arrives, so the first drag after load is not stuck on
+    // preview-only for the rest of the session — and at no other time.
+    [client, dragIntervalMs],
+  )
+
+  /** Where the line was taken hold of, so a local rubber-band can bend it there. */
+  const grabbedAt = useRef<{ legIndex: number; at: Coordinate } | null>(null)
+
+  const onLegGrab = useCallback(
+    (legIndex: number, at: Coordinate) => {
+      const started = drag.begin(current.current, { legIndex, grabbed: at })
+      grabbedAt.current = started ? { legIndex, at } : null
+      return started
+    },
+    [drag],
+  )
+
+  const onLegDrag = useCallback(
+    (at: Coordinate) => {
+      drag.update(at)
+
+      // Preview-only: the API has asked us not to route during the gesture, so the line is
+      // bent locally instead. Without it nothing moves until release and the drag looks
+      // broken — thrift the rider cannot see is indistinguishable from a bug.
+      const grabbed = grabbedAt.current
+      if (dragIntervalMs !== null || grabbed === null) return
+      const { legIndex } = grabbed
+      setPreview(
+        current.current.legs.map((leg, index) =>
+          index === legIndex && leg.routed != null
+            ? { ...leg, routed: { ...leg.routed, geometry: [...bendGeometry(leg.routed.geometry, grabbed.at, at)] } }
+            : leg,
+        ),
+      )
+    },
+    [drag, dragIntervalMs],
+  )
+
+  const onLegDrop = useCallback(
+    (at: Coordinate) => {
+      grabbedAt.current = null
+      drag.release(at)
+    },
+    [drag],
+  )
+
+  const onLegCancel = useCallback(() => {
+    // A press that went nowhere. Nothing was routed and nothing should be shown.
+    grabbedAt.current = null
+    drag.cancel()
+    setPreview(null)
+  }, [drag])
+
+  // A gesture outliving its component would deliver a commit into a dead tree.
+  useEffect(() => () => { drag.cancel() }, [drag])
+
+  const shownLegs = preview ?? legs
+  const distanceM = shownLegs.reduce((total, leg) => total + (leg.routed?.distance_m ?? 0), 0)
 
   return (
     <div className="app">
@@ -64,8 +185,12 @@ export function App({
           loader={mapLoader}
           mapId={mapId}
           waypoints={waypoints}
-          legs={legs}
+          legs={shownLegs}
           onMapClick={addWaypoint}
+          onLegGrab={onLegGrab}
+          onLegDrag={onLegDrag}
+          onLegDrop={onLegDrop}
+          onLegCancel={onLegCancel}
         />
       </main>
       <aside className="chat-pane" aria-label="Trip assistant">

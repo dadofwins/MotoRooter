@@ -201,6 +201,22 @@ describe('polylineStyle', () => {
     expect(paved.strokeOpacity).toBeGreaterThan(0)
   })
 
+  it('draws unknown as present as the rest of the route, differing only in hue', () => {
+    // It was thinner and fainter as well as grey, over a basemap whose own roads are grey
+    // and white — so on a real route the 29% that is unsurveyed dissolved into the map and
+    // read as "the route is not there" rather than "we do not know about this bit". A rider
+    // planning fuel and tyres needs to see that third of the route, not look past it.
+    const paved = polylineStyle('paved')
+    const unknown = polylineStyle('unknown')
+    const unpaved = polylineStyle('unpaved')
+
+    expect(unknown.strokeWeight).toBe(paved.strokeWeight)
+    expect(unknown.strokeOpacity).toBe(paved.strokeOpacity)
+    // Unpaved's own stroke is transparent because its dashes are drawn by icons, so its
+    // presence is carried by those instead.
+    expect(unpaved.icons?.[0]?.icon?.strokeWeight).toBe(paved.strokeWeight)
+  })
+
   it('distinguishes unknown surface from both, since absence of data is not dirt', () => {
     const styles = (['paved', 'unpaved', 'unknown'] as const).map((surface) =>
       JSON.stringify(polylineStyle(surface)),

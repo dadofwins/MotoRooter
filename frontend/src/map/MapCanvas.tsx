@@ -17,6 +17,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { Coordinate, TripLeg, Waypoint } from '../api/types'
 import type { GoogleMaps, GoogleMapsLoader } from './loadGoogleMaps'
+import { distanceM } from '../routing/geo'
 import { createMapOptions, toCoordinate, toLatLng, type MapColorScheme } from './mapOptions'
 import { polylineStyle, toRouteSegments } from './routeLayer'
 import { createWaypointPin, waypointKind } from './waypointPin'
@@ -100,6 +101,32 @@ export interface MapCanvasProps {
   readonly colorScheme?: MapColorScheme
   /** A click on the basemap, in domain coordinates. The mouse path for setting points. */
   readonly onMapClick?: (coordinate: Coordinate) => void
+
+  /**
+   * The route line was pressed. Return whether a drag should start — a leg with no geometry
+   * cannot be dragged, and refusing here keeps the map pannable.
+   */
+  readonly onLegGrab?: (legIndex: number, at: Coordinate) => boolean
+  /** The pointer moved during a drag. Throttling belongs to the caller, not here. */
+  readonly onLegDrag?: (at: Coordinate) => void
+  /** The drag ended. Always fires once a drag has started, wherever the button came up. */
+  readonly onLegDrop?: (at: Coordinate) => void
+  /** The gesture ended without moving far enough to be a drag. Abandon it. */
+  readonly onLegCancel?: () => void
+}
+
+/**
+ * How far the pointer must travel before a press counts as a drag.
+ *
+ * In screen pixels rather than metres: at zoom 18 a few pixels is a couple of metres and at
+ * zoom 8 it is a kilometre, so a distance threshold would swallow real drags when zoomed in
+ * and invent them when zoomed out.
+ */
+const DRAG_THRESHOLD_PX = 5
+
+/** Ground distance one screen pixel covers, at this latitude and zoom. */
+function metresPerPixel(latitude: number, zoom: number): number {
+  return (156_543.033_92 * Math.cos((latitude * Math.PI) / 180)) / 2 ** zoom
 }
 
 export function MapCanvas({
@@ -111,6 +138,10 @@ export function MapCanvas({
   mapId,
   colorScheme,
   onMapClick,
+  onLegGrab,
+  onLegDrag,
+  onLegDrop,
+  onLegCancel,
 }: MapCanvasProps): React.JSX.Element {
   const containerRef = useRef<HTMLDivElement>(null)
   const mapRef = useRef<google.maps.Map | null>(null)
@@ -134,10 +165,30 @@ export function MapCanvas({
    */
   const hasMapId = (mapId ?? '') !== ''
 
-  // Read at click time rather than captured, so a new handler does not mean a new listener.
+  // Read at event time rather than captured, so a new handler does not mean a new listener.
   useEffect(() => {
     onMapClickRef.current = onMapClick
   }, [onMapClick])
+
+  // Explicit `| undefined` on each: exactOptionalPropertyTypes distinguishes "absent" from
+  // "present and undefined", and these are assigned wholesale on every change.
+  const dragHandlers = useRef<{
+    onLegGrab?: ((legIndex: number, at: Coordinate) => boolean) | undefined
+    onLegDrag?: ((at: Coordinate) => void) | undefined
+    onLegDrop?: ((at: Coordinate) => void) | undefined
+    onLegCancel?: (() => void) | undefined
+  }>({})
+  useEffect(() => {
+    dragHandlers.current = { onLegGrab, onLegDrag, onLegDrop, onLegCancel }
+  }, [onLegGrab, onLegDrag, onLegDrop, onLegCancel])
+
+  /** The gesture in progress, if any. Held in a ref: no render depends on it. */
+  const gesture = useRef<{ from: Coordinate; last: Coordinate } | null>(null)
+  /**
+   * Google emits a click after the mouseup that ended a drag. Without this, letting go of
+   * the line would also drop a new waypoint wherever the drag finished.
+   */
+  const justDragged = useRef(false)
 
   // The camera the map is born with. Computed once: see the note about rebuilding above.
   const [initialOptions] = useState(() =>
@@ -150,6 +201,9 @@ export function MapCanvas({
   )
 
   const segments = useMemo(() => toRouteSegments(legs), [legs])
+
+  // No handler, no listeners: a route nobody is listening to should not look interactive.
+  const draggable = onLegGrab !== undefined
 
   useEffect(() => {
     // `cancelled` is what keeps a superseded attempt from landing: a slow rejection
@@ -180,13 +234,66 @@ export function MapCanvas({
 
     const map = new maps.Map(container, initialOptions)
     mapRef.current = map
-    const listener = map.addListener('click', (event: google.maps.MapMouseEvent) => {
-      if (event.latLng === null) return
-      onMapClickRef.current?.(toCoordinate(event.latLng))
-    })
+
+    const endGesture = (at: Coordinate, expectClick: boolean): void => {
+      const active = gesture.current
+      if (active === null) return
+      gesture.current = null
+      // Only a release *over the map* is followed by a click; one outside it is not, and
+      // arming the flag then would swallow the rider's next deliberate click instead.
+      justDragged.current = expectClick
+      // Panning comes back on before the handler runs, so an exception in the caller
+      // cannot leave the map dead to the touch.
+      map.setOptions({ draggable: true })
+
+      const travelled = distanceM(active.from, at)
+      const threshold = DRAG_THRESHOLD_PX * metresPerPixel(at.lat, map.getZoom() ?? DEFAULT_ZOOM)
+      if (travelled < threshold) {
+        // A press that went nowhere. Routing it would spend a request and pin a waypoint
+        // the rider never asked for, invisibly, on the line that is already there.
+        dragHandlers.current.onLegCancel?.()
+        return
+      }
+      dragHandlers.current.onLegDrop?.(at)
+    }
+
+    const listeners = [
+      map.addListener('click', (event: google.maps.MapMouseEvent) => {
+        if (gesture.current !== null) return
+        // Releasing the line emits a click as well as a mouseup, and it would otherwise
+        // drop a waypoint where the drag finished. Exactly one is swallowed: leaving the
+        // flag set would stop the map accepting points at all, which is the worse failure
+        // and a silent one.
+        if (justDragged.current) {
+          justDragged.current = false
+          return
+        }
+        if (event.latLng === null) return
+        onMapClickRef.current?.(toCoordinate(event.latLng))
+      }),
+      map.addListener('mousemove', (event: google.maps.MapMouseEvent) => {
+        if (gesture.current === null || event.latLng === null) return
+        const at = toCoordinate(event.latLng)
+        gesture.current = { from: gesture.current.from, last: at }
+        dragHandlers.current.onLegDrag?.(at)
+      }),
+      map.addListener('mouseup', (event: google.maps.MapMouseEvent) => {
+        if (gesture.current === null) return
+        endGesture(event.latLng === null ? gesture.current.last : toCoordinate(event.latLng), true)
+      }),
+    ]
+
+    // Releasing outside the map never reaches Google's mouseup, and without this the
+    // gesture would never end: panning stays off and the map is dead until a reload.
+    const releasedOutside = (): void => {
+      const active = gesture.current
+      if (active !== null) endGesture(active.last, false)
+    }
+    window.addEventListener('mouseup', releasedOutside)
 
     return () => {
-      listener.remove()
+      for (const listener of listeners) listener.remove()
+      window.removeEventListener('mouseup', releasedOutside)
       mapRef.current = null
     }
   }, [maps, initialOptions])
@@ -194,13 +301,21 @@ export function MapCanvas({
   /**
    * Polylines held per leg, so only a leg that actually changed is rebuilt.
    *
-   * Drag drives `legs` at the provider's throttle interval. Recreating every polyline on
-   * each tick means tearing down and rebuilding the whole route's geometry several times a
-   * second in order to move one leg. A `TripLeg` keeps its object identity while untouched
-   * — `insertVia` and `spliceRoutedLeg` both guarantee that — so identity is an exact,
-   * cheap signal for what needs redrawing.
+   * Drag drives `legs` at the provider's throttle interval, and recreating every polyline
+   * on each tick means rebuilding the whole route's geometry several times a second to move
+   * one leg.
+   *
+   * Keyed on the *routed* geometry rather than on the `TripLeg`. Inserting a via-point
+   * renumbers every following leg, so `insertVia` hands back a new TripLeg object for each
+   * one — same road, shifted indices. `routed` is the thing that changes when the drawn
+   * line changes, and `spliceRoutedLeg` replaces it only for the leg that was re-routed.
    */
-  const legOverlays = useRef(new Map<number, { leg: TripLeg; lines: google.maps.Polyline[] }>())
+  const legOverlays = useRef(
+    new Map<
+      number,
+      { routed: TripLeg['routed']; lines: google.maps.Polyline[]; listeners: google.maps.MapsEventListener[] }
+    >(),
+  )
 
   useEffect(() => {
     const map = mapRef.current
@@ -214,8 +329,9 @@ export function MapCanvas({
 
     legs.forEach((leg, legIndex) => {
       const cached = overlays.get(legIndex)
-      if (cached?.leg === leg) return // untouched: leave its overlays exactly as they are
+      if (cached !== undefined && cached.routed === leg.routed) return // same road, nothing to redraw
 
+      for (const listener of cached?.listeners ?? []) listener.remove()
       for (const line of cached?.lines ?? []) line.setMap(null)
       const lines = (byLeg.get(legIndex) ?? []).map(
         (segment) =>
@@ -225,16 +341,30 @@ export function MapCanvas({
             map,
           }),
       )
-      overlays.set(legIndex, { leg, lines })
+      const listeners = draggable
+        ? lines.map((line) =>
+            line.addListener('mousedown', (event: google.maps.MapMouseEvent) => {
+              if (event.latLng === null) return
+              const at = toCoordinate(event.latLng)
+              if (dragHandlers.current.onLegGrab?.(legIndex, at) !== true) return
+              gesture.current = { from: at, last: at }
+              // Panning off for the duration, or the basemap slides under the cursor and
+              // the line runs away from it.
+              map.setOptions({ draggable: false })
+            }),
+          )
+        : []
+      overlays.set(legIndex, { routed: leg.routed, lines, listeners })
     })
 
     // Legs that no longer exist take their overlays with them.
     for (const [legIndex, entry] of overlays) {
       if (legIndex < legs.length) continue
+      for (const listener of entry.listeners) listener.remove()
       for (const line of entry.lines) line.setMap(null)
       overlays.delete(legIndex)
     }
-  }, [maps, legs, segments])
+  }, [maps, legs, segments, draggable])
 
   // Unmount only: the per-leg cache above outlives individual syncs, so its teardown cannot
   // live in that effect's cleanup.
@@ -242,6 +372,7 @@ export function MapCanvas({
     const overlays = legOverlays.current
     return () => {
       for (const entry of overlays.values()) {
+        for (const listener of entry.listeners) listener.remove()
         for (const line of entry.lines) line.setMap(null)
       }
       overlays.clear()

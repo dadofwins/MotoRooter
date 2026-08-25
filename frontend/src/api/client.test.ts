@@ -191,6 +191,10 @@ describe('endpoints that exist today', () => {
         {
           name: 'ors',
           prefers_unpaved: true,
+          // Distinct from prefers_unpaved: that is what the engine will route *onto*,
+          // this is what it can *tell you* about the result. Google is false for both
+          // while meaning quite different things by each.
+          reports_surface: true,
           map_matching: false,
           alternatives: true,
           elevation: true,

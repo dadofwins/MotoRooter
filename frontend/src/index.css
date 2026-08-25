@@ -92,6 +92,73 @@ body {
   box-shadow: 0 1px 4px rgb(0 0 0 / 0.4);
 }
 
+/* POI pins. Three axes carry the meaning: shape per group, glyph per category, colour last.
+   A rider reads shape in sunlight long before hue, and may not read hue at all. */
+.poi {
+  display: grid;
+  place-content: center;
+  width: 1.5rem;
+  height: 1.5rem;
+  font-size: 0.875rem;
+  line-height: 1;
+  color: #fff;
+  border: 2px solid #fff;
+  box-shadow: 0 1px 4px rgb(0 0 0 / 0.4);
+}
+
+/* Somewhere to sleep: a rounded block, like a roof. */
+.poi--stay {
+  background: #6d28d9;
+  border-radius: 30% 30% 45% 45%;
+}
+
+/* Something you need: a circle, the most findable shape at small sizes. */
+.poi--supply {
+  background: #0f766e;
+  border-radius: 50%;
+}
+
+/* A reason to stop: turned on its corner, so it reads as different at a glance. */
+.poi--sight {
+  background: #b45309;
+  border-radius: 12%;
+  rotate: 45deg;
+}
+
+.poi--sight > * {
+  rotate: -45deg;
+}
+
+/* Unconfirmed: hollow and dashed. A suggestion nobody has checked should not look like a
+   place that exists, whatever its category. */
+.poi--unverified {
+  color: #1f2937;
+  background: rgb(255 255 255 / 0.85);
+  border-style: dashed;
+  border-color: #6b7280;
+}
+
+.poi-detail {
+  margin-top: 1rem;
+  padding-top: 1rem;
+  border-top: 1px solid rgb(0 0 0 / 0.12);
+}
+
+.poi-detail h2 {
+  margin: 0 0 0.5rem;
+  font-size: 1rem;
+}
+
+.poi-detail__warning {
+  margin: 0 0 0.75rem;
+  padding: 0.5rem 0.625rem;
+  font-size: 0.8125rem;
+  line-height: 1.4;
+  color: #3d2b00;
+  background: #fdf1c7;
+  border-radius: 6px;
+}
+
 /* The circle under the cursor while the route is being dragged. Same affordance Google
    Maps uses, and the thing that says "picked up" before any route could come back. */
 .drag-handle {
@@ -156,8 +223,13 @@ body {
     border-top-color: rgb(255 255 255 / 0.14);
   }
 
-  .pin {
+  .pin,
+  .poi {
     border-color: rgb(0 0 0 / 0.6);
+  }
+
+  .poi-detail {
+    border-top-color: rgb(255 255 255 / 0.14);
   }
 }
 

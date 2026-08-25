@@ -11,7 +11,7 @@
  * have. Splitting instead would double the request count and re-route road the user never
  * touched.
  */
-import type { Coordinate, RouteLeg, TripLeg, Waypoint } from '../api/types'
+import type { Coordinate, Poi, RouteLeg, TripLeg, Waypoint } from '../api/types'
 import { alongPath, nearestPointOnPath } from './geo'
 
 /** The parts of a trip a drag changes. Narrower than `Trip` so callers can hold either. */
@@ -126,6 +126,74 @@ export function insertVia(edit: RouteEdit, input: InsertViaInput): RouteEdit {
   })
 
   return { waypoints, legs }
+}
+
+/**
+ * The leg whose drawn line passes closest to a point, if any.
+ *
+ * Segment-wise via `nearestPointOnPath`, so a leg that curves near the point beats one whose
+ * endpoints happen to be closer. Unrouted legs have no line and cannot win.
+ */
+export function nearestLeg(
+  legs: readonly TripLeg[],
+  point: Coordinate,
+): { legIndex: number; distanceM: number } | null {
+  let best: { legIndex: number; distanceM: number } | null = null
+
+  legs.forEach((leg, legIndex) => {
+    const position = nearestPointOnPath(leg.routed?.geometry ?? [], point)
+    if (position === null) return
+    if (best === null || position.distanceM < best.distanceM) {
+      best = { legIndex, distanceM: position.distanceM }
+    }
+  })
+
+  return best
+}
+
+/**
+ * Puts a discovered place on the route.
+ *
+ * The mouse path for "add to route", and the function the assistant's tool will call, so the
+ * two cannot diverge in behaviour — the rule that chat is an accelerator rather than a
+ * separate implementation.
+ *
+ * Inserted where it belongs *along* the route rather than appended: adding a campground
+ * halfway through a trip should not send the rider back for it at the end.
+ *
+ * `null` when it cannot be done — an unverified suggestion, which the backend would reject,
+ * or a trip with no routed leg to insert into.
+ */
+export function addPoiToRoute(edit: RouteEdit, poi: Poi): RouteEdit | null {
+  // Mirrors the backend rule: an LLM suggestion that never resolved to a place_id is a
+  // claim, not a place, and cannot be pinned to a route.
+  if (poi.source === 'llm_suggested' && (poi.place_id ?? null) === null) return null
+
+  const nearest = nearestLeg(edit.legs, poi.coordinate)
+  if (nearest === null) return null
+  const leg = edit.legs[nearest.legIndex]
+  if (leg === undefined) return null
+
+  const offsetInLeg = viaInsertionOffset({
+    legWaypoints: legWaypoints(edit.waypoints, leg),
+    geometry: leg.routed?.geometry ?? [],
+    dragged: poi.coordinate,
+  })
+
+  const inserted = insertVia(edit, {
+    legIndex: nearest.legIndex,
+    offsetInLeg,
+    coordinate: poi.coordinate,
+  })
+
+  // Named, so the route reads back as places rather than as coordinates.
+  const at = leg.start_waypoint_index + offsetInLeg
+  return {
+    ...inserted,
+    waypoints: inserted.waypoints.map((waypoint, index) =>
+      index === at ? { ...waypoint, name: poi.name } : waypoint,
+    ),
+  }
 }
 
 /**

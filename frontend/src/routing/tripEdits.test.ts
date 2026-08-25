@@ -1,12 +1,14 @@
 import { describe, expect, it } from 'vitest'
 import {
+  addPoiToRoute,
   insertVia,
   isLegStale,
   legWaypoints,
   spliceRoutedLeg,
   viaInsertionOffset,
 } from './tripEdits'
-import type { Coordinate, RouteLeg, TripLeg, Waypoint } from '../api/types'
+import type { RouteEdit } from './tripEdits'
+import type { Coordinate, Poi, RouteLeg, TripLeg, Waypoint } from '../api/types'
 
 /**
  * The trip edits a drag performs.
@@ -392,5 +394,80 @@ describe('spliceRoutedLeg', () => {
 
   it('refuses an out-of-range leg', () => {
     expect(() => spliceRoutedLeg(legs, 9, routed([{ lat: 0, lon: 0 }]))).toThrow(RangeError)
+  })
+})
+
+describe('addPoiToRoute', () => {
+  /**
+   * The mouse path for putting a discovered place on the route — and the same function the
+   * assistant's tool will call, so the two cannot drift.
+   *
+   * A POI is inserted where it belongs *along* the route rather than tacked onto the end:
+   * adding a campground halfway through a trip should not send the rider back for it.
+   */
+  const trip: RouteEdit = {
+    waypoints: [waypoint(47), waypoint(48), waypoint(49)],
+    legs: [
+      leg(0, 1, [
+        { lat: 47, lon: -120 },
+        { lat: 47.5, lon: -120 },
+        { lat: 48, lon: -120 },
+      ]),
+      leg(1, 2, [
+        { lat: 48, lon: -120 },
+        { lat: 48.5, lon: -120 },
+        { lat: 49, lon: -120 },
+      ]),
+    ],
+  }
+
+  function poi(overrides: Partial<Poi> = {}): Poi {
+    return {
+      id: 'poi-1',
+      name: 'Lone Fir Campground',
+      category: 'campground',
+      coordinate: { lat: 48.5, lon: -120.02 },
+      source: 'places',
+      place_id: 'ChIJ123',
+      note: null,
+      on_route: false,
+      ...overrides,
+    }
+  }
+
+  it('inserts the place into whichever leg runs nearest to it', () => {
+    const result = addPoiToRoute(trip, poi())
+
+    // Nearest to the second leg, so it goes there rather than at the end of the trip.
+    expect(result?.waypoints.map((point) => point.coordinate.lat)).toEqual([47, 48, 48.5, 49])
+    expect(result?.legs[1]?.end_waypoint_index).toBe(3)
+    expect(result?.legs[0]).toBe(trip.legs[0]) // untouched
+  })
+
+  it('names the waypoint after the place, so the route reads back', () => {
+    const result = addPoiToRoute(trip, poi())
+
+    expect(result?.waypoints[2]).toEqual({
+      coordinate: { lat: 48.5, lon: -120.02 },
+      name: 'Lone Fir Campground',
+      // Deliberately chosen, so a replan must not move or drop it.
+      pinned: true,
+    })
+  })
+
+  it('refuses an unverified suggestion, which the backend would reject anyway', () => {
+    // An LLM-suggested place with no resolved place_id is a claim, not somewhere to ride to.
+    expect(addPoiToRoute(trip, poi({ source: 'llm_suggested', place_id: null }))).toBeNull()
+  })
+
+  it('has nowhere to put it when there is no routed leg yet', () => {
+    expect(addPoiToRoute({ waypoints: [], legs: [] }, poi())).toBeNull()
+    expect(addPoiToRoute({ waypoints: [waypoint(47)], legs: [leg(0, 1)] }, poi())).toBeNull()
+  })
+
+  it('keeps the legs contiguous, as every other edit must', () => {
+    const result = addPoiToRoute(trip, poi())
+
+    assertContiguous(result?.legs ?? [], result?.waypoints.length ?? 0)
   })
 })

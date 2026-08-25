@@ -12,12 +12,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { apiClient } from './api/apiClient'
 import type { ApiClient } from './api/client'
-import type { Coordinate, TripLeg, Waypoint } from './api/types'
+import type { Coordinate, Poi, TripLeg, Waypoint } from './api/types'
 import { MapCanvas } from './map/MapCanvas'
+import { isVerified } from './map/poiPin'
 import { MAP_ID, loadMaps } from './map/googleMaps'
 import type { GoogleMapsLoader } from './map/loadGoogleMaps'
 import { DragSession } from './routing/dragSession'
-import type { RouteEdit } from './routing/tripEdits'
+import { addPoiToRoute, type RouteEdit } from './routing/tripEdits'
 import { routeErrorMessage } from './trip/routeErrorMessage'
 import { useRouteLeg } from './trip/useRouteLeg'
 import { useRoutingCapabilities } from './trip/useRoutingCapabilities'
@@ -33,6 +34,13 @@ export interface AppProps {
   readonly mapLoader?: GoogleMapsLoader
   readonly mapId?: string
   readonly client?: AppClient
+  /**
+   * Places to show on the map.
+   *
+   * Nothing produces these yet — discovery reaches the frontend through replan, which still
+   * answers 501 — so today they arrive only from a caller or a loaded trip.
+   */
+  readonly pois?: readonly Poi[]
 }
 
 /**
@@ -48,10 +56,13 @@ function formatDistance(metres: number): string {
   return `${(metres / 1000).toFixed(metres < 10_000 ? 1 : 0)} km`
 }
 
+const NO_POIS: readonly Poi[] = []
+
 export function App({
   mapLoader = loadMaps,
   mapId = MAP_ID,
   client = apiClient,
+  pois = NO_POIS,
 }: AppProps = {}): React.JSX.Element {
   const [waypoints, setWaypoints] = useState<readonly Waypoint[]>([])
   /**
@@ -135,6 +146,22 @@ export function App({
   const onLegDrag = useCallback((at: Coordinate) => { drag.update(at) }, [drag])
   const onLegDrop = useCallback((at: Coordinate) => { drag.release(at) }, [drag])
 
+  /** What the rider last asked about, shown in the rail. */
+  const [openPoi, setOpenPoi] = useState<Poi | null>(null)
+
+  const onPoiAdd = useCallback((poi: Poi) => {
+    setWaypoints((previous) => {
+      const added = addPoiToRoute({ waypoints: previous, legs: current.current.legs }, poi)
+      return added?.waypoints ?? previous
+    })
+    // The route no longer matches what a drag produced, so let the hook route it.
+    setDraggedLegs(null)
+  }, [])
+
+  const onPoiOpen = useCallback((poi: Poi) => {
+    setOpenPoi(poi)
+  }, [])
+
   const onLegCancel = useCallback(() => {
     // A press that went nowhere. Nothing was routed and nothing should be shown.
     drag.cancel()
@@ -160,6 +187,9 @@ export function App({
           onLegDrag={onLegDrag}
           onLegDrop={onLegDrop}
           onLegCancel={onLegCancel}
+          pois={pois}
+          onPoiAdd={onPoiAdd}
+          onPoiOpen={onPoiOpen}
         />
       </main>
       <aside className="chat-pane" aria-label="Trip assistant">
@@ -177,6 +207,22 @@ export function App({
             </p>
             <button type="button" onClick={removeLastWaypoint}>
               Remove last point
+            </button>
+          </div>
+        )}
+        {openPoi !== null && (
+          <div className="poi-detail">
+            <h2>{openPoi.name}</h2>
+            {!isVerified(openPoi) && (
+              // Stated as a fact about the suggestion rather than as an error, and stated at
+              // all: a control that silently does nothing is worse than one that explains.
+              <p className="poi-detail__warning">
+                This place has not been confirmed against a real listing, so it cannot be
+                added to the route yet.
+              </p>
+            )}
+            <button type="button" onClick={() => setOpenPoi(null)}>
+              Close
             </button>
           </div>
         )}

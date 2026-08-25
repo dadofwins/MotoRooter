@@ -4,7 +4,13 @@ import { App } from './App'
 import { ApiError } from './api/errors'
 import type { RequestOptions } from './api/client'
 import type { GoogleMaps } from './map/loadGoogleMaps'
-import type { Coordinate, RouteLegInput, RouteLegResponse, RoutingCapabilitiesResponse } from './api/types'
+import type {
+  Coordinate,
+  Poi,
+  RouteLegInput,
+  RouteLegResponse,
+  RoutingCapabilitiesResponse,
+} from './api/types'
 
 /**
  * The shell, and the one rule it has to prove: **chat is an accelerator, never a
@@ -34,6 +40,8 @@ interface FakeMarker {
   readonly options: Record<string, unknown>
   /** Set to null when the marker is detached, which is how a removed pin disappears. */
   map: unknown
+  click(): void
+  contextMenu(): void
 }
 
 function createFakeMaps() {
@@ -100,9 +108,20 @@ function createFakeMaps() {
     marker: {
       AdvancedMarkerElement: class implements FakeMarker {
         map: unknown
+        readonly listeners = new Map<string, (event: unknown) => void>()
         constructor(readonly options: Record<string, unknown>) {
           this.map = options['map'] ?? null
           markers.push(this)
+        }
+        addListener(event: string, handler: (event: unknown) => void): { remove: () => void } {
+          this.listeners.set(event, handler)
+          return { remove: () => this.listeners.delete(event) }
+        }
+        click(): void {
+          this.listeners.get('click')?.({})
+        }
+        contextMenu(): void {
+          this.listeners.get('contextmenu')?.({})
         }
       },
     },
@@ -113,6 +132,14 @@ function createFakeMaps() {
     maps,
     markers,
     polylines,
+    /** Markers whose content is a POI pin rather than a waypoint or a drag handle. */
+    poiMarkers: () =>
+      markers.filter(
+        (marker) =>
+          marker.map !== null &&
+          (marker.options['content'] as HTMLElement | undefined)?.className?.startsWith('poi') ===
+            true,
+      ),
     clickMap(lat: number, lon: number): void {
       if (clickHandler === null) throw new Error('the map has no click listener')
       // Wrapped because the Maps API would deliver this outside React's knowledge. Without
@@ -524,5 +551,63 @@ describe('App', () => {
     fireEvent.click(screen.getByRole('button', { name: /remove last point/i }))
 
     expect(await pinLabels(fake, 1)).toEqual(['Start'])
+  })
+})
+
+/**
+ * Points of interest, and putting one on the route with the mouse alone.
+ */
+describe('App and points of interest', () => {
+  const CAMP: Poi = {
+    id: 'poi-1',
+    name: 'Lone Fir Campground',
+    category: 'campground',
+    coordinate: { lat: 47.9, lon: -120.35 },
+    source: 'places',
+    place_id: 'ChIJ123',
+    note: null,
+    on_route: false,
+  }
+
+  async function appWithPoi(place: Poi = CAMP) {
+    const fake = createFakeMaps()
+    const router = fakeRouter()
+    render(<App mapLoader={fake.loader} mapId="motorooter-test-vector" client={router} pois={[place]} />)
+    await mapReady(fake)
+    fake.clickMap(47.6, -120.7)
+    fake.clickMap(48.1, -120.2)
+    await waitFor(() => expect(router.routeLeg).toHaveBeenCalledTimes(1))
+    return { fake, router }
+  }
+
+  it('adds a place to the route on right-click, routing through it', async () => {
+    const { fake, router } = await appWithPoi()
+
+    act(() => {
+      fake.poiMarkers()[0]?.contextMenu()
+    })
+
+    await waitFor(() => expect(router.routeLeg).toHaveBeenCalledTimes(2))
+    const request = router.routeLeg.mock.calls[1]?.[0]
+    // Inserted along the route, between the points it sits between — not appended.
+    expect(request?.waypoints).toEqual([
+      { lat: 47.6, lon: -120.7 },
+      { lat: 47.9, lon: -120.35 },
+      { lat: 48.1, lon: -120.2 },
+    ])
+    expect(await screen.findByText(/3 points placed/i)).toBeInTheDocument()
+  })
+
+  it('says why an unconfirmed suggestion cannot be added, rather than ignoring the click', async () => {
+    // A disabled control with no explanation is the thing this avoids: the rider is told the
+    // place has not been confirmed, which is information about the suggestion, not an error.
+    const { fake, router } = await appWithPoi({ ...CAMP, source: 'llm_suggested', place_id: null })
+
+    act(() => {
+      fake.poiMarkers()[0]?.click()
+    })
+
+    expect(await screen.findByText(/not been confirmed/i)).toBeInTheDocument()
+    expect(router.routeLeg).toHaveBeenCalledTimes(1)
   })
 })

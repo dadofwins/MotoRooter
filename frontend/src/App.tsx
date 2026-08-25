@@ -21,6 +21,7 @@ import type { GoogleMapsLoader } from './map/loadGoogleMaps'
 import { DragSession } from './routing/dragSession'
 import { addPoiToRoute, type RouteEdit } from './routing/tripEdits'
 import { routeErrorMessage } from './trip/routeErrorMessage'
+import { SurfaceSummary } from './trip/SurfaceSummary'
 import { useRouteLeg } from './trip/useRouteLeg'
 import { useRoutingCapabilities } from './trip/useRoutingCapabilities'
 
@@ -211,6 +212,7 @@ export function App({
             </button>
           </div>
         )}
+        <SurfaceSummary legs={shownLegs} />
         {openPoi !== null && (
           <PoiDetailDialog
             poi={openPoi}

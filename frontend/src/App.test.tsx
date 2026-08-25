@@ -278,9 +278,9 @@ describe('App routing the placed points', () => {
     fake.clickMap(47.6, -120.7)
     fake.clickMap(48.1, -120.2)
 
-    // Specific about which figure: the surface breakdown reports distances too, so a bare
-    // /42 km/ matches more than one thing.
-    expect(await screen.findByText(/points placed/)).toHaveTextContent('42 km')
+    // Miles by default, so 42 km reads as 26 mi. Specific about which figure, too: the
+    // surface breakdown reports distances as well, so a bare /26 mi/ matches more than one.
+    expect(await screen.findByText(/points placed/)).toHaveTextContent('26 mi')
   })
 
   it('removes the drawn route when the points that made it are undone', async () => {
@@ -294,12 +294,12 @@ describe('App routing the placed points', () => {
     fake.clickMap(47.6, -120.7)
     fake.clickMap(48.1, -120.2)
     await waitFor(() => expect(fake.polylines[0]?.map).not.toBeNull())
-    expect(await screen.findByText(/points placed/)).toHaveTextContent('42 km')
+    expect(await screen.findByText(/points placed/)).toHaveTextContent('26 mi')
 
     fireEvent.click(screen.getByRole('button', { name: /remove last point/i }))
 
     await waitFor(() => expect(fake.polylines.every((line) => line.map === null)).toBe(true))
-    expect(screen.queryByText(/42 km/i)).not.toBeInTheDocument()
+    expect(screen.queryByText(/26 mi/i)).not.toBeInTheDocument()
   })
 
   it('drops a routing error once the points that caused it are gone', async () => {
@@ -624,5 +624,88 @@ describe('App and points of interest', () => {
 
     expect(await screen.findByText(/not been confirmed/i)).toBeInTheDocument()
     expect(router.routeLeg).toHaveBeenCalledTimes(1)
+  })
+})
+
+/**
+ * Units and riding time.
+ */
+describe('App units and time', () => {
+  async function routed() {
+    const fake = createFakeMaps()
+    const router = fakeRouter()
+    const view = render(
+      <App mapLoader={fake.loader} mapId="motorooter-test-vector" client={router} />,
+    )
+    await mapReady(fake)
+    fake.clickMap(47.6, -120.7)
+    fake.clickMap(48.1, -120.2)
+    await waitFor(() => expect(router.routeLeg).toHaveBeenCalledTimes(1))
+    return { fake, router, view }
+  }
+
+  it('shows miles by default, and switches the whole rail at once', async () => {
+    // One formatter, one unit: the route summary and the surface breakdown must never
+    // disagree about which system they are in.
+    const { view } = await routed()
+    expect(await screen.findByText(/points placed/)).toHaveTextContent('26 mi')
+
+    fireEvent.click(screen.getByRole('button', { name: 'Kilometres' }))
+
+    expect(await screen.findByText(/points placed/)).toHaveTextContent('42 km')
+    // The breakdown followed, rather than staying in miles: more than one figure in km
+    // means the summary line and the surface rows agree.
+    expect(screen.getAllByText(/km$/).length).toBeGreaterThan(1)
+    view.unmount()
+  })
+
+  it('remembers the choice for next time', async () => {
+    const first = await routed()
+    fireEvent.click(screen.getByRole('button', { name: 'Kilometres' }))
+    await waitFor(() => expect(screen.getByText(/points placed/)).toHaveTextContent('42 km'))
+    first.view.unmount()
+
+    await routed()
+
+    expect(await screen.findByText(/points placed/)).toHaveTextContent('42 km')
+  })
+
+  it('says which button is the current unit, not just which looks pressed', async () => {
+    await routed()
+
+    expect(screen.getByRole('button', { name: 'Miles' })).toHaveAttribute('aria-pressed', 'true')
+    expect(screen.getByRole('button', { name: 'Kilometres' })).toHaveAttribute(
+      'aria-pressed',
+      'false',
+    )
+  })
+
+  it('shows riding time when something knows it, and nothing when nothing does', async () => {
+    const fake = createFakeMaps()
+    const withTime = render(
+      <App
+        mapLoader={fake.loader}
+        mapId="motorooter-test-vector"
+        client={fakeRouter()}
+        estimatedDurationS={4 * 3600 + 1140}
+      />,
+    )
+    await mapReady(fake)
+    fake.clickMap(47.6, -120.7)
+    fake.clickMap(48.1, -120.2)
+
+    // Hedged on purpose: the speeds behind it are reasoned guesses, not measurements.
+    expect(await screen.findByText(/about 4h 20m/)).toBeInTheDocument()
+    withTime.unmount()
+
+    const bare = createFakeMaps()
+    render(<App mapLoader={bare.loader} mapId="motorooter-test-vector" client={fakeRouter()} />)
+    await mapReady(bare)
+    bare.clickMap(47.6, -120.7)
+    bare.clickMap(48.1, -120.2)
+
+    // No placeholder and no zero: an estimate nobody has made is not shown.
+    await waitFor(() => expect(screen.getByText(/points placed/)).toBeInTheDocument())
+    expect(screen.queryByText(/about/)).not.toBeInTheDocument()
   })
 })

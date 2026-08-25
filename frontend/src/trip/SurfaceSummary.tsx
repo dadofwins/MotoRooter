@@ -25,6 +25,7 @@
  *   hover is no use on the phone half of this app anyway.
  */
 import type { Surface, TripLeg } from '../api/types'
+import { formatDistance, type DistanceUnit } from '../units/format'
 import { summariseSurface, toWholePercentages } from './surfaceSummary'
 
 /** Dirt first: it is what the rider came for. */
@@ -38,15 +39,13 @@ const LABELS: Record<Surface, string> = {
   unknown: 'Unsurveyed',
 }
 
-function formatDistance(metres: number): string {
-  return `${(metres / 1000).toFixed(metres < 10_000 ? 1 : 0)} km`
-}
-
 export interface SurfaceSummaryProps {
   readonly legs: readonly TripLeg[]
+  /** Passed in rather than read here: one source of truth for the unit, app-wide. */
+  readonly unit: DistanceUnit
 }
 
-export function SurfaceSummary({ legs }: SurfaceSummaryProps): React.JSX.Element | null {
+export function SurfaceSummary({ legs, unit }: SurfaceSummaryProps): React.JSX.Element | null {
   const summary = summariseSurface(legs)
   if (summary === null) return null
 
@@ -74,7 +73,7 @@ export function SurfaceSummary({ legs }: SurfaceSummaryProps): React.JSX.Element
             <span className="surface__label">{LABELS[surface]}</span>
             <span className="surface__share">{percentages[surface]}%</span>
             {/* A percentage is not a plan: 40% means nothing until it is 120 km. */}
-            <span className="surface__distance">{formatDistance(summary.distanceM[surface])}</span>
+            <span className="surface__distance">{formatDistance(summary.distanceM[surface], unit)}</span>
           </li>
         ))}
       </ul>

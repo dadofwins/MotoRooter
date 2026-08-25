@@ -22,6 +22,8 @@ import { DragSession } from './routing/dragSession'
 import { addPoiToRoute, type RouteEdit } from './routing/tripEdits'
 import { routeErrorMessage } from './trip/routeErrorMessage'
 import { SurfaceSummary } from './trip/SurfaceSummary'
+import { formatDistance, formatDuration } from './units/format'
+import { useDistanceUnit } from './units/useDistanceUnit'
 import { useRouteLeg } from './trip/useRouteLeg'
 import { useRoutingCapabilities } from './trip/useRoutingCapabilities'
 
@@ -31,6 +33,20 @@ type AppClient = Pick<ApiClient, 'routeLeg' | 'routingCapabilities' | 'placeDeta
 /** The intent a dragged leg keeps. Matches the one the slice routes with. */
 const DRAG_INTENT = 'unpaved'
 
+/**
+ * Which duration may be shown, and which may not.
+ *
+ * `RouteLeg.duration_s` still may not: on dirt it comes from a bicycle profile and reads
+ * about twice as long as a motorcycle takes, and trip planning is duration-driven, so a
+ * four-hour day shown as eight makes day-splitting nonsense.
+ *
+ * `Trip.estimated_duration_s` is the one that may — derived from distance and surface rather
+ * than from the engine. It is not on `TripLeg` yet, so this shell cannot sum it the way it
+ * sums distance; it arrives as a prop until the backend exposes it per leg. Nothing is shown
+ * when it is absent: no placeholder, no zero.
+ *
+ * `ascent_m` remains unexplained against its reference and stays off screen.
+ */
 export interface AppProps {
   /** Injectable so tests can drive a fake Maps API. */
   readonly mapLoader?: GoogleMapsLoader
@@ -43,19 +59,8 @@ export interface AppProps {
    * answers 501 — so today they arrive only from a caller or a loaded trip.
    */
   readonly pois?: readonly Poi[]
-}
-
-/**
- * Distance as a rider reads it, not as the API sends it.
- *
- * Distance is the only routed figure shown, deliberately. `RouteLeg.duration_s` comes from
- * a bicycle profile on the dirt provider and reads about 2x long — eight hours for a
- * four-hour day — and trip planning is duration-driven, so a wrong number is worse than
- * none. `ascent_m` is similarly unexplained against its reference. Neither goes on screen
- * until the backend derives a figure it trusts.
- */
-function formatDistance(metres: number): string {
-  return `${(metres / 1000).toFixed(metres < 10_000 ? 1 : 0)} km`
+  /** Riding time for the whole route, when something knows it. See the note above. */
+  readonly estimatedDurationS?: number
 }
 
 const NO_POIS: readonly Poi[] = []
@@ -65,7 +70,9 @@ export function App({
   mapId = MAP_ID,
   client = apiClient,
   pois = NO_POIS,
+  estimatedDurationS,
 }: AppProps = {}): React.JSX.Element {
+  const { unit, setUnit } = useDistanceUnit()
   const [waypoints, setWaypoints] = useState<readonly Waypoint[]>([])
   /**
    * Geometry a drag produced, which the hook must not re-request.
@@ -204,7 +211,8 @@ export function App({
             {/* Stated in words as well as drawn, so the map is not the only feedback. */}
             <p aria-live="polite">
               {waypoints.length} point{waypoints.length === 1 ? '' : 's'} placed
-              {distanceM > 0 && ` · ${formatDistance(distanceM)}`}
+              {distanceM > 0 && ` · ${formatDistance(distanceM, unit)}`}
+              {estimatedDurationS !== undefined && ` · ${formatDuration(estimatedDurationS)}`}
               {isRouting && ' · routing…'}
             </p>
             <button type="button" onClick={removeLastWaypoint}>
@@ -212,7 +220,21 @@ export function App({
             </button>
           </div>
         )}
-        <SurfaceSummary legs={shownLegs} />
+        <SurfaceSummary legs={shownLegs} unit={unit} />
+        <div className="units">
+          {/* A preference, so it sits with the numbers it changes rather than in a settings
+              screen nobody opens. */}
+          <button
+            type="button"
+            aria-pressed={unit === 'mi'}
+            onClick={() => setUnit('mi')}
+          >
+            Miles
+          </button>
+          <button type="button" aria-pressed={unit === 'km'} onClick={() => setUnit('km')}>
+            Kilometres
+          </button>
+        </div>
         {openPoi !== null && (
           <PoiDetailDialog
             poi={openPoi}

@@ -1,0 +1,34 @@
+#!/usr/bin/env bash
+# Refuse to push main unless `make check` passes.
+#
+# Exists because the integrator pushed a red main three times in one session — each time by
+# chaining commit && push behind a check whose exit code was swallowed by a pipe. Discipline
+# was not the fix; a gate was. The engineers' equivalent is `make handoff`.
+#
+# Enable once per clone:  git config core.hooksPath .githooks
+# Genuine emergency:      SKIP_PUSH_CHECK=1 git push
+
+set -euo pipefail
+
+while read -r _local_ref _local_sha remote_ref _remote_sha; do
+  [[ "$remote_ref" == "refs/heads/main" ]] || continue
+
+  if [[ "${SKIP_PUSH_CHECK:-}" == "1" ]]; then
+    echo "pre-push: SKIP_PUSH_CHECK set — pushing main unverified" >&2
+    exit 0
+  fi
+
+  echo "pre-push: verifying main with 'make check'..." >&2
+  if ! make check >/tmp/pre-push-check.log 2>&1; then
+    {
+      echo
+      echo "REFUSING TO PUSH: make check failed on main."
+      echo "  log: /tmp/pre-push-check.log"
+      tail -15 /tmp/pre-push-check.log | sed 's/^/  | /'
+      echo
+      echo "Fix it, or SKIP_PUSH_CHECK=1 git push if you genuinely mean to."
+    } >&2
+    exit 1
+  fi
+  echo "pre-push: check passed" >&2
+done

@@ -150,6 +150,20 @@ Review from *your own* perspective, not the author's — that is the point of cr
 
 **Integrator** does a final pass and merges to `main`.
 
+## The integrator is not exempt
+
+`main` has a `pre-push` hook that runs `make check` and refuses the push if it fails. Enable
+it once per clone:
+
+```sh
+git config core.hooksPath .githooks
+```
+
+It exists because the integrator pushed a red `main` three times in one session, every time
+by chaining `commit && push` behind a check whose exit code a pipe had swallowed. The
+engineers had `make handoff` gating them and the integrator had good intentions; only one of
+those worked. `SKIP_PUSH_CHECK=1` is the escape hatch, and using it should feel deliberate.
+
 ## Escalation
 
 Review rounds are capped at **two** per branch. If a disagreement survives two rounds, the

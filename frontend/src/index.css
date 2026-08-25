@@ -92,6 +92,146 @@ body {
   box-shadow: 0 1px 4px rgb(0 0 0 / 0.4);
 }
 
+/* The front door. A card on a plain field: nothing to read but the one decision. */
+.landing {
+  display: grid;
+  place-content: center;
+  min-height: 100vh;
+  padding: 1.5rem;
+  background: #e8e6e1;
+}
+
+.landing__card {
+  width: min(28rem, 100%);
+  padding: 1.75rem;
+  background: #fff;
+  border-radius: 10px;
+  box-shadow: 0 2px 16px rgb(0 0 0 / 0.12);
+}
+
+.landing__title {
+  margin: 0;
+  font-size: 1.5rem;
+}
+
+.landing__blurb {
+  margin: 0.375rem 0 1.25rem;
+  line-height: 1.5;
+  color: rgb(0 0 0 / 0.6);
+}
+
+.landing__field {
+  display: grid;
+  gap: 0.25rem;
+  margin-bottom: 0.75rem;
+  font-size: 0.8125rem;
+  color: rgb(0 0 0 / 0.6);
+}
+
+.landing__field input {
+  padding: 0.5rem 0.625rem;
+  font: inherit;
+  border: 1px solid rgb(0 0 0 / 0.25);
+  border-radius: 6px;
+}
+
+.landing__start button {
+  width: 100%;
+  padding: 0.5rem 0.75rem;
+  font: inherit;
+  font-weight: 600;
+  color: #fff;
+  background: #1f6feb;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.landing__recent {
+  margin-top: 1.5rem;
+  padding-top: 1.25rem;
+  border-top: 1px solid rgb(0 0 0 / 0.12);
+}
+
+.landing__recent h2 {
+  margin: 0 0 0.5rem;
+  font-size: 0.8125rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: rgb(0 0 0 / 0.5);
+}
+
+.landing__recent ul {
+  display: grid;
+  gap: 0.25rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.landing__recent li {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.landing__open {
+  flex: 1;
+  padding: 0.4375rem 0.5rem;
+  font: inherit;
+  text-align: left;
+  color: inherit;
+  background: transparent;
+  border: 1px solid rgb(0 0 0 / 0.14);
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.landing__forget {
+  padding: 0.25rem 0.5rem;
+  font: inherit;
+  color: rgb(0 0 0 / 0.45);
+  background: transparent;
+  border: none;
+  cursor: pointer;
+}
+
+/* Said plainly: a rider who clears their browser has lost a list, not their trips. */
+.landing__note {
+  margin: 0.75rem 0 0;
+  font-size: 0.75rem;
+  line-height: 1.45;
+  color: rgb(0 0 0 / 0.5);
+}
+
+@media (prefers-color-scheme: dark) {
+  .landing {
+    background: #141416;
+  }
+
+  .landing__card {
+    background: #1f1f22;
+  }
+
+  .landing__blurb,
+  .landing__field,
+  .landing__recent h2,
+  .landing__note {
+    color: rgb(255 255 255 / 0.6);
+  }
+
+  .landing__field input,
+  .landing__open {
+    color: inherit;
+    background: #26262a;
+    border-color: rgb(255 255 255 / 0.2);
+  }
+
+  .landing__forget {
+    color: rgb(255 255 255 / 0.5);
+  }
+}
+
 /* The slow path. Sits with the route it acts on rather than in a toolbar. */
 .replan {
   margin-top: 1rem;
@@ -417,6 +557,12 @@ body {
   width: 1.25rem;
   height: 1.25rem;
   font-size: 0.6875rem;
+}
+
+.trip-name {
+  margin: 0 0 0.5rem;
+  font-size: 1rem;
+  font-weight: 600;
 }
 
 .greeting {

@@ -33,10 +33,12 @@ import { DragSession } from './routing/dragSession'
 import { addPoiToRoute, type RouteEdit } from './routing/tripEdits'
 import { replanErrorMessage, routeErrorMessage } from './trip/routeErrorMessage'
 import { SurfaceSummary } from './trip/SurfaceSummary'
+import { Landing } from './landing/Landing'
 import { needsReplan, useReplan } from './trip/useReplan'
 import { useRouteLeg } from './trip/useRouteLeg'
 import { useRoutingCapabilities } from './trip/useRoutingCapabilities'
-import { useStoredTrip, useTripSave } from './trip/useTripDocument'
+import { hasTripInUrl, useStoredTrip, useTripSave } from './trip/useTripDocument'
+import { useVisitedTrips } from './trip/useVisitedTrips'
 import { formatDistance, formatDuration } from './units/format'
 import { useDistanceUnit } from './units/useDistanceUnit'
 
@@ -90,6 +92,17 @@ export function App({
   pois = NO_POIS,
 }: AppProps = {}): React.JSX.Element {
   const { unit, setUnit } = useDistanceUnit()
+  const visited = useVisitedTrips()
+
+  /**
+   * Whether the rider has come through the front door yet.
+   *
+   * The landing screen is the entrance and the map is what is behind it. A URL naming a trip
+   * skips straight through, which is what makes a shared link work.
+   */
+  const [entered, setEntered] = useState(() => hasTripInUrl())
+  /** The name typed at the front door, carried into the trip this session creates. */
+  const [chosenName, setChosenName] = useState<string | null>(null)
 
   /**
    * The stored document, read directly rather than copied into state.
@@ -97,7 +110,7 @@ export function App({
    * Copying it meant a setState inside an effect watching for it, which cascades renders. The
    * comparison below does the same job without one.
    */
-  const { trip: stored, reload } = useStoredTrip(client)
+  const { trip: stored, reload, open } = useStoredTrip(client)
   const [edit, setEdit] = useState<Edited>({ base: null, waypoints: [], pois, legs: null })
 
   /** The stored document, as an edit nobody has changed yet. */
@@ -281,10 +294,44 @@ export function App({
     useMemo(() => ({ waypoints, legs, pois: placed }), [waypoints, legs, placed]),
     // On a conflict the stored document has won, so it is re-read and the comparison above
     // drops the edits that no longer describe it.
-    useMemo(() => ({ slug: stored?.slug ?? null, onConflict: reload }), [stored?.slug, reload]),
+    useMemo(
+      () => ({
+        slug: stored?.slug ?? null,
+        onConflict: reload,
+        ...(chosenName === null ? {} : { name: chosenName }),
+      }),
+      [stored?.slug, reload, chosenName],
+    ),
   )
 
   const distanceM = shownLegs.reduce((total, leg) => total + (leg.routed?.distance_m ?? 0), 0)
+
+  // This browser's record of where it has been, updated whenever a trip is known — created
+  // here, or arrived at by link.
+  const knownSlug = save.slug
+  const knownName = stored?.name ?? null
+  const remember = visited.remember
+  useEffect(() => {
+    if (knownSlug !== null) remember({ slug: knownSlug, name: knownName ?? 'Untitled trip' })
+  }, [knownSlug, knownName, remember])
+
+  if (!entered) {
+    return (
+      <Landing
+        trips={visited.trips}
+        onCreate={(name) => {
+          // Carried into the first save; an empty one takes the default.
+          setChosenName(name === '' ? null : name)
+          setEntered(true)
+        }}
+        onOpen={(slug) => {
+          open(slug)
+          setEntered(true)
+        }}
+        onForget={visited.forget}
+      />
+    )
+  }
 
   return (
     <div className="app">
@@ -305,6 +352,11 @@ export function App({
         />
       </main>
       <aside className="chat-pane" aria-label="Trip assistant">
+        {stored !== null && (
+          // Which trip this is. The recent-trips list shows names, so a rider who arrived by
+          // link should see the same name here rather than having to infer it from the route.
+          <h1 className="trip-name">{stored.name}</h1>
+        )}
         <p className="greeting">
           Describe your trip and I&rsquo;ll help plan it for you! Or set a start and end point on
           the map.

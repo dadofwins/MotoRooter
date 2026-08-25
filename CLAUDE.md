@@ -324,4 +324,7 @@ and by API, and keep it distinct from the server-side keys.
 
 ## Licensing
 
-GPL-3.0. New dependencies must be GPL-3.0-compatible; new source files carry the GPLv3 header.
+GPL-3.0. New dependencies must be GPL-3.0-compatible.
+
+**Do not add per-file GPLv3 headers.** The `LICENSE` file is sufficient, and no file in the
+tree carries one — adding them to new files only would make the codebase inconsistent.

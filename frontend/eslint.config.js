@@ -6,8 +6,16 @@ import tseslint from 'typescript-eslint'
 
 export default tseslint.config(
   {
-    // schema.ts is generated from the backend OpenAPI document and never hand-edited.
-    ignores: ['dist', 'node_modules', 'src/api/schema.ts'],
+    ignores: [
+      'dist',
+      'node_modules',
+      // Generated from the backend OpenAPI document, never hand-edited.
+      'src/api/schema.ts',
+      // Vitest writes these next to vite.config.ts while loading it and deletes them
+      // straight after. Without this, a lint run overlapping a test run intermittently
+      // dies with ENOENT on a file that no longer exists — a CI flake, not a code defect.
+      'vite.config.*.timestamp-*',
+    ],
   },
   js.configs.recommended,
   {

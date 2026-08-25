@@ -30,6 +30,7 @@ class ErrorCode(StrEnum):
     NO_ROUTE_FOUND = "no_route_found"
     ROUTE_INCOMPLETE = "route_incomplete"
     QUOTA_EXCEEDED = "quota_exceeded"
+    RATE_LIMITED = "rate_limited"
     PROVIDER_UNAVAILABLE = "provider_unavailable"
 
     LLM_UNAVAILABLE = "llm_unavailable"

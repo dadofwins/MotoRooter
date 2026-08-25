@@ -246,6 +246,14 @@ class ProviderCapabilities(BaseModel):
     daily_quota: int | None = Field(default=None, ge=0)
     """Requests per day, if the provider imposes one. `None` means effectively unlimited."""
 
+    per_minute_quota: int | None = Field(default=None, ge=0)
+    """Requests per minute, if the provider imposes one.
+
+    A separate limit with a separate window, not a fraction of the daily one. Enforcing only
+    the daily cap lets a burst sail past the local guard and come back as an opaque upstream
+    failure — which is what a discovery fan-out looks like.
+    """
+
     @property
     def supports_live_updates(self) -> bool:
         return self.live_update_interval_ms is not None

@@ -10,9 +10,9 @@ from collections.abc import Mapping
 
 from motorooter.clock import Clock, SystemClock
 from motorooter.routing.decorators.caching import CachingProvider
-from motorooter.routing.decorators.quota import QuotaGuardProvider
+from motorooter.routing.decorators.quota import SECONDS_PER_MINUTE, QuotaGuardProvider
 from motorooter.routing.decorators.retry import RetryingProvider
-from motorooter.routing.errors import RoutingConfigError
+from motorooter.routing.errors import RateLimited, RoutingConfigError
 from motorooter.routing.models import LegIntent
 from motorooter.routing.policy import IntentPolicy, PolicyResolver
 from motorooter.routing.protocol import RoutingProvider
@@ -86,6 +86,7 @@ def _live_providers(settings: RoutingSettings) -> list[RoutingProvider]:
         capabilities = capabilities.model_copy(
             update={
                 "daily_quota": None,
+                "per_minute_quota": None,
                 "live_update_interval_ms": SELF_HOSTED_LIVE_UPDATE_INTERVAL_MS,
             }
         )
@@ -115,6 +116,18 @@ def _decorate(
         attempts=settings.retry_attempts,
         backoff_s=settings.retry_backoff_s,
     )
+    # One guard per declared window, innermost first, so a call is charged to both. The
+    # per-minute ceiling is a different limit from the daily one, not a fraction of it:
+    # enforcing only the daily cap lets a burst — a discovery fan-out, or a fast drag —
+    # sail past the local guard and come back as an opaque upstream failure.
+    if provider.capabilities.per_minute_quota is not None:
+        wrapped = QuotaGuardProvider(
+            wrapped,
+            clock=clock,
+            window_s=SECONDS_PER_MINUTE,
+            window_name="per-minute",
+            exhausted=RateLimited,
+        )
     if provider.capabilities.daily_quota is not None:
         wrapped = QuotaGuardProvider(wrapped, clock=clock)
     return CachingProvider(

@@ -155,6 +155,10 @@ class CandidateJudge:
                 f"[{index}] {candidate.candidate.name} ({candidate.candidate.category.value})"
             )
             lines.append(f"    measured: {_describe(facts)}")
+            if candidate.candidate.found_via:
+                # The reason expansion is worth its extra searches: the same viewpoint is
+                # worth more on a road people ride for pleasure than on one nobody mentions.
+                lines.append(f"    found on: {candidate.candidate.found_via}")
             if candidate.candidate.snippet:
                 lines.append(f"    said of it: {candidate.candidate.snippet}")
         return [SystemMessage(content=SYSTEM_PROMPT), UserMessage(content="\n".join(lines))]

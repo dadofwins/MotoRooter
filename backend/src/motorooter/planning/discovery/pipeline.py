@@ -48,6 +48,11 @@ from motorooter.planning.discovery.corridor import (
 )
 from motorooter.planning.discovery.dedupe import DeduplicatingSearchSource
 from motorooter.planning.discovery.errors import DiscoveryError
+from motorooter.planning.discovery.expansion import (
+    attribute,
+    expansion_queries,
+    roads_and_places,
+)
 from motorooter.planning.discovery.extract import PlaceExtractor
 from motorooter.planning.discovery.judge import CandidateJudge
 from motorooter.planning.discovery.models import (
@@ -187,6 +192,10 @@ class _Counts:
     so a run quietly paying for candidates it always meant to discard should say so.
     """
 
+    expanded: int = 0
+    """Results that came from following a road rather than from an anchor. The number that
+    says whether expansion earned its extra searches."""
+
     failures: list[str] = field(default_factory=list)
 
 
@@ -251,7 +260,7 @@ class DiscoveryPipeline:
         # Planned units: a lookup per anchor, a search per anchor and category, one
         # extraction per anchor, and three for enrichment — resolve, judge, and the tally.
         # Counting units rather than anchors is what keeps the percentage meaningful once
-        # things overlap.
+        # things overlap. Road-following books its own cost later, when it is known.
         searching = len(placed) * (NAMING_COST + EXTRACT_COST + len(wanted) * SEARCH_COST)
         searches = len(placed) * len(wanted)
         reserved_resolve = searches * EXPECTED_NAMES_PER_SEARCH * RESOLVE_COST_PER_CANDIDATE
@@ -261,9 +270,19 @@ class DiscoveryPipeline:
         work = _Work(total=searching + reserved_resolve + reserved_judge)
         updates: asyncio.Queue[DiscoveryProgress | None] = asyncio.Queue()
         found: list[Candidate] = []
+        corridor_region: str | None = None
+        """Whatever region an anchor resolved to, for disambiguating expansion searches.
+
+        Any one will do: a corridor short enough to be one trip is not going to straddle two
+        of them, and the alternative is threading a region through work that runs in parallel
+        and finishes out of order.
+        """
 
         async def handle(anchor: Coordinate) -> None:
+            nonlocal corridor_region
             name, region = await self._describe(anchor, counts)
+            if region is not None and corridor_region is None:
+                corridor_region = region
             if name is None:
                 # No name, no searches: hand back the budget so the bar does not stall.
                 work.add(-(EXTRACT_COST + len(wanted) * SEARCH_COST))
@@ -321,14 +340,25 @@ class DiscoveryPipeline:
             # a response nobody will read.
             producer.cancel()
 
+        # A road is a lead, not a result: it becomes one more round of searches for the
+        # places on it. Announced before it runs, because it is another slow stage and the
+        # bar should say what it is waiting for.
+        places, roads = roads_and_places(found)
+        followed: tuple[Candidate, ...] = ()
+        if roads:
+            work.total += 1
+            yield work.step(SEARCH_STAGE, f"{len(roads)} roads worth following: {_names(roads)}")
+            followed = await self._follow_roads(roads, corridor_region, counts)
+
         # Three metered stages, three events. Behind one event this was fifteen seconds of
         # silence at 99% on a live corridor — the moment a rider is most likely to decide it
         # has hung. Their sizes are only knowable now, so this is where the rest of the bar
         # gets costed.
-        resolving = len(found) * RESOLVE_COST_PER_CANDIDATE
+        leads = (*places, *followed)
+        resolving = len(leads) * RESOLVE_COST_PER_CANDIDATE
         work.add(resolving - reserved_resolve)
-        yield work.step(ENRICH_STAGE, f"checking {len(found)} places are real", advance=0.0)
-        resolved = await self._resolve(found, leg, counts, concurrency)
+        yield work.step(ENRICH_STAGE, f"checking {len(leads)} places are real", advance=0.0)
+        resolved = await self._resolve(leads, leg, counts, concurrency)
 
         # Scoring is the slowest thing here by a wide margin — fifteen seconds against under
         # three for resolving four times as many — so it is named before it starts rather
@@ -401,6 +431,50 @@ class DiscoveryPipeline:
         counts.named += len(extracted)
         return extracted
 
+    async def _follow_roads(
+        self,
+        roads: Sequence[Candidate],
+        region: str | None,
+        counts: _Counts,
+        concurrency: int = DEFAULT_CONCURRENCY,
+    ) -> tuple[Candidate, ...]:
+        """One extra search round per road, for the places on it.
+
+        The road's own evidence travels with whatever it surfaces, which is what makes this
+        worth more than another search: a viewpoint on a road people ride for pleasure is
+        worth more than the same viewpoint on a road nobody mentions.
+
+        Concurrent and failure-tolerant for the same reasons every other stage here is. This
+        is the last fan-out in the pipeline and the one most able to multiply — roads times
+        queries — so running it serially would undo the speed work one stage from the end.
+        """
+        limit = asyncio.Semaphore(max(concurrency, 1))
+
+        async def follow(road: Candidate, query: SearchQuery) -> tuple[Candidate, ...]:
+            async with limit:
+                try:
+                    results = await self._source.search(query, near=road.found_near)
+                except DiscoveryError as exc:
+                    counts.failures.append(f"expansion {road.name}: {exc}")
+                    return ()
+                counts.searched += len(results)
+                counts.expanded += len(results)
+                try:
+                    extracted = await self._extractor.extract(
+                        results, region=region, searched_for=road.name
+                    )
+                except (DiscoveryError, LlmError) as exc:
+                    counts.failures.append(f"expansion extract {road.name}: {exc}")
+                    return ()
+            return attribute(extracted, road)
+
+        batches = await asyncio.gather(
+            *(follow(road, query) for road in roads for query in expansion_queries(road))
+        )
+        surfaced = tuple(item for batch in batches for item in batch)
+        counts.named += len(surfaced)
+        return surfaced
+
     async def _resolve(
         self,
         candidates: Sequence[Candidate],
@@ -465,6 +539,8 @@ class DiscoveryPipeline:
         ]
         if counts.uncategorised:
             parts.append(f"{counts.uncategorised} with no category")
+        if counts.expanded:
+            parts.append(f"{counts.expanded} of the results came from following roads")
         if counts.failures:
             parts.append(f"{len(counts.failures)} stage failures")
         return ", ".join(parts)
@@ -498,3 +574,11 @@ def _to_poi(scored: ScoredCandidate) -> Poi:
     separate decision the rider makes.
     """
     return scored.resolved.to_poi(poi_id=str(uuid.uuid4()), note=scored.reason)
+
+
+def _names(candidates: Sequence[Candidate], limit: int = 3) -> str:
+    """A short, readable list for a progress message."""
+    shown = [candidate.name for candidate in candidates[:limit]]
+    if len(candidates) > limit:
+        shown.append(f"and {len(candidates) - limit} more")
+    return ", ".join(shown)

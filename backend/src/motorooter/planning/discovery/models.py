@@ -15,10 +15,24 @@ optional-everything model would make "is this safe to pin" a question about whic
 happen to be populated.
 """
 
+from enum import StrEnum
+
 from pydantic import BaseModel, ConfigDict, Field
 
 from motorooter.routing.models import Coordinate
 from motorooter.trips.models import Poi, PoiCategory, PoiSource
+
+
+class CandidateKind(StrEnum):
+    """Whether a name is somewhere you stop, or somewhere you ride through."""
+
+    PLACE = "place"
+    """A campsite, a diner, a viewpoint. Resolvable, pinnable, the end of the pipeline."""
+
+    ROAD = "road"
+    """A road, byway or area. Not pinnable — a rider cannot stop at a scenic byway, they
+    ride it — but a strong lead: "this road is worth riding" is exactly the signal that
+    should produce "and here is the viewpoint on it worth pulling over for"."""
 
 
 class Candidate(BaseModel):
@@ -42,6 +56,20 @@ class Candidate(BaseModel):
 
     source: str = Field(min_length=1)
     """Adapter that made the claim, e.g. `brave` or `llm`. Decides how far to trust it."""
+
+    kind: CandidateKind = CandidateKind.PLACE
+    """Somewhere to stop, or somewhere to ride. Roads are leads rather than results.
+
+    Defaults to `PLACE` so a source that does not classify still produces candidates —
+    the failure of a road to be recognised costs a lead, not a result.
+    """
+
+    found_via: str | None = None
+    """The road whose expansion surfaced this, if any.
+
+    Carried into scoring: a viewpoint on a road people ride for pleasure is worth more than
+    the same viewpoint on a road nobody mentions, and that context exists only here.
+    """
 
     claimed_coordinate: Coordinate | None = None
     """Where the source said it is. A hint for resolution, never a pin."""

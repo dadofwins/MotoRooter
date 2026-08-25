@@ -676,3 +676,72 @@ class TestDuplicateQueriesAreNotPaidForTwice:
                 spacing_m=1000,
             )
         assert len(source.queries) == 2 * len(CATEGORIES)
+
+
+class TestFollowingRoads:
+    """A road is a lead. The pipeline should spend one more search round on it."""
+
+    @staticmethod
+    def _extracts(kind: str):
+        payload = {"places": [{"result_index": 0, "place_name": "First", "kind": kind}]}
+        return llm(json.dumps(payload))
+
+    async def test_a_road_produces_extra_searches(self):
+        source = FakeSearchSource()
+        runner = DiscoveryPipeline(
+            namer=StubNamer(),
+            source=source,
+            extractor=PlaceExtractor(self._extracts("road")),
+            resolver=StubResolver(),
+            classifier=CategoryClassifier(llm('{"categories": []}')),
+            judge=CandidateJudge(llm('{"scores": []}')),
+        )
+        events = [event async for event in runner.run(LEG, CATEGORIES, max_anchors=2)]
+        assert len(source.queries) > 1
+        assert any("roads worth following" in event.message for event in events)
+
+    async def test_the_expansion_is_reported_in_the_summary(self):
+        """The number that says whether the extra searches earned their cost."""
+        runner = DiscoveryPipeline(
+            namer=StubNamer(),
+            source=FakeSearchSource(),
+            extractor=PlaceExtractor(self._extracts("road")),
+            resolver=StubResolver(),
+            classifier=CategoryClassifier(llm('{"categories": []}')),
+            judge=CandidateJudge(llm('{"scores": []}')),
+        )
+        events = [event async for event in runner.run(LEG, CATEGORIES, max_anchors=2)]
+        assert "following roads" in events[-1].message
+
+    async def test_a_run_with_no_roads_costs_nothing_extra(self):
+        source = FakeSearchSource()
+        runner = DiscoveryPipeline(
+            namer=StubNamer(),
+            source=source,
+            extractor=PlaceExtractor(self._extracts("place")),
+            resolver=StubResolver(),
+            classifier=CategoryClassifier(llm('{"categories": []}')),
+            judge=CandidateJudge(llm('{"scores": []}')),
+        )
+        events = [event async for event in runner.run(LEG, CATEGORIES, max_anchors=2)]
+        assert len(source.queries) == 2
+        assert "following roads" not in events[-1].message
+
+    async def test_expansion_does_not_recurse(self):
+        """Every road mentions others; without the cap this walks the highway network.
+
+        The extractor always returns a road here, so an uncapped expansion would search
+        forever rather than twice.
+        """
+        source = FakeSearchSource()
+        runner = DiscoveryPipeline(
+            namer=StubNamer(),
+            source=source,
+            extractor=PlaceExtractor(self._extracts("road")),
+            resolver=StubResolver(),
+            classifier=CategoryClassifier(llm('{"categories": []}')),
+            judge=CandidateJudge(llm('{"scores": []}')),
+        )
+        [event async for event in runner.run(LEG, CATEGORIES, max_anchors=2)]
+        # Two anchor queries, plus the expansion queries for the single road they found.
+        assert len(source.queries) <= 2 + 3

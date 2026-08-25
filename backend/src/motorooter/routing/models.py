@@ -170,10 +170,31 @@ class RouteLeg(BaseModel):
     @cached_property
     def unpaved_distance_m(self) -> float:
         """Metres explicitly tagged unpaved. UNKNOWN spans do not count."""
+        return self._distance_tagged(Surface.UNPAVED)
+
+    @cached_property
+    def paved_distance_m(self) -> float:
+        """Metres explicitly tagged paved."""
+        return self._distance_tagged(Surface.PAVED)
+
+    @cached_property
+    def unknown_distance_m(self) -> float:
+        """Metres this leg cannot vouch for.
+
+        Everything the spans do not positively identify as paved or unpaved: explicit
+        UNKNOWN spans, and geometry no span covers at all. Defined as the remainder rather
+        than summed from UNKNOWN spans, because untagged geometry is exactly as unknown as
+        geometry tagged unknown — and folding it into either of the other two is how a road
+        nobody has surveyed comes to be reported as tarmac.
+        """
+        accounted = self.paved_distance_m + self.unpaved_distance_m
+        return max(self.geometry_length_m - accounted, 0.0)
+
+    def _distance_tagged(self, surface: Surface) -> float:
         return sum(
             path_length_m(self.geometry[span.start_index : span.end_index + 1])
             for span in self.surface_spans
-            if span.surface is Surface.UNPAVED
+            if span.surface is surface
         )
 
     @cached_property

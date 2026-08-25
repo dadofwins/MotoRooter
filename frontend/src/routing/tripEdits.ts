@@ -129,28 +129,6 @@ export function insertVia(edit: RouteEdit, input: InsertViaInput): RouteEdit {
 }
 
 /**
- * The two waypoints a via-point dropped here would sit between.
- *
- * What the rubber band spans while a drag is in progress: the edit the rider is making,
- * drawn as two straight segments through the cursor. `null` when the leg cannot be dragged.
- */
-export function viaAnchors(
-  waypoints: readonly Waypoint[],
-  leg: TripLeg,
-  grabbed: Coordinate,
-): readonly [Coordinate, Coordinate] | null {
-  const points = legWaypoints(waypoints, leg)
-  const geometry = leg.routed?.geometry ?? []
-  if (points.length < 2 || geometry.length < 2) return null
-
-  const offset = viaInsertionOffset({ legWaypoints: points, geometry, dragged: grabbed })
-  const before = points[offset - 1]
-  const after = points[offset]
-  if (before === undefined || after === undefined) return null
-  return [before, after]
-}
-
-/**
  * Half of the backend's rounding step, which is the largest a rounded value can differ from
  * the original.
  *

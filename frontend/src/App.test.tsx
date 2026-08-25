@@ -399,10 +399,10 @@ describe('App dragging the route', () => {
     expect(last?.waypoints[1]).toEqual({ lat: 47.9, lon: -121 })
   })
 
-  it('rubber-bands locally when the provider says preview-only', async () => {
+  it('asks nothing of a preview-only provider until the release', async () => {
     // `live_update_interval_ms: null` is a metered engine saying "route on release, not
-    // before". Honouring only the routing half leaves the line motionless under the cursor,
-    // and thrift the rider cannot see is indistinguishable from a bug.
+    // before". The moving handle is then the only mid-gesture feedback there is, which is
+    // honest — but it does mean no request may go out until the rider lets go.
     const fake = createFakeMaps()
     const router = fakeRouter()
     router.routingCapabilities.mockResolvedValue({
@@ -421,10 +421,10 @@ describe('App dragging the route', () => {
       map?.mouseMove({ lat: 47.9, lon: -121.0 })
     })
 
-    // Drawn locally, and nothing asked of the provider.
-    await waitFor(() => expect(fake.polylines.length).toBeGreaterThan(1))
+    // Nothing asked of the provider, and the route left exactly as it was: the moving
+    // handle drawn by the canvas is the whole of the mid-gesture feedback here.
     expect(router.routeLeg).toHaveBeenCalledTimes(1)
-    expect(fake.polylines.at(-1)?.options['path']).toContainEqual({ lat: 47.9, lng: -121 })
+    expect(fake.polylines).toHaveLength(1)
 
     // The release is still authoritative, and still routes.
     act(() => {

@@ -2,7 +2,7 @@ import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
 import { MapCanvas } from './MapCanvas'
 import type { GoogleMaps } from './loadGoogleMaps'
-import type { Coordinate, TripLeg, Waypoint } from '../api/types'
+import type { Coordinate, Poi, TripLeg, Waypoint } from '../api/types'
 
 /**
  * The canvas is where a Maps API the tests cannot load meets React's lifecycle. Two classes
@@ -125,10 +125,21 @@ function createFakeMaps({ withMarkerLibrary = true }: { withMarkerLibrary?: bool
   class FakeMarker {
     map: unknown
     position: unknown
+    readonly listeners = new Map<string, (event: unknown) => void>()
     constructor(readonly options: Record<string, unknown>) {
       this.map = options['map'] ?? null
       this.position = options['position'] ?? null
       markers.push(this)
+    }
+    addListener(event: string, handler: (event: unknown) => void): { remove: () => void } {
+      this.listeners.set(event, handler)
+      return { remove: () => this.listeners.delete(event) }
+    }
+    click(): void {
+      this.listeners.get('click')?.({})
+    }
+    contextMenu(): void {
+      this.listeners.get('contextmenu')?.({})
     }
   }
 
@@ -146,6 +157,17 @@ function createFakeMaps({ withMarkerLibrary = true }: { withMarkerLibrary?: bool
     }
     setPosition(position: unknown): void {
       this.position = position
+    }
+    readonly listeners = new Map<string, (event: unknown) => void>()
+    addListener(event: string, handler: (event: unknown) => void): { remove: () => void } {
+      this.listeners.set(event, handler)
+      return { remove: () => this.listeners.delete(event) }
+    }
+    click(): void {
+      this.listeners.get('click')?.({})
+    }
+    contextMenu(): void {
+      this.listeners.get('contextmenu')?.({})
     }
   }
 
@@ -166,6 +188,19 @@ function createFakeMaps({ withMarkerLibrary = true }: { withMarkerLibrary?: bool
     /** Overlays still attached to a map — anything left here after unmount is a leak. */
     attached: () =>
       [...polylines, ...markers, ...legacyMarkers].filter((overlay) => overlay.map !== null),
+    /** Markers whose content is a POI pin. */
+    poiMarkers: () =>
+      [...markers, ...legacyMarkers].filter(
+        (marker) =>
+          marker.map !== null &&
+          (marker.options['content'] as HTMLElement | undefined)?.className?.startsWith('poi') ===
+            true,
+      ),
+    poiPins: () =>
+      [...markers, ...legacyMarkers]
+        .filter((marker) => marker.map !== null)
+        .map((marker) => marker.options['content'] as HTMLElement | undefined)
+        .filter((pin) => pin?.className?.startsWith('poi') === true),
     /** The live drag handle, if the gesture is showing one. */
     handles: () =>
       [...markers, ...legacyMarkers].filter(
@@ -877,5 +912,119 @@ describe('MapCanvas', () => {
 
     await waitFor(() => expect(fake.maps).toHaveLength(1))
     expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+  })
+})
+
+/**
+ * Points of interest on the map.
+ *
+ * Right-click is the mouse path for putting a place on the route — the same action the
+ * assistant will take, because chat is an accelerator and never the only way in.
+ */
+describe('MapCanvas showing points of interest', () => {
+  function poi(overrides: Partial<Poi> = {}): Poi {
+    return {
+      id: 'poi-1',
+      name: 'Lone Fir Campground',
+      category: 'campground',
+      coordinate: { lat: 47.5, lon: -120.1 },
+      source: 'places',
+      place_id: 'ChIJ123',
+      note: null,
+      on_route: false,
+      ...overrides,
+    }
+  }
+
+  it('draws a pin for each place', async () => {
+    const fake = createFakeMaps()
+
+    render(
+      <MapCanvas
+        mapId={MAP_ID}
+        loader={fake.loader}
+        pois={[poi(), poi({ id: 'poi-2', category: 'fuel', coordinate: { lat: 48, lon: -120 } })]}
+      />,
+    )
+
+    await waitFor(() => expect(fake.poiPins()).toHaveLength(2))
+  })
+
+  it('reports a right-click on a place, which is how it gets added to the route', async () => {
+    const fake = createFakeMaps()
+    const onPoiAdd = vi.fn()
+    const place = poi()
+
+    render(<MapCanvas mapId={MAP_ID} loader={fake.loader} pois={[place]} onPoiAdd={onPoiAdd} />)
+    await waitFor(() => expect(fake.poiPins()).toHaveLength(1))
+
+    act(() => {
+      fake.poiMarkers()[0]?.contextMenu()
+    })
+
+    expect(onPoiAdd).toHaveBeenCalledWith(place)
+  })
+
+  it('reports a plain click on a place, which opens its detail', async () => {
+    const fake = createFakeMaps()
+    const onPoiOpen = vi.fn()
+    const place = poi()
+
+    render(<MapCanvas mapId={MAP_ID} loader={fake.loader} pois={[place]} onPoiOpen={onPoiOpen} />)
+    await waitFor(() => expect(fake.poiPins()).toHaveLength(1))
+
+    act(() => {
+      fake.poiMarkers()[0]?.click()
+    })
+
+    expect(onPoiOpen).toHaveBeenCalledWith(place)
+  })
+
+  it('does not offer to route to an unconfirmed suggestion', async () => {
+    // The backend refuses to pin one, so offering it would be a control that cannot work.
+    // It still opens — a rider may want to read what was suggested and why.
+    const fake = createFakeMaps()
+    const onPoiAdd = vi.fn()
+    const onPoiOpen = vi.fn()
+    const guess = poi({ source: 'llm_suggested', place_id: null })
+
+    render(
+      <MapCanvas
+        mapId={MAP_ID}
+        loader={fake.loader}
+        pois={[guess]}
+        onPoiAdd={onPoiAdd}
+        onPoiOpen={onPoiOpen}
+      />,
+    )
+    await waitFor(() => expect(fake.poiPins()).toHaveLength(1))
+
+    act(() => {
+      fake.poiMarkers()[0]?.contextMenu()
+      fake.poiMarkers()[0]?.click()
+    })
+
+    expect(onPoiAdd).not.toHaveBeenCalled()
+    expect(onPoiOpen).toHaveBeenCalledWith(guess)
+  })
+
+  it('replaces its pins when the places change, leaving none attached', async () => {
+    const fake = createFakeMaps()
+    const { rerender } = render(<MapCanvas mapId={MAP_ID} loader={fake.loader} pois={[poi()]} />)
+    await waitFor(() => expect(fake.poiPins()).toHaveLength(1))
+
+    rerender(<MapCanvas mapId={MAP_ID} loader={fake.loader} pois={[]} />)
+
+    await waitFor(() => expect(fake.poiPins()).toHaveLength(0))
+  })
+
+  it('detaches its pins on unmount', async () => {
+    const fake = createFakeMaps()
+    const { unmount } = render(<MapCanvas mapId={MAP_ID} loader={fake.loader} pois={[poi()]} />)
+    await waitFor(() => expect(fake.poiPins()).toHaveLength(1))
+
+    unmount()
+
+    expect(fake.poiPins()).toHaveLength(0)
   })
 })

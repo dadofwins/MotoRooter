@@ -15,16 +15,18 @@
  *   accumulate orphaned polylines — the failure mode that quietly turns a map to treacle.
  */
 import { useEffect, useMemo, useRef, useState } from 'react'
-import type { Coordinate, TripLeg, Waypoint } from '../api/types'
+import type { Coordinate, Poi, TripLeg, Waypoint } from '../api/types'
 import type { GoogleMaps, GoogleMapsLoader } from './loadGoogleMaps'
 import { distanceM } from '../routing/geo'
 import { createMapOptions, toCoordinate, toLatLng, type MapColorScheme } from './mapOptions'
 import { polylineStyle, toRouteSegments } from './routeLayer'
+import { createPoiPin, isVerified } from './poiPin'
 import { createDragHandle, createWaypointPin, waypointKind } from './waypointPin'
 
 /** Stable identities: inline defaults would rebuild every overlay on every render. */
 const NO_LEGS: readonly TripLeg[] = []
 const NO_WAYPOINTS: readonly Waypoint[] = []
+const NO_POIS: readonly Poi[] = []
 
 /** Opening view: BDR country, wide enough to place a first point anywhere in it. */
 const DEFAULT_CENTER: Coordinate = { lat: 44.5, lon: -116.5 }
@@ -38,6 +40,7 @@ const NO_MAP_ID_NOTICE =
 interface AttachedMarker {
   detach(): void
   move(position: google.maps.LatLngLiteral): void
+  on(event: string, handler: () => void): google.maps.MapsEventListener | null
 }
 
 interface MarkerInput {
@@ -73,6 +76,7 @@ function createMarker(maps: GoogleMaps, input: MarkerInput): AttachedMarker {
       move: (position) => {
         marker.position = position
       },
+      on: (event, handler) => marker.addListener(event, handler),
     }
   }
 
@@ -90,6 +94,7 @@ function createMarker(maps: GoogleMaps, input: MarkerInput): AttachedMarker {
     move: (position) => {
       marker.setPosition(position)
     },
+    on: (event, handler) => marker.addListener(event, handler),
   }
 }
 
@@ -101,6 +106,7 @@ export interface MapCanvasProps {
   readonly loader: GoogleMapsLoader
   readonly waypoints?: readonly Waypoint[]
   readonly legs?: readonly TripLeg[]
+  readonly pois?: readonly Poi[]
   /** Initial camera only; later changes do not move a map the user may be panning. */
   readonly center?: Coordinate
   readonly zoom?: number
@@ -120,6 +126,16 @@ export interface MapCanvasProps {
   readonly onLegDrop?: (at: Coordinate) => void
   /** The gesture ended without moving far enough to be a drag. Abandon it. */
   readonly onLegCancel?: () => void
+
+  /**
+   * A place was right-clicked: the mouse path for putting it on the route.
+   *
+   * Never called for an unconfirmed suggestion — the backend refuses to pin one, so offering
+   * it would be a control that cannot work.
+   */
+  readonly onPoiAdd?: (poi: Poi) => void
+  /** A place was clicked. Opens its detail, whatever its provenance. */
+  readonly onPoiOpen?: (poi: Poi) => void
 }
 
 /**
@@ -140,6 +156,7 @@ export function MapCanvas({
   loader,
   waypoints = NO_WAYPOINTS,
   legs = NO_LEGS,
+  pois = NO_POIS,
   center = DEFAULT_CENTER,
   zoom = DEFAULT_ZOOM,
   mapId,
@@ -149,6 +166,8 @@ export function MapCanvas({
   onLegDrag,
   onLegDrop,
   onLegCancel,
+  onPoiAdd,
+  onPoiOpen,
 }: MapCanvasProps): React.JSX.Element {
   const containerRef = useRef<HTMLDivElement>(null)
   const mapRef = useRef<google.maps.Map | null>(null)
@@ -188,6 +207,14 @@ export function MapCanvas({
   useEffect(() => {
     dragHandlers.current = { onLegGrab, onLegDrag, onLegDrop, onLegCancel }
   }, [onLegGrab, onLegDrag, onLegDrop, onLegCancel])
+
+  const poiHandlers = useRef<{
+    onPoiAdd?: ((poi: Poi) => void) | undefined
+    onPoiOpen?: ((poi: Poi) => void) | undefined
+  }>({})
+  useEffect(() => {
+    poiHandlers.current = { onPoiAdd, onPoiOpen }
+  }, [onPoiAdd, onPoiOpen])
 
   /**
    * The gesture in progress, if any.
@@ -442,6 +469,41 @@ export function MapCanvas({
       for (const marker of markers) marker.detach()
     }
   }, [maps, waypoints, hasMapId])
+
+  useEffect(() => {
+    const map = mapRef.current
+    if (maps === null || map === null) return undefined
+
+    const pins = pois.map((poi) => {
+      const marker = createMarker(maps, {
+        map,
+        position: toLatLng(poi.coordinate),
+        pin: createPoiPin(poi),
+        advanced: hasMapId,
+      })
+      const listeners = [
+        marker.on('click', () => {
+          poiHandlers.current.onPoiOpen?.(poi)
+        }),
+        // Right-click is the add-to-route path, and it is offered only where it can work.
+        ...(isVerified(poi)
+          ? [
+              marker.on('contextmenu', () => {
+                poiHandlers.current.onPoiAdd?.(poi)
+              }),
+            ]
+          : []),
+      ]
+      return { marker, listeners }
+    })
+
+    return () => {
+      for (const { marker, listeners } of pins) {
+        for (const listener of listeners) listener?.remove()
+        marker.detach()
+      }
+    }
+  }, [maps, pois, hasMapId])
 
   useEffect(() => {
     const map = mapRef.current

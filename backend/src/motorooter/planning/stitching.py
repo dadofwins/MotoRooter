@@ -49,6 +49,13 @@ GAP_REPORT_THRESHOLD_M = 25.0
 Engines snapping to different nodes on the same road disagree by a few metres constantly;
 warning about that would be noise. Twenty-five metres is more than a lane and less than a
 missed turn.
+
+Provisional, and derived from first principles rather than data — which is the wrong way
+round. It is a paved-world number, and the boundary that matters here is a paved leg
+meeting a forest road, where OSM track geometry and a bicycle-profile snap can disagree by
+more than this routinely. Tune it by stitching a real BDR route end to end and counting how
+many gaps it reports; a warning that fires on boundaries a rider would not notice is a
+warning that gets ignored.
 """
 
 

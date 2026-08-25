@@ -41,6 +41,19 @@ class UnsupportedIntent(RoutingError):
     """No policy is configured for a leg intent."""
 
 
+class RouteIncomplete(RoutingError):
+    """A trip was asked for a continuous route while some of its legs are unrouted.
+
+    Stitching what exists would return a shorter route that looks whole, which is worse
+    than refusing: the hole is invisible in the geometry and the export would be wrong.
+    """
+
+    def __init__(self, leg_indices: tuple[int, ...]) -> None:
+        self.leg_indices = leg_indices
+        listed = ", ".join(str(index) for index in leg_indices)
+        super().__init__(f"trip has unrouted legs at index {listed}")
+
+
 class RoutingConfigError(RoutingError):
     """Wiring is inconsistent — raised at startup, never mid-request.
 

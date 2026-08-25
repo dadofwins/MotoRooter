@@ -11,11 +11,11 @@
  */
 import { useCallback, useState } from 'react'
 import { apiClient } from './api/apiClient'
-import { isApiError } from './api/errors'
 import type { Coordinate, Waypoint } from './api/types'
 import { MapCanvas } from './map/MapCanvas'
 import { MAP_ID, loadMaps } from './map/googleMaps'
 import type { GoogleMapsLoader } from './map/loadGoogleMaps'
+import { routeErrorMessage } from './trip/routeErrorMessage'
 import { useRouteLeg, type LegRouter } from './trip/useRouteLeg'
 
 export interface AppProps {
@@ -88,10 +88,9 @@ export function App({
         )}
         {error !== null && (
           <p className="route-error" role="alert">
-            {/* `code` is the stable identifier; `detail` is prose the backend may reword. */}
-            {isApiError(error) && error.code === 'no_route_found'
-              ? 'No route found between those points. Try moving one of them.'
-              : error.message}
+            {/* Never `error.message`: that is an internal string, and a network outage and
+                a server bug would read identically. */}
+            {routeErrorMessage(error)}
           </p>
         )}
       </aside>

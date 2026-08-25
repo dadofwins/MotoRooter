@@ -38,6 +38,12 @@ export type LegRouter = Pick<ApiClient, 'routeLeg'>
  */
 const SLICE_INTENT: LegIntent = 'twisty_paved'
 
+/**
+ * How many routes to keep. Generous for undo and redo across an editing session, and small
+ * enough that a long one cannot grow without bound.
+ */
+const MAX_CACHED_ROUTES = 50
+
 export interface RouteLegState {
   /** Legs ready to draw. Empty until a route has come back. */
   readonly legs: readonly TripLeg[]
@@ -76,10 +82,29 @@ export function useRouteLeg(client: LegRouter, waypoints: readonly Waypoint[]): 
   /** Monotonic, so a response can be recognised as superseded before it is applied. */
   const sequenceRef = useRef(0)
 
+  /**
+   * Routes already fetched, keyed by where they go.
+   *
+   * Without it, adding a via point and undoing it costs three requests instead of one, and
+   * every undo re-fetches geometry already in hand. Bounded, because an editing session can
+   * visit a great many routes.
+   *
+   * State rather than a ref because it is read while rendering, and a ref read during
+   * render is not safe under concurrent rendering. Feeding it back into the effect's
+   * dependencies terminates: a cache change re-runs the effect, which finds the route
+   * already present and does nothing.
+   */
+  const [cache, setCache] = useState<ReadonlyMap<string, readonly TripLeg[]>>(() => new Map())
+
   useEffect(() => {
     const points = latest.current
     if (points.length < 2) return undefined // nothing to route between yet
+    if (cache.has(routeKey)) return undefined // already have exactly this route
 
+    // Mounting with two or more waypoints already in place — restored from persistence or
+    // a URL — dispatches twice under StrictMode's double-invoke, because the second run
+    // starts before the first response has populated the cache. Unreachable while the app
+    // always mounts empty; whoever adds restore-on-load should expect it.
     const sequence = ++sequenceRef.current
     const controller = new AbortController()
 
@@ -91,22 +116,22 @@ export function useRouteLeg(client: LegRouter, waypoints: readonly Waypoint[]): 
       .then(
         (response) => {
           if (sequence !== sequenceRef.current) return // a newer route already landed
-          setSettled({
-            legs: [
-              {
-                intent: SLICE_INTENT,
-                start_waypoint_index: 0,
-                end_waypoint_index: points.length - 1,
-                provider_override: null,
-                routed: response.leg,
-              },
-            ],
-            error: null,
-            key: routeKey,
-          })
+          const legs: readonly TripLeg[] = [
+            {
+              intent: SLICE_INTENT,
+              start_waypoint_index: 0,
+              end_waypoint_index: points.length - 1,
+              provider_override: null,
+              routed: response.leg,
+            },
+          ]
+          setCache((previous) => remember(previous, routeKey, legs))
+          setSettled({ legs, error: null, key: routeKey })
         },
         (reason: unknown) => {
           if (sequence !== sequenceRef.current || controller.signal.aborted) return
+          // Not recorded as held: a failed route should be retried if it comes back, not
+          // remembered as answered.
           setSettled({
             legs: [],
             error: reason instanceof Error ? reason : new Error(String(reason)),
@@ -118,13 +143,40 @@ export function useRouteLeg(client: LegRouter, waypoints: readonly Waypoint[]): 
     return () => {
       controller.abort()
     }
-  }, [client, routeKey])
+  }, [client, routeKey, cache])
+
+  // What is *shown* is derived from what the route currently is, not from the last thing
+  // that came back. Storing it instead is how a deleted route stays on the map: the effect
+  // has nothing to do when there is nothing to route, so it never clears anything.
+  const routable = waypoints.length >= 2
+  const cached = routable ? cache.get(routeKey) : undefined
+  const failedHere = routable && settled.key === routeKey && settled.error !== null
 
   return {
-    legs: settled.legs,
-    error: settled.error,
+    // A cached route shows immediately. Otherwise the previous line stays up while the new
+    // one is fetched — blanking the map between edits would be worse — but a route that no
+    // longer has two points is simply gone.
+    legs: routable ? (cached ?? settled.legs) : [],
+    // Only the current route's failure is worth showing. Otherwise removing the waypoints
+    // that caused an error leaves an alert on screen that cannot be dismissed.
+    error: failedHere ? settled.error : null,
     // Derived, not stored: setting a flag when the request starts would mean a state
     // update inside the effect, which cascades renders.
-    isRouting: waypoints.length >= 2 && settled.key !== routeKey,
+    isRouting: routable && cached === undefined && !failedHere,
   }
+}
+
+/** A copy of the cache with `legs` added, evicting the oldest entry once it is full. */
+function remember(
+  cache: ReadonlyMap<string, readonly TripLeg[]>,
+  key: string,
+  legs: readonly TripLeg[],
+): ReadonlyMap<string, readonly TripLeg[]> {
+  const next = new Map(cache)
+  next.set(key, legs)
+  if (next.size > MAX_CACHED_ROUTES) {
+    const oldest = next.keys().next()
+    if (!oldest.done) next.delete(oldest.value)
+  }
+  return next
 }

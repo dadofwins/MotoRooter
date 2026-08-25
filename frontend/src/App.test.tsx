@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
 import { App } from './App'
 import { ApiError } from './api/errors'
@@ -22,7 +22,7 @@ interface FakeMarker {
 
 function createFakeMaps() {
   const markers: FakeMarker[] = []
-  const polylines: { options: Record<string, unknown> }[] = []
+  const polylines: { options: Record<string, unknown>; map: unknown }[] = []
   let clickHandler: ((event: unknown) => void) | null = null
 
   class FakeMap {
@@ -38,10 +38,14 @@ function createFakeMaps() {
   const namespace = {
     Map: FakeMap,
     Polyline: class {
+      map: unknown
       constructor(readonly options: Record<string, unknown>) {
+        this.map = options['map'] ?? null
         polylines.push(this)
       }
-      setMap(): void {}
+      setMap(map: unknown): void {
+        this.map = map
+      }
     },
     LatLngBounds: class {
       extend(): this {
@@ -65,7 +69,11 @@ function createFakeMaps() {
     polylines,
     clickMap(lat: number, lon: number): void {
       if (clickHandler === null) throw new Error('the map has no click listener')
-      clickHandler({ latLng: { lat: () => lat, lng: () => lon } })
+      // Wrapped because the Maps API would deliver this outside React's knowledge. Without
+      // act() the suite fills with warnings, which is how a real one gets missed.
+      act(() => {
+        clickHandler?.({ latLng: { lat: () => lat, lng: () => lon } })
+      })
     },
   }
 }
@@ -182,6 +190,68 @@ describe('App routing the placed points', () => {
     expect(await screen.findByText(/42 km/i)).toBeInTheDocument()
   })
 
+  it('removes the drawn route when the points that made it are undone', async () => {
+    // The state a rider reaches in the first thirty seconds: place two points, change your
+    // mind. Before this, the line stayed on an empty map with a distance for a route that
+    // no longer existed, and only a page reload cleared it.
+    const fake = createFakeMaps()
+    render(<App mapLoader={fake.loader} mapId="motorooter-test-vector" client={fakeRouter()} />)
+    await waitFor(() => expect(screen.queryByRole('status')).not.toBeInTheDocument())
+
+    fake.clickMap(47.6, -120.7)
+    fake.clickMap(48.1, -120.2)
+    await waitFor(() => expect(fake.polylines[0]?.map).not.toBeNull())
+    expect(await screen.findByText(/42 km/i)).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: /remove last point/i }))
+
+    await waitFor(() => expect(fake.polylines.every((line) => line.map === null)).toBe(true))
+    expect(screen.queryByText(/42 km/i)).not.toBeInTheDocument()
+  })
+
+  it('drops a routing error once the points that caused it are gone', async () => {
+    const fake = createFakeMaps()
+    const router = {
+      routeLeg: vi.fn((_request: RouteLegInput, _options?: RequestOptions) =>
+        Promise.reject(new ApiError({ status: 422, code: 'no_route_found', detail: 'nope' })),
+      ),
+    }
+    render(<App mapLoader={fake.loader} mapId="motorooter-test-vector" client={router} />)
+    await waitFor(() => expect(screen.queryByRole('status')).not.toBeInTheDocument())
+
+    fake.clickMap(47.6, -120.7)
+    fake.clickMap(48.1, -120.2)
+    await screen.findByRole('alert')
+
+    fireEvent.click(screen.getByRole('button', { name: /remove last point/i }))
+
+    await waitFor(() => expect(screen.queryByRole('alert')).not.toBeInTheDocument())
+  })
+
+  it('never shows an internal error string to the rider', async () => {
+    const fake = createFakeMaps()
+    const router = {
+      routeLeg: vi.fn((_request: RouteLegInput, _options?: RequestOptions) =>
+        Promise.reject(
+          new ApiError({
+            status: 400,
+            code: 'invalid_request',
+            detail: '[fake] 51 waypoints exceeds provider maximum 50',
+          }),
+        ),
+      ),
+    }
+    render(<App mapLoader={fake.loader} mapId="motorooter-test-vector" client={router} />)
+    await waitFor(() => expect(screen.queryByRole('status')).not.toBeInTheDocument())
+
+    fake.clickMap(47.6, -120.7)
+    fake.clickMap(48.1, -120.2)
+
+    const alert = await screen.findByRole('alert')
+    expect(alert.textContent).not.toContain('fake')
+    expect(alert.textContent).not.toContain('provider maximum')
+  })
+
   it('says when a route cannot be found instead of leaving the map silently empty', async () => {
     const fake = createFakeMaps()
     const router = {
@@ -200,13 +270,16 @@ describe('App routing the placed points', () => {
 })
 
 describe('App', () => {
-  it('opens by telling the user both ways of starting', () => {
+  it('opens by telling the user both ways of starting', async () => {
     const fake = createFakeMaps()
 
     render(<App mapLoader={fake.loader} mapId="motorooter-test-vector" client={fakeRouter()} />)
 
     expect(screen.getByText(/describe your trip/i)).toBeInTheDocument()
     expect(screen.getByText(/set a start and end point on the map/i)).toBeInTheDocument()
+    // Let the map finish loading before the test ends, or its state update lands on an
+    // unmounted tree and React warns about it.
+    await waitFor(() => expect(screen.queryByRole('status')).not.toBeInTheDocument())
   })
 
   it('places the start and the end from map clicks alone', async () => {
@@ -245,7 +318,7 @@ describe('App', () => {
     fake.clickMap(48.1, -120.2)
     expect(await pinLabels(fake, 2)).toHaveLength(2)
 
-    screen.getByRole('button', { name: /remove last point/i }).click()
+    fireEvent.click(screen.getByRole('button', { name: /remove last point/i }))
 
     expect(await pinLabels(fake, 1)).toEqual(['Start'])
   })

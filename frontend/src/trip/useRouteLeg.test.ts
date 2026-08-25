@@ -170,6 +170,97 @@ describe('useRouteLeg', () => {
     expect(signals[0]?.aborted).toBe(true)
   })
 
+  it('clears the drawn route when the points that made it are removed', async () => {
+    // Otherwise the last successful route stays on screen forever: remove both waypoints
+    // and an empty map still shows a line, with a distance for a route that is gone. There
+    // is no way back short of reloading the page.
+    const client = fakeClient()
+    const { result, rerender } = renderHook(({ points }) => useRouteLeg(client, points), {
+      initialProps: { points: [waypoint(47), waypoint(48)] as readonly Waypoint[] },
+    })
+    await waitFor(() => expect(result.current.legs).toHaveLength(1))
+
+    rerender({ points: [waypoint(47)] })
+    expect(result.current.legs).toHaveLength(0)
+
+    rerender({ points: [] })
+    expect(result.current.legs).toHaveLength(0)
+  })
+
+  it('clears a routing error once the points that caused it are gone', async () => {
+    // Same guard, second symptom: an undismissable alert about a route with no waypoints.
+    const client = {
+      routeLeg: vi.fn((_request: RouteLegInput, _options?: RequestOptions) =>
+        Promise.reject(new Error('no route found')),
+      ),
+    }
+    const { result, rerender } = renderHook(({ points }) => useRouteLeg(client, points), {
+      initialProps: { points: [waypoint(47), waypoint(48)] as readonly Waypoint[] },
+    })
+    await waitFor(() => expect(result.current.error).not.toBeNull())
+
+    rerender({ points: [waypoint(47)] })
+
+    expect(result.current.error).toBeNull()
+  })
+
+  it('keeps the old line up while a changed route is still being fetched', async () => {
+    // Clearing on *every* change would blank the map between edits. Only losing a point
+    // below the routable minimum removes the line.
+    const client = fakeClient()
+    const { result, rerender } = renderHook(({ points }) => useRouteLeg(client, points), {
+      initialProps: { points: [waypoint(47), waypoint(48)] as readonly Waypoint[] },
+    })
+    await waitFor(() => expect(result.current.legs).toHaveLength(1))
+
+    rerender({ points: [waypoint(47), waypoint(48), waypoint(49)] })
+
+    expect(result.current.isRouting).toBe(true)
+    expect(result.current.legs).toHaveLength(1)
+    // Let the second route land before the test ends, so its state update is not applied
+    // to a torn-down tree.
+    await waitFor(() => expect(result.current.isRouting).toBe(false))
+  })
+
+  it('does not re-request a route it is already holding', async () => {
+    // Adding a via point and undoing it should cost one request, not three. Re-fetching
+    // geometry already in hand is the same fault as the stale route: state not consulted.
+    const client = fakeClient()
+    const two: readonly Waypoint[] = [waypoint(47), waypoint(48)]
+    const { result, rerender } = renderHook(({ points }) => useRouteLeg(client, points), {
+      initialProps: { points: two },
+    })
+    await waitFor(() => expect(result.current.legs).toHaveLength(1))
+
+    rerender({ points: [waypoint(47), waypoint(48), waypoint(49)] })
+    await waitFor(() => expect(client.routeLeg).toHaveBeenCalledTimes(2))
+    rerender({ points: [waypoint(47), waypoint(48)] }) // undo, back to a known route
+
+    await waitFor(() => expect(result.current.isRouting).toBe(false))
+    expect(client.routeLeg).toHaveBeenCalledTimes(2)
+    expect(result.current.legs).toHaveLength(1)
+  })
+
+  it('retries a route that previously failed, rather than caching the failure', async () => {
+    let attempt = 0
+    const client = {
+      routeLeg: vi.fn((_request: RouteLegInput, _options?: RequestOptions) => {
+        attempt += 1
+        return attempt === 1 ? Promise.reject(new Error('boom')) : Promise.resolve(RESPONSE)
+      }),
+    }
+    const two: readonly Waypoint[] = [waypoint(47), waypoint(48)]
+    const { result, rerender } = renderHook(({ points }) => useRouteLeg(client, points), {
+      initialProps: { points: two },
+    })
+    await waitFor(() => expect(result.current.error).not.toBeNull())
+
+    rerender({ points: [waypoint(47)] }) // drop below two, then back
+    rerender({ points: [waypoint(47), waypoint(48)] })
+
+    await waitFor(() => expect(result.current.legs).toHaveLength(1))
+  })
+
   it('surfaces a routing failure instead of leaving a half-drawn route', async () => {
     const client = {
       routeLeg: vi.fn((_request: RouteLegInput, _options?: RequestOptions) =>

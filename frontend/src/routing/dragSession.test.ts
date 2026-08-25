@@ -238,6 +238,33 @@ describe('DragSession', () => {
     expect(onCommit).not.toHaveBeenCalled()
   })
 
+  it('refuses to start on a leg with no geometry, rather than guessing the order', async () => {
+    // There is no line on screen to grab when a leg has not been routed. Starting anyway
+    // meant falling back to offset 1, which on a multi-waypoint leg inserts the via before
+    // an existing one and doubles the route back on itself.
+    const client = fakeClient()
+    const { drag, onCommit } = session(client)
+    const unrouted: RouteEdit = {
+      waypoints: [waypoint(47), waypoint(47.5), waypoint(48)],
+      legs: [{ ...leg(0, 2), routed: null }],
+    }
+
+    const started = drag.begin(unrouted, { legIndex: 0, grabbed: { lat: 47.4, lon: -120 } })
+    drag.release({ lat: 47.4, lon: -120.2 })
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(started).toBe(false)
+    expect(client.routeLeg).not.toHaveBeenCalled()
+    expect(onCommit).not.toHaveBeenCalled()
+  })
+
+  it('reports that a grab on a routed leg did start', () => {
+    const { drag } = session(fakeClient())
+
+    expect(drag.begin(TRIP, { legIndex: 0, grabbed: { lat: 47.5, lon: -120 } })).toBe(true)
+    expect(drag.begin(TRIP, { legIndex: 9, grabbed: { lat: 47.5, lon: -120 } })).toBe(false)
+  })
+
   it('ignores a move or release that was never preceded by a grab', () => {
     const client = fakeClient()
     const { drag } = session(client)

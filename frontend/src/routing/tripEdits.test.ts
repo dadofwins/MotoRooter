@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { insertVia, legWaypoints, spliceRoutedLeg, viaInsertionOffset } from './tripEdits'
+import { insertVia, isLegStale, legWaypoints, spliceRoutedLeg, viaInsertionOffset } from './tripEdits'
 import type { Coordinate, RouteLeg, TripLeg, Waypoint } from '../api/types'
 
 /**
@@ -233,12 +233,128 @@ describe('insertVia', () => {
     expect(trip.legs[0]?.end_waypoint_index).toBe(1)
   })
 
+  it('refuses an offset that would move a neighbouring leg’s endpoint', () => {
+    // Offset 0 inserts at the leg's own start index, which is the *previous* leg's end.
+    // The result is still contiguous and saves cleanly, so nothing downstream catches it:
+    // the user drags one leg and the one before it silently changes shape.
+    expect(() =>
+      insertVia(trip, { legIndex: 1, offsetInLeg: 0, coordinate: { lat: 48.5, lon: -120 } }),
+    ).toThrow(RangeError)
+  })
+
+  it('refuses an offset past the end of the leg, which would land the via in the next one', () => {
+    // Leg 0 spans waypoints 0..1, so offset 2 is beyond it. Also saves cleanly.
+    expect(() =>
+      insertVia(trip, { legIndex: 0, offsetInLeg: 2, coordinate: { lat: 47.5, lon: -120 } }),
+    ).toThrow(RangeError)
+  })
+
+  it('accepts every offset that is genuinely inside the leg', () => {
+    const wide = {
+      waypoints: [waypoint(47), waypoint(48), waypoint(49), waypoint(50)] as readonly Waypoint[],
+      legs: [leg(0, 2), leg(2, 3)] as readonly TripLeg[],
+    }
+
+    for (const offsetInLeg of [1, 2]) {
+      expect(() =>
+        insertVia(wide, { legIndex: 0, offsetInLeg, coordinate: { lat: 47.5, lon: -120 } }),
+      ).not.toThrow()
+    }
+  })
+
   it('refuses a leg index that does not exist, rather than silently doing nothing', () => {
     // A drag that quietly no-ops is worse than one that throws: the user sees the line snap
     // back with no explanation and no way to tell it apart from a routing failure.
     expect(() => insertVia(trip, { legIndex: 5, offsetInLeg: 1, coordinate: { lat: 1, lon: 2 } })).toThrow(
       RangeError,
     )
+  })
+})
+
+describe('isLegStale', () => {
+  /**
+   * `insertVia` keeps the dragged leg's old geometry on purpose, so the line does not blink
+   * out while the new route is fetched. That leaves a leg whose geometry no longer matches
+   * its waypoints, which is safe only as long as the caller overwrites it. Rather than rely
+   * on call order, the backend records the request each leg was routed from, so staleness
+   * is a property of the data.
+   */
+  const waypoints = [waypoint(47), waypoint(48)]
+
+  function fingerprinted(from: readonly Coordinate[], intent: TripLeg['intent'] = 'unpaved'): TripLeg {
+    return {
+      intent,
+      start_waypoint_index: 0,
+      end_waypoint_index: 1,
+      provider_override: null,
+      routed: { ...routed([{ lat: 47, lon: -120 }]), routed_from: { intent, waypoints: [...from] } },
+    }
+  }
+
+  it('is fresh when the leg was routed from exactly these waypoints', () => {
+    const leg = fingerprinted([
+      { lat: 47, lon: -120 },
+      { lat: 48, lon: -120 },
+    ])
+
+    expect(isLegStale(waypoints, leg)).toBe(false)
+  })
+
+  it('is stale once a via-point has been inserted', () => {
+    // Precisely the state insertVia leaves behind mid-drag.
+    const leg = fingerprinted([
+      { lat: 47, lon: -120 },
+      { lat: 48, lon: -120 },
+    ])
+    const dragged = insertVia({ waypoints, legs: [leg] }, {
+      legIndex: 0,
+      offsetInLeg: 1,
+      coordinate: { lat: 47.5, lon: -120.2 },
+    })
+
+    expect(isLegStale(dragged.waypoints, dragged.legs[0]!)).toBe(true)
+  })
+
+  it('is stale when the intent changed, even with the same waypoints', () => {
+    const leg = fingerprinted(
+      [
+        { lat: 47, lon: -120 },
+        { lat: 48, lon: -120 },
+      ],
+      'unpaved',
+    )
+
+    expect(isLegStale(waypoints, { ...leg, intent: 'technical_offroad' })).toBe(true)
+  })
+
+  it('treats a leg with no geometry as stale, and one with no fingerprint as unknowable', () => {
+    const unrouted: TripLeg = { ...fingerprinted([]), routed: null }
+    expect(isLegStale(waypoints, unrouted)).toBe(true)
+
+    // Older documents predate the fingerprint. Calling them fresh would hide a real
+    // mismatch; calling them stale would re-route every leg of every loaded trip. Reported
+    // as stale is the safer of the two, and the honest one.
+    const noFingerprint: TripLeg = {
+      ...fingerprinted([]),
+      routed: { ...routed([{ lat: 47, lon: -120 }]), routed_from: null },
+    }
+    expect(isLegStale(waypoints, noFingerprint)).toBe(true)
+  })
+
+  it('tolerates the rounding the backend applies to the fingerprint, but not a real move', () => {
+    // The fingerprint rounds to five decimal places (~1.1 m), so an exact comparison would
+    // call every leg stale. A waypoint the rider actually moved must still register.
+    const rounded = fingerprinted([
+      { lat: 47.000004, lon: -120.000004 }, // within half a rounding step
+      { lat: 48.000004, lon: -120.000004 },
+    ])
+    const moved = fingerprinted([
+      { lat: 47.0005, lon: -120 }, // ~55 m: a drag, not jitter
+      { lat: 48, lon: -120 },
+    ])
+
+    expect(isLegStale(waypoints, rounded)).toBe(false)
+    expect(isLegStale(waypoints, moved)).toBe(true)
   })
 })
 

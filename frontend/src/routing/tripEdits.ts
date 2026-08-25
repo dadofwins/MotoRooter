@@ -93,6 +93,19 @@ export function viaInsertionOffset(input: ViaInsertionInput): number {
  */
 export function insertVia(edit: RouteEdit, input: InsertViaInput): RouteEdit {
   const target = legAt(edit.legs, input.legIndex)
+  const span = target.end_waypoint_index - target.start_waypoint_index
+
+  // Both out-of-range offsets produce a *contiguous* trip that saves cleanly, so nothing
+  // downstream catches them. Offset 0 inserts at this leg's start index, which is the
+  // previous leg's end: the user drags one leg and the one before it changes shape. Too
+  // large and the via lands inside the following leg instead.
+  if (input.offsetInLeg < 1 || input.offsetInLeg > span) {
+    throw new RangeError(
+      `offsetInLeg ${String(input.offsetInLeg)} is outside leg ${String(input.legIndex)}, ` +
+        `which spans waypoints ${String(target.start_waypoint_index)}-${String(target.end_waypoint_index)}`,
+    )
+  }
+
   const insertAt = target.start_waypoint_index + input.offsetInLeg
 
   const waypoints = [
@@ -113,6 +126,51 @@ export function insertVia(edit: RouteEdit, input: InsertViaInput): RouteEdit {
   })
 
   return { waypoints, legs }
+}
+
+/**
+ * Half of the backend's rounding step, which is the largest a rounded value can differ from
+ * the original.
+ *
+ * `COORDINATE_KEY_PRECISION` is 5 decimal places — about 1.1 m, chosen there to absorb float
+ * jitter between two runs of the same drag while keeping genuinely different waypoints
+ * distinct. Comparing exactly against a rounded fingerprint would report every leg stale.
+ */
+const FINGERPRINT_TOLERANCE_DEG = 0.5e-5
+
+/**
+ * Whether a leg's geometry still matches the waypoints it is supposed to connect.
+ *
+ * `insertVia` deliberately keeps the old geometry so the line does not blink out while the
+ * new route is fetched, which leaves a leg whose geometry is briefly a lie. Inside a drag
+ * that is safe because the commit overwrites it, but relying on call order makes every
+ * other caller a latent bug.
+ *
+ * `RouteLeg.routed_from` records the request the geometry came from, so the question is
+ * answerable from the data instead. Comparing the leg's *endpoints* to its waypoints could
+ * not work: engines snap to the nearest routable node, sometimes by hundreds of metres, and
+ * no tolerance separates that from a rider dragging a point.
+ */
+export function isLegStale(waypoints: readonly Waypoint[], leg: TripLeg): boolean {
+  const fingerprint = leg.routed?.routed_from
+  // No geometry is trivially stale. No fingerprint means it cannot be judged: reporting
+  // fresh would hide a real mismatch, so it is reported stale, which merely costs a reroute.
+  if (leg.routed === null || leg.routed === undefined || fingerprint === null || fingerprint === undefined) {
+    return true
+  }
+  if (fingerprint.intent !== leg.intent) return true
+  if ((fingerprint.provider_override ?? null) !== (leg.provider_override ?? null)) return true
+
+  const current = legWaypoints(waypoints, leg)
+  if (current.length !== fingerprint.waypoints.length) return true
+  return current.some((point, index) => {
+    const from = fingerprint.waypoints[index]
+    if (from === undefined) return true
+    return (
+      Math.abs(point.lat - from.lat) > FINGERPRINT_TOLERANCE_DEG ||
+      Math.abs(point.lon - from.lon) > FINGERPRINT_TOLERANCE_DEG
+    )
+  })
 }
 
 /** Replace one leg's routed geometry, by identity leaving every other leg alone. */

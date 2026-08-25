@@ -89,24 +89,34 @@ export class DragSession {
   }
 
   /**
-   * Take hold of the route line.
+   * Take hold of the route line. Returns whether a gesture actually started.
    *
    * The insertion *order* is decided here, from the grabbed point, and then held for the
    * rest of the gesture.
+   *
+   * A leg with no geometry cannot be grabbed: there is no line drawn for it, and without
+   * geometry there is no way to tell where along the leg the grab landed. Falling back to
+   * "insert first" would put the via ahead of an existing one on a multi-waypoint leg and
+   * double the route back on itself, so the gesture is refused instead. The caller uses the
+   * return value to decide whether to show a drag at all.
    */
-  begin(edit: RouteEdit, input: GrabInput): void {
+  begin(edit: RouteEdit, input: GrabInput): boolean {
     const leg = edit.legs[input.legIndex]
-    if (leg === undefined) return
+    if (leg === undefined) return false
+
+    const geometry = leg.routed?.geometry ?? []
+    if (geometry.length < 2) return false
 
     this.#active = {
       base: edit,
       legIndex: input.legIndex,
       offsetInLeg: viaInsertionOffset({
         legWaypoints: legWaypoints(edit.waypoints, leg),
-        geometry: leg.routed?.geometry ?? [],
+        geometry,
         dragged: input.grabbed,
       }),
     }
+    return true
   }
 
   /** Report a new pointer position. Subject to the provider's throttle. */

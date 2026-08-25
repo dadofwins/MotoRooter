@@ -23,6 +23,7 @@ from motorooter.routing.errors import (
     ProviderNotFound,
     ProviderUnavailable,
     QuotaExceeded,
+    RouteIncomplete,
     RoutingConfigError,
     UnsupportedIntent,
 )
@@ -48,6 +49,7 @@ class ErrorCode(StrEnum):
     UNSUPPORTED_INTENT = "unsupported_intent"
     PROVIDER_NOT_FOUND = "provider_not_found"
     NO_ROUTE_FOUND = "no_route_found"
+    ROUTE_INCOMPLETE = "route_incomplete"
     QUOTA_EXCEEDED = "quota_exceeded"
     PROVIDER_UNAVAILABLE = "provider_unavailable"
 
@@ -69,6 +71,8 @@ ERROR_TABLE: dict[type[Exception], tuple[int, ErrorCode]] = {
     UnsupportedIntent: (400, ErrorCode.UNSUPPORTED_INTENT),
     ProviderNotFound: (404, ErrorCode.PROVIDER_NOT_FOUND),
     NoRouteFound: (422, ErrorCode.NO_ROUTE_FOUND),
+    # The trip exists but is not fully or freshly routed. Client-actionable: press Replan.
+    RouteIncomplete: (422, ErrorCode.ROUTE_INCOMPLETE),
     QuotaExceeded: (429, ErrorCode.QUOTA_EXCEEDED),
     ProviderUnavailable: (502, ErrorCode.PROVIDER_UNAVAILABLE),
     # Trips

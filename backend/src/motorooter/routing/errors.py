@@ -41,6 +41,22 @@ class UnsupportedIntent(RoutingError):
     """No policy is configured for a leg intent."""
 
 
+class RouteIncomplete(RoutingError):
+    """A trip was asked for a continuous route it cannot currently produce.
+
+    Either a leg has no geometry, or its geometry is stale — produced under an intent or
+    provider the leg no longer carries, because a re-route failed and the previous result
+    was kept. Both are refused rather than stitched: a route missing or misrepresenting a
+    section still renders perfectly, so nothing downstream would catch it.
+    """
+
+    def __init__(self, leg_indices: tuple[int, ...], *, reason: str = "unrouted") -> None:
+        self.leg_indices = leg_indices
+        self.reason = reason
+        listed = ", ".join(str(index) for index in leg_indices)
+        super().__init__(f"trip has {reason} legs at index {listed}")
+
+
 class RoutingConfigError(RoutingError):
     """Wiring is inconsistent — raised at startup, never mid-request.
 

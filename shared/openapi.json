@@ -59,6 +59,7 @@
           "unsupported_intent",
           "provider_not_found",
           "no_route_found",
+          "route_incomplete",
           "quota_exceeded",
           "provider_unavailable",
           "invalid_slug",

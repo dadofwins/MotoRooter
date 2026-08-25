@@ -129,32 +129,25 @@ export function insertVia(edit: RouteEdit, input: InsertViaInput): RouteEdit {
 }
 
 /**
- * Bends a line towards the cursor at the point that was grabbed.
+ * The two waypoints a via-point dropped here would sit between.
  *
- * The local half of preview-only. When the API reports `live_update_interval_ms: null` for
- * an intent — a metered engine saying "route on release, not before" — nothing is requested
- * during the gesture, and without this the line sits motionless while the rider drags it,
- * which reads as a broken app rather than a thrifty one.
- *
- * Deliberately crude: it moves the nearest vertex and leaves the rest, so it is a rubber
- * band and not a route. Real geometry replaces it the moment the release lands.
+ * What the rubber band spans while a drag is in progress: the edit the rider is making,
+ * drawn as two straight segments through the cursor. `null` when the leg cannot be dragged.
  */
-export function bendGeometry(
-  geometry: readonly Coordinate[],
+export function viaAnchors(
+  waypoints: readonly Waypoint[],
+  leg: TripLeg,
   grabbed: Coordinate,
-  to: Coordinate,
-): readonly Coordinate[] {
-  if (geometry.length < 3) return geometry // only endpoints, and those belong to waypoints
+): readonly [Coordinate, Coordinate] | null {
+  const points = legWaypoints(waypoints, leg)
+  const geometry = leg.routed?.geometry ?? []
+  if (points.length < 2 || geometry.length < 2) return null
 
-  const position = nearestPointOnPath(geometry, grabbed)
-  if (position === null) return geometry
-
-  // Snap to a vertex, and never an end: the ends are the leg's waypoints, owned by the trip.
-  const vertex = Math.min(
-    Math.max(Math.round(position.segmentIndex + position.t), 1),
-    geometry.length - 2,
-  )
-  return geometry.map((point, index) => (index === vertex ? to : point))
+  const offset = viaInsertionOffset({ legWaypoints: points, geometry, dragged: grabbed })
+  const before = points[offset - 1]
+  const after = points[offset]
+  if (before === undefined || after === undefined) return null
+  return [before, after]
 }
 
 /**

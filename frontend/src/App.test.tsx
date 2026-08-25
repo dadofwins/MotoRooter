@@ -81,6 +81,9 @@ function createFakeMaps() {
       setMap(map: unknown): void {
         this.map = map
       }
+      setPath(path: unknown): void {
+        this.options['path'] = path
+      }
       addListener(event: string, handler: (event: unknown) => void): { remove: () => void } {
         this.listeners.set(event, handler)
         return { remove: () => this.listeners.delete(event) }

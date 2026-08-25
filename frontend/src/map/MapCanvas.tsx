@@ -18,9 +18,10 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import type { Coordinate, TripLeg, Waypoint } from '../api/types'
 import type { GoogleMaps, GoogleMapsLoader } from './loadGoogleMaps'
 import { distanceM } from '../routing/geo'
+import { viaAnchors } from '../routing/tripEdits'
 import { createMapOptions, toCoordinate, toLatLng, type MapColorScheme } from './mapOptions'
 import { polylineStyle, toRouteSegments } from './routeLayer'
-import { createWaypointPin, waypointKind } from './waypointPin'
+import { createDragHandle, createWaypointPin, waypointKind } from './waypointPin'
 
 /** Stable identities: inline defaults would rebuild every overlay on every render. */
 const NO_LEGS: readonly TripLeg[] = []
@@ -34,9 +35,10 @@ const NO_MAP_ID_NOTICE =
   'Waypoints are shown as plain markers: set VITE_GOOGLE_MAPS_MAP_ID in frontend/.env.local ' +
   'to a vector Map ID for styled pins and vector rendering.'
 
-/** A marker of either generation, reduced to the one operation the canvas needs. */
+/** A marker of either generation, reduced to the operations the canvas needs. */
 interface AttachedMarker {
   detach(): void
+  move(position: google.maps.LatLngLiteral): void
 }
 
 interface MarkerInput {
@@ -69,6 +71,9 @@ function createMarker(maps: GoogleMaps, input: MarkerInput): AttachedMarker {
       detach: () => {
         marker.map = null
       },
+      move: (position) => {
+        marker.position = position
+      },
     }
   }
 
@@ -82,6 +87,9 @@ function createMarker(maps: GoogleMaps, input: MarkerInput): AttachedMarker {
   return {
     detach: () => {
       marker.setMap(null)
+    },
+    move: (position) => {
+      marker.setPosition(position)
     },
   }
 }
@@ -123,6 +131,20 @@ export interface MapCanvasProps {
  * and invent them when zoomed out.
  */
 const DRAG_THRESHOLD_PX = 5
+
+/**
+ * The provisional line drawn straight through the cursor while dragging.
+ *
+ * Above the route (zIndex 20) because it is what the rider is currently doing, and dashed
+ * to read as provisional rather than as a road that exists.
+ */
+const RUBBER_BAND_STYLE: google.maps.PolylineOptions = {
+  strokeColor: '#1f6feb',
+  strokeOpacity: 0.6,
+  strokeWeight: 3,
+  clickable: false,
+  zIndex: 20,
+}
 
 /** Ground distance one screen pixel covers, at this latitude and zoom. */
 function metresPerPixel(latitude: number, zoom: number): number {
@@ -182,8 +204,20 @@ export function MapCanvas({
     dragHandlers.current = { onLegGrab, onLegDrag, onLegDrop, onLegCancel }
   }, [onLegGrab, onLegDrag, onLegDrop, onLegCancel])
 
-  /** The gesture in progress, if any. Held in a ref: no render depends on it. */
-  const gesture = useRef<{ from: Coordinate; last: Coordinate } | null>(null)
+  /**
+   * The gesture in progress, if any.
+   *
+   * A ref, and imperative overlays, deliberately. The handle has to follow the pointer at
+   * frame rate, and putting the cursor position through the state that also feeds routing
+   * is what made the drag session rebuild itself mid-gesture. Nothing here re-renders.
+   */
+  const gesture = useRef<{
+    from: Coordinate
+    last: Coordinate
+    anchors: readonly [Coordinate, Coordinate] | null
+    handle: AttachedMarker | null
+    band: google.maps.Polyline | null
+  } | null>(null)
   /**
    * Google emits a click after the mouseup that ended a drag. Without this, letting go of
    * the line would also drop a new waypoint wherever the drag finished.
@@ -235,9 +269,16 @@ export function MapCanvas({
     const map = new maps.Map(container, initialOptions)
     mapRef.current = map
 
+    /** Removes the local overlays. Safe to call more than once. */
+    const clearBand = (active: NonNullable<typeof gesture.current>): void => {
+      active.handle?.detach()
+      active.band?.setMap(null)
+    }
+
     const endGesture = (at: Coordinate, expectClick: boolean): void => {
       const active = gesture.current
       if (active === null) return
+      clearBand(active)
       gesture.current = null
       // Only a release *over the map* is followed by a click; one outside it is not, and
       // arming the flag then would swallow the rider's next deliberate click instead.
@@ -274,7 +315,20 @@ export function MapCanvas({
       map.addListener('mousemove', (event: google.maps.MapMouseEvent) => {
         if (gesture.current === null || event.latLng === null) return
         const at = toCoordinate(event.latLng)
-        gesture.current = { from: gesture.current.from, last: at }
+        const active = gesture.current
+        active.last = at
+
+        // Frame rate, no network, no state: this is the half of the gesture that makes it
+        // feel attached to the hand between routed updates a second apart.
+        active.handle?.move(toLatLng(at))
+        if (active.anchors !== null) {
+          active.band?.setPath([
+            toLatLng(active.anchors[0]),
+            toLatLng(at),
+            toLatLng(active.anchors[1]),
+          ])
+        }
+
         dragHandlers.current.onLegDrag?.(at)
       }),
       map.addListener('mouseup', (event: google.maps.MapMouseEvent) => {
@@ -294,6 +348,10 @@ export function MapCanvas({
     return () => {
       for (const listener of listeners) listener.remove()
       window.removeEventListener('mouseup', releasedOutside)
+      if (gesture.current !== null) {
+        clearBand(gesture.current)
+        gesture.current = null
+      }
       mapRef.current = null
     }
   }, [maps, initialOptions])
@@ -347,7 +405,26 @@ export function MapCanvas({
               if (event.latLng === null) return
               const at = toCoordinate(event.latLng)
               if (dragHandlers.current.onLegGrab?.(legIndex, at) !== true) return
-              gesture.current = { from: at, last: at }
+
+              const grabbedLeg = legs[legIndex]
+              const anchors =
+                grabbedLeg === undefined ? null : viaAnchors(waypoints, grabbedLeg, at)
+              const handle = createMarker(maps, {
+                map,
+                position: toLatLng(at),
+                pin: createDragHandle(),
+                advanced: hasMapId,
+              })
+              const band =
+                anchors === null
+                  ? null
+                  : new maps.Polyline({
+                      ...RUBBER_BAND_STYLE,
+                      map,
+                      path: [toLatLng(anchors[0]), toLatLng(at), toLatLng(anchors[1])],
+                    })
+
+              gesture.current = { from: at, last: at, anchors, handle, band }
               // Panning off for the duration, or the basemap slides under the cursor and
               // the line runs away from it.
               map.setOptions({ draggable: false })
@@ -364,7 +441,10 @@ export function MapCanvas({
       for (const line of entry.lines) line.setMap(null)
       overlays.delete(legIndex)
     }
-  }, [maps, legs, segments, draggable])
+    // `waypoints` and `hasMapId` are read when the line is grabbed, to work out which two
+    // points a via would sit between. Re-running on a waypoint change is cheap now that
+    // overlays are keyed on routed geometry: legs whose road did not change are skipped.
+  }, [maps, legs, segments, draggable, waypoints, hasMapId])
 
   // Unmount only: the per-leg cache above outlives individual syncs, so its teardown cannot
   // live in that effect's cleanup.

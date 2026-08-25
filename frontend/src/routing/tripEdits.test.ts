@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'vitest'
 import {
-  bendGeometry,
   insertVia,
   isLegStale,
   legWaypoints,
@@ -275,44 +274,6 @@ describe('insertVia', () => {
     expect(() => insertVia(trip, { legIndex: 5, offsetInLeg: 1, coordinate: { lat: 1, lon: 2 } })).toThrow(
       RangeError,
     )
-  })
-})
-
-describe('bendGeometry', () => {
-  /**
-   * The local half of preview-only.
-   *
-   * When the provider is metered the API says `live_update_interval_ms: null`, meaning route
-   * on release and not before. Without something drawn locally the line simply does not move
-   * while the rider drags it, which reads as a broken app rather than a thrifty one.
-   */
-  const line: Coordinate[] = [
-    { lat: 47.0, lon: -120 },
-    { lat: 47.5, lon: -120 },
-    { lat: 48.0, lon: -120 },
-  ]
-
-  it('pulls the line towards the cursor at the point that was grabbed', () => {
-    const bent = bendGeometry(line, { lat: 47.5, lon: -120 }, { lat: 47.5, lon: -120.4 })
-
-    expect(bent).toEqual([
-      { lat: 47.0, lon: -120 },
-      { lat: 47.5, lon: -120.4 },
-      { lat: 48.0, lon: -120 },
-    ])
-  })
-
-  it('never moves the ends, which belong to the waypoints on either side', () => {
-    const bent = bendGeometry(line, { lat: 47.02, lon: -120 }, { lat: 46, lon: -119 })
-
-    expect(bent[0]).toEqual(line[0])
-    expect(bent.at(-1)).toEqual(line.at(-1))
-  })
-
-  it('leaves a line too short to bend alone', () => {
-    expect(bendGeometry([{ lat: 47, lon: -120 }], { lat: 47, lon: -120 }, { lat: 48, lon: -120 })).toEqual([
-      { lat: 47, lon: -120 },
-    ])
   })
 })
 

@@ -47,3 +47,18 @@ export function createWaypointPin(input: WaypointPinInput): HTMLElement {
   pin.title = name
   return pin
 }
+
+/**
+ * The circle that appears under the cursor while the route line is being dragged.
+ *
+ * The same affordance Google Maps uses, and the thing that tells a rider the gesture has
+ * been picked up — before any routed geometry could possibly come back.
+ */
+export function createDragHandle(): HTMLElement {
+  const handle = document.createElement('div')
+  handle.className = 'drag-handle'
+  handle.setAttribute('role', 'img')
+  handle.setAttribute('aria-label', 'Dragging the route')
+  handle.title = 'Dragging the route'
+  return handle
+}

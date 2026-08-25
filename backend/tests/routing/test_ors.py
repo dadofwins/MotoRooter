@@ -13,7 +13,11 @@ from motorooter.routing.errors import (
     QuotaExceeded,
 )
 from motorooter.routing.models import Coordinate, LegIntent, RouteRequest, Surface
-from motorooter.routing.providers.ors import ORS_BASE_URL, OrsProvider
+from motorooter.routing.providers.ors import (
+    ORS_BASE_URL,
+    ORS_DEFAULT_SNAP_RADIUS_M,
+    OrsProvider,
+)
 from tests.routing.contract import RoutingProviderContract
 
 DIRECTIONS_URL = respx.patterns.M(url__startswith=f"{ORS_BASE_URL}/v2/directions/")
@@ -309,3 +313,70 @@ class TestCapabilities:
     def test_throttles_live_updates_more_than_a_cheap_provider(self, provider):
         """Free-tier budget is the binding constraint during a drag."""
         assert provider.capabilities.live_update_interval_ms == 3000
+
+
+class TestSnapRadius:
+    """How far ORS may look for a routable way near a requested point.
+
+    ORS defaults to 350 m, which is tuned for dense urban networks and is wrong for mountain
+    terrain — especially on `cycling-mountain`, whose routable network is far sparser than a
+    car's. Measured against the live API, 44% of plausible map clicks across the Cascades
+    failed to snap at the default: no bike-legal way within 350 m of a national park pass or
+    a freeway-adjacent point. A click that returns 400 is worse than a route that starts a
+    little way off.
+    """
+
+    async def test_a_snap_radius_is_sent(self, mock_ors):
+        route = mock_ors.route(DIRECTIONS_URL).mock(side_effect=echo_requested_coordinates)
+        await OrsProvider(api_key="k").route(
+            RouteRequest(
+                waypoints=(
+                    Coordinate(lat=45.5, lon=-122.6),
+                    Coordinate(lat=45.3, lon=-121.7),
+                ),
+                intent=LegIntent.UNPAVED,
+            )
+        )
+        import json as _json
+
+        payload = _json.loads(route.calls.last.request.content)
+        assert payload["radiuses"] == [ORS_DEFAULT_SNAP_RADIUS_M, ORS_DEFAULT_SNAP_RADIUS_M]
+
+    async def test_the_default_is_wide_enough_for_mountain_terrain(self):
+        """350 m is the ORS default and the thing being overridden."""
+        assert ORS_DEFAULT_SNAP_RADIUS_M >= 1000.0
+
+    async def test_there_is_one_radius_per_waypoint(self, mock_ors):
+        """ORS matches radiuses to coordinates positionally; a short list is rejected."""
+        route = mock_ors.route(DIRECTIONS_URL).mock(side_effect=echo_requested_coordinates)
+        waypoints = tuple(Coordinate(lat=45.0 + index * 0.1, lon=-121.0) for index in range(4))
+        await OrsProvider(api_key="k").route(
+            RouteRequest(waypoints=waypoints, intent=LegIntent.UNPAVED)
+        )
+        import json as _json
+
+        payload = _json.loads(route.calls.last.request.content)
+        assert len(payload["radiuses"]) == len(waypoints)
+
+    async def test_it_is_configurable_rather_than_a_constant(self, mock_ors):
+        """It is a guess, like the gap threshold and the twistiness segment. Tunable
+        without editing the adapter."""
+        route = mock_ors.route(DIRECTIONS_URL).mock(side_effect=echo_requested_coordinates)
+        await OrsProvider(api_key="k", snap_radius_m=250.0).route(
+            RouteRequest(
+                waypoints=(
+                    Coordinate(lat=45.5, lon=-122.6),
+                    Coordinate(lat=45.3, lon=-121.7),
+                ),
+                intent=LegIntent.UNPAVED,
+            )
+        )
+        import json as _json
+
+        assert _json.loads(route.calls.last.request.content)["radiuses"] == [250.0, 250.0]
+
+    async def test_a_non_positive_radius_is_refused(self):
+        """Zero would snap nothing; negative means "unlimited" to ORS, which is not a
+        default anyone should get by typo."""
+        with pytest.raises(ValueError):
+            OrsProvider(api_key="k", snap_radius_m=0.0)

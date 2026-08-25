@@ -17,10 +17,18 @@ from datetime import datetime
 from enum import StrEnum
 from typing import Annotated, Self
 
-from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, model_validator
+from pydantic import (
+    AwareDatetime,
+    BaseModel,
+    ConfigDict,
+    Field,
+    computed_field,
+    model_validator,
+)
 
 from motorooter.error_codes import ErrorCode
-from motorooter.routing.models import Coordinate, LegIntent, RouteLeg
+from motorooter.routing.models import Coordinate, LegIntent, RouteLeg, Surface
+from motorooter.speeds import DEFAULT_RIDING_SPEEDS, RidingSpeeds
 
 CURRENT_SCHEMA_VERSION = 1
 
@@ -234,10 +242,18 @@ class Trip(BaseModel):
     def routed_legs(self) -> tuple[RouteLeg, ...]:
         return tuple(leg.routed for leg in self.legs if leg.routed is not None)
 
+    @computed_field  # type: ignore[prop-decorator]
     @property
     def total_distance_m(self) -> float:
         return sum(leg.distance_m for leg in self.routed_legs)
 
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def total_paved_fraction(self) -> float:
+        """Share of the trip on surfaced road, weighted by distance."""
+        return self._surface_fraction(Surface.PAVED)
+
+    @computed_field  # type: ignore[prop-decorator]
     @property
     def total_unpaved_fraction(self) -> float:
         """Share of the whole trip on dirt, weighted by leg distance.
@@ -250,11 +266,49 @@ class Trip(BaseModel):
         Weighting by distance also matters: averaging per-leg fractions would let a short
         dirt connector beside a long highway read as half the trip.
         """
-        total = sum(leg.geometry_length_m for leg in self.routed_legs)
-        if total <= 0:
+        return self._surface_fraction(Surface.UNPAVED)
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def total_unknown_fraction(self) -> float:
+        """Share of the trip whose surface nobody has recorded.
+
+        Reported as its own number so the UI can show three states. Folded into either of
+        the others it disappears, and it disappears into whichever the client treats as the
+        default — which is how an unsurveyed forest road comes to be displayed as tarmac.
+        """
+        return self._surface_fraction(Surface.UNKNOWN)
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def estimated_duration_s(self) -> float:
+        """Riding time derived from distance and surface.
+
+        Not the provider's figure. Hosted ORS routes dirt through a bicycle profile and
+        reports bicycle times, so `RouteLeg.duration_s` is honest about what the engine said
+        and useless for telling a rider how long their day is.
+        """
+        return self.estimate_duration_s()
+
+    def estimate_duration_s(self, speeds: RidingSpeeds = DEFAULT_RIDING_SPEEDS) -> float:
+        """Riding time under a given speed table, so the table can be varied in tests."""
+        return sum(
+            speeds.seconds_for(leg.paved_distance_m, Surface.PAVED)
+            + speeds.seconds_for(leg.unpaved_distance_m, Surface.UNPAVED)
+            + speeds.seconds_for(leg.unknown_distance_m, Surface.UNKNOWN)
+            for leg in self.routed_legs
+        )
+
+    def _surface_fraction(self, surface: Surface) -> float:
+        measured = sum(leg.geometry_length_m for leg in self.routed_legs)
+        if measured <= 0:
             return 0.0
-        unpaved = sum(leg.unpaved_distance_m for leg in self.routed_legs)
-        return unpaved / total
+        covered = {
+            Surface.PAVED: sum(leg.paved_distance_m for leg in self.routed_legs),
+            Surface.UNPAVED: sum(leg.unpaved_distance_m for leg in self.routed_legs),
+            Surface.UNKNOWN: sum(leg.unknown_distance_m for leg in self.routed_legs),
+        }[surface]
+        return covered / measured
 
 
 TripName = Annotated[str, Field(min_length=1, max_length=200)]
@@ -271,16 +325,30 @@ class TripSummary(BaseModel):
     created_at: AwareDatetime
     edited_at: AwareDatetime
     total_distance_m: float
+
+    total_paved_fraction: float = 0.0
+    total_unpaved_fraction: float = 0.0
+    total_unknown_fraction: float = 0.0
+    """The same three shares the trip reports, so the index and the trip cannot disagree."""
+
+    estimated_duration_s: float = 0.0
+    """Derived, never the provider's duration. See `Trip.estimated_duration_s`."""
+
     needs_replan: bool
 
     @classmethod
     def from_trip(cls, trip: Trip) -> Self:
+        """Copied from the trip rather than recomputed, so there is one derivation."""
         return cls(
             slug=trip.slug,
             name=trip.name,
             created_at=trip.created_at,
             edited_at=trip.edited_at,
             total_distance_m=trip.total_distance_m,
+            total_paved_fraction=trip.total_paved_fraction,
+            total_unpaved_fraction=trip.total_unpaved_fraction,
+            total_unknown_fraction=trip.total_unknown_fraction,
+            estimated_duration_s=trip.estimated_duration_s,
             needs_replan=trip.needs_replan,
         )
 

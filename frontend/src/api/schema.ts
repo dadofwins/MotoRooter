@@ -555,6 +555,15 @@ export interface components {
              */
             edited_at: string;
             /**
+             * Estimated Duration S
+             * @description Riding time derived from distance and surface.
+             *
+             *     Not the provider's figure. Hosted ORS routes dirt through a bicycle profile and
+             *     reports bicycle times, so `RouteLeg.duration_s` is honest about what the engine said
+             *     and useless for telling a rider how long their day is.
+             */
+            readonly estimated_duration_s: number;
+            /**
              * Legs
              * @default []
              */
@@ -575,6 +584,35 @@ export interface components {
             schema_version: number;
             /** Slug */
             slug: string;
+            /** Total Distance M */
+            readonly total_distance_m: number;
+            /**
+             * Total Paved Fraction
+             * @description Share of the trip on surfaced road, weighted by distance.
+             */
+            readonly total_paved_fraction: number;
+            /**
+             * Total Unknown Fraction
+             * @description Share of the trip whose surface nobody has recorded.
+             *
+             *     Reported as its own number so the UI can show three states. Folded into either of
+             *     the others it disappears, and it disappears into whichever the client treats as the
+             *     default — which is how an unsurveyed forest road comes to be displayed as tarmac.
+             */
+            readonly total_unknown_fraction: number;
+            /**
+             * Total Unpaved Fraction
+             * @description Share of the whole trip on dirt, weighted by leg distance.
+             *
+             *     Both sides of the ratio are measured from geometry. Dividing geometry-derived
+             *     unpaved metres by the provider's reported `distance_m` mixes two denominators that
+             *     need not agree, and the error compounds across legs. `total_distance_m` still
+             *     reports the provider's figure, which is the better number to *display*.
+             *
+             *     Weighting by distance also matters: averaging per-leg fractions would let a short
+             *     dirt connector beside a long highway read as half the trip.
+             */
+            readonly total_unpaved_fraction: number;
             /**
              * Waypoints
              * @default []
@@ -614,6 +652,11 @@ export interface components {
              * Format: date-time
              */
             edited_at: string;
+            /**
+             * Estimated Duration S
+             * @default 0
+             */
+            estimated_duration_s: number;
             /** Name */
             name: string;
             /** Needs Replan */
@@ -622,6 +665,21 @@ export interface components {
             slug: string;
             /** Total Distance M */
             total_distance_m: number;
+            /**
+             * Total Paved Fraction
+             * @default 0
+             */
+            total_paved_fraction: number;
+            /**
+             * Total Unknown Fraction
+             * @default 0
+             */
+            total_unknown_fraction: number;
+            /**
+             * Total Unpaved Fraction
+             * @default 0
+             */
+            total_unpaved_fraction: number;
         };
         /**
          * UpdateTripRequest

@@ -731,6 +731,12 @@
             "title": "Edited At",
             "type": "string"
           },
+          "estimated_duration_s": {
+            "description": "Riding time derived from distance and surface.\n\nNot the provider's figure. Hosted ORS routes dirt through a bicycle profile and\nreports bicycle times, so `RouteLeg.duration_s` is honest about what the engine said\nand useless for telling a rider how long their day is.",
+            "readOnly": true,
+            "title": "Estimated Duration S",
+            "type": "number"
+          },
           "legs": {
             "default": [],
             "items": {
@@ -772,6 +778,29 @@
             "title": "Slug",
             "type": "string"
           },
+          "total_distance_m": {
+            "readOnly": true,
+            "title": "Total Distance M",
+            "type": "number"
+          },
+          "total_paved_fraction": {
+            "description": "Share of the trip on surfaced road, weighted by distance.",
+            "readOnly": true,
+            "title": "Total Paved Fraction",
+            "type": "number"
+          },
+          "total_unknown_fraction": {
+            "description": "Share of the trip whose surface nobody has recorded.\n\nReported as its own number so the UI can show three states. Folded into either of\nthe others it disappears, and it disappears into whichever the client treats as the\ndefault \u2014 which is how an unsurveyed forest road comes to be displayed as tarmac.",
+            "readOnly": true,
+            "title": "Total Unknown Fraction",
+            "type": "number"
+          },
+          "total_unpaved_fraction": {
+            "description": "Share of the whole trip on dirt, weighted by leg distance.\n\nBoth sides of the ratio are measured from geometry. Dividing geometry-derived\nunpaved metres by the provider's reported `distance_m` mixes two denominators that\nneed not agree, and the error compounds across legs. `total_distance_m` still\nreports the provider's figure, which is the better number to *display*.\n\nWeighting by distance also matters: averaging per-leg fractions would let a short\ndirt connector beside a long highway read as half the trip.",
+            "readOnly": true,
+            "title": "Total Unpaved Fraction",
+            "type": "number"
+          },
           "waypoints": {
             "default": [],
             "items": {
@@ -785,7 +814,12 @@
           "slug",
           "name",
           "created_at",
-          "edited_at"
+          "edited_at",
+          "total_distance_m",
+          "total_paved_fraction",
+          "total_unpaved_fraction",
+          "total_unknown_fraction",
+          "estimated_duration_s"
         ],
         "title": "Trip",
         "type": "object"
@@ -859,6 +893,11 @@
             "title": "Edited At",
             "type": "string"
           },
+          "estimated_duration_s": {
+            "default": 0.0,
+            "title": "Estimated Duration S",
+            "type": "number"
+          },
           "name": {
             "title": "Name",
             "type": "string"
@@ -873,6 +912,21 @@
           },
           "total_distance_m": {
             "title": "Total Distance M",
+            "type": "number"
+          },
+          "total_paved_fraction": {
+            "default": 0.0,
+            "title": "Total Paved Fraction",
+            "type": "number"
+          },
+          "total_unknown_fraction": {
+            "default": 0.0,
+            "title": "Total Unknown Fraction",
+            "type": "number"
+          },
+          "total_unpaved_fraction": {
+            "default": 0.0,
+            "title": "Total Unpaved Fraction",
             "type": "number"
           }
         },

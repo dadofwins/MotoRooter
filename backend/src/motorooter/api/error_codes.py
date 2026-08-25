@@ -28,7 +28,10 @@ from motorooter.routing.errors import (
 )
 from motorooter.trips.errors import (
     TripAlreadyExists,
+    TripDocumentInvalid,
+    TripModifiedConcurrently,
     TripNotFound,
+    TripStorageConfigError,
     TripStorageUnavailable,
 )
 from motorooter.trips.slug import InvalidSlug
@@ -51,6 +54,8 @@ class ErrorCode(StrEnum):
     INVALID_SLUG = "invalid_slug"
     TRIP_NOT_FOUND = "trip_not_found"
     TRIP_ALREADY_EXISTS = "trip_already_exists"
+    TRIP_MODIFIED_CONCURRENTLY = "trip_modified_concurrently"
+    TRIP_DOCUMENT_INVALID = "trip_document_invalid"
     TRIP_STORAGE_UNAVAILABLE = "trip_storage_unavailable"
 
     VALIDATION_ERROR = "validation_error"
@@ -70,17 +75,27 @@ ERROR_TABLE: dict[type[Exception], tuple[int, ErrorCode]] = {
     InvalidSlug: (400, ErrorCode.INVALID_SLUG),
     TripNotFound: (404, ErrorCode.TRIP_NOT_FOUND),
     TripAlreadyExists: (409, ErrorCode.TRIP_ALREADY_EXISTS),
+    # Also 409, but distinct from TRIP_ALREADY_EXISTS on the wire: one means "choose
+    # another name", this one means "re-read, merge again, and retry".
+    TripModifiedConcurrently: (409, ErrorCode.TRIP_MODIFIED_CONCURRENTLY),
+    # A stored document that will not parse, or was written by a newer schema version.
+    # Server-side data corruption, so 500 — but a distinct code, because "your trip is
+    # unreadable" is worth telling a client apart from "something broke".
+    TripDocumentInvalid: (500, ErrorCode.TRIP_DOCUMENT_INVALID),
     TripStorageUnavailable: (503, ErrorCode.TRIP_STORAGE_UNAVAILABLE),
     # API surface
     NotImplementedYet: (501, ErrorCode.NOT_IMPLEMENTED),
 }
 """Exception type -> (HTTP status, wire code).
 
-`RoutingConfigError` is deliberately absent: it is raised at startup so a misconfigured
-deploy fails rather than serving, and can never reach a request handler.
+`RoutingConfigError` and `TripStorageConfigError` are deliberately absent: both are raised
+at startup so a misconfigured deploy fails rather than serving, and neither can reach a
+request handler.
 """
 
-STARTUP_ONLY: frozenset[type[Exception]] = frozenset({RoutingConfigError})
+STARTUP_ONLY: frozenset[type[Exception]] = frozenset(
+    {RoutingConfigError, TripStorageConfigError}
+)
 """Exceptions that fail the deploy instead of a request. Asserted by the drift test."""
 
 

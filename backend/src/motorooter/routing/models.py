@@ -35,6 +35,16 @@ class Coordinate(BaseModel):
         return cls(lat=lat, lon=lon)
 
 
+COORDINATE_KEY_PRECISION = 5
+"""Decimal places a coordinate is rounded to when used for identity rather than position.
+
+About 1.1 m. Enough to absorb float jitter between two runs of the same drag, tight enough
+that genuinely different waypoints stay distinct. Shared by the routing cache's key and by
+`RouteFingerprint`: if the two disagreed, a cache hit could be reported as stale geometry,
+or a request the cache would re-fetch could reuse a leg.
+"""
+
+
 class Surface(StrEnum):
     PAVED = "paved"
     UNPAVED = "unpaved"
@@ -87,6 +97,42 @@ class RouteRequest(BaseModel):
     want_elevation: bool = False
 
 
+class RouteFingerprint(BaseModel):
+    """The request a leg's geometry was produced from.
+
+    Recorded so staleness is decidable rather than guessed. Comparing a cached leg's
+    endpoints against its waypoints cannot work — engines snap to the nearest routable node,
+    sometimes by hundreds of metres, so there is no tolerance that separates snapping from a
+    user dragging the point. Comparing the *request* has no such ambiguity.
+
+    Stores rounded coordinates rather than a hash. A hash would be smaller and sufficient for
+    equality, but when a rider reports a route wrongly marked stale, a hash says nothing and
+    these values name the field that moved.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    waypoints: tuple[Coordinate, ...] = Field(min_length=2)
+    """Rounded to `COORDINATE_KEY_PRECISION`, matching the routing cache's key."""
+
+    intent: LegIntent
+    provider_override: str | None = None
+
+    @classmethod
+    def of(cls, request: RouteRequest, *, provider_override: str | None = None) -> Self:
+        return cls(
+            waypoints=tuple(
+                Coordinate(
+                    lat=round(waypoint.lat, COORDINATE_KEY_PRECISION),
+                    lon=round(waypoint.lon, COORDINATE_KEY_PRECISION),
+                )
+                for waypoint in request.waypoints
+            ),
+            intent=request.intent,
+            provider_override=provider_override,
+        )
+
+
 class RouteLeg(BaseModel):
     """A routed leg, normalized across providers."""
 
@@ -99,6 +145,13 @@ class RouteLeg(BaseModel):
     ascent_m: float | None = None
     provider: str
     intent: LegIntent
+
+    routed_from: RouteFingerprint | None = None
+    """The request this geometry came from, when one was recorded.
+
+    `None` for a leg routed outside a trip — the single-leg fast-path endpoint does not
+    persist anything, so it has nothing to go stale against.
+    """
 
     @model_validator(mode="after")
     def _spans_within_geometry(self) -> Self:

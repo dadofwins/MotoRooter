@@ -20,11 +20,15 @@ current. Two ways that goes wrong, and the second is the subtle one:
   is not. Retag a paved leg as dirt, have the dirt engine time out, and the export renders
   perfectly at 0% unpaved while carrying the paved road you replaced.
 
-`RouteLeg` records the intent and provider it was produced under, so that second case is
-detectable: geometry whose intent no longer matches its leg is stale by definition. That
-does not catch a moved waypoint — engines snap, so endpoint comparison has no reliable
-threshold — which is why `stitch_result` exists as the by-construction path. Give it the
-`TripRoutingResult` and freshness is not something a caller can forget to check.
+Every routed leg records the request it came from (`RouteLeg.routed_from`), so staleness is
+decided by comparing requests rather than guessed at by comparing geometry. A dragged
+waypoint, a retag, an added via point, and a repinned provider all change the fingerprint;
+engine snapping does not.
+
+`stitch_result` remains the stronger path. A fingerprint says the inputs are unchanged, not
+that the last attempt succeeded — a leg re-routed for identical inputs by an engine that
+then 503s keeps geometry that is genuinely current, and only the result knows the attempt
+failed at all.
 """
 
 import asyncio
@@ -32,6 +36,7 @@ import asyncio
 from pydantic import BaseModel, ConfigDict, Field
 
 from motorooter.api.error_codes import resolve
+from motorooter.error_codes import ErrorCode
 from motorooter.planning.stitching import (
     COINCIDENT_TOLERANCE_M,
     GAP_REPORT_THRESHOLD_M,
@@ -39,7 +44,7 @@ from motorooter.planning.stitching import (
     stitch,
 )
 from motorooter.routing.errors import RouteIncomplete, RoutingError
-from motorooter.routing.models import RouteLeg, RouteRequest
+from motorooter.routing.models import RouteFingerprint, RouteLeg, RouteRequest
 from motorooter.routing.policy import PolicyResolver
 from motorooter.trips.models import Trip, TripLeg
 
@@ -50,8 +55,13 @@ class LegRoutingFailure(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     leg_index: int = Field(ge=0)
-    code: str
-    """snake_case error identifier, matching the API's error envelope vocabulary."""
+    code: ErrorCode
+    """The same identifier the HTTP layer would send for this failure.
+
+    The enum rather than a bare string: this value is copied onto `TripLeg` and serialized
+    into the trip document, and a raw string there silently produces a field that is not
+    actually an `ErrorCode` — equal to one, but not one.
+    """
 
     detail: str
     retryable: bool = False
@@ -82,7 +92,7 @@ def _describe(index: int, exc: Exception) -> "LegRoutingFailure":
     _, code = resolve(exc)
     return LegRoutingFailure(
         leg_index=index,
-        code=code.value,
+        code=code,
         detail=str(exc),
         retryable=isinstance(exc, RoutingError) and exc.retryable,
     )
@@ -201,26 +211,33 @@ class TripRouter:
         )
 
     def _stale_leg_indices(self, trip: Trip) -> tuple[int, ...]:
-        """Legs whose cached geometry was produced under inputs they no longer carry.
+        """Legs whose geometry came from a request the leg no longer describes.
 
-        Compares what `RouteLeg` already records — the intent it was routed for, and the
-        engine that produced it — against what the leg asks for now. Cheap, needs no schema
-        change, and catches the case that matters: a retag whose re-route failed.
+        Compares fingerprints, not geometry. Comparing a leg's endpoints against its
+        waypoints cannot work: engines snap to the nearest routable node, sometimes by
+        hundreds of metres, so no tolerance separates snapping from a user dragging the
+        point. Comparing the request has no such ambiguity.
 
-        It does not catch a moved waypoint. Engines snap waypoints to the nearest routable
-        node, sometimes by hundreds of metres, so there is no endpoint tolerance that
-        separates "snapped" from "the user dragged this". Detecting that needs a fingerprint
-        of the request stored on the leg, which is a schema change and a separate decision.
+        A leg with no fingerprint is trusted, falling back to the weaker intent comparison.
+        Those are documents written before the field existed, and refusing to export them
+        would turn a missing annotation into a broken trip.
         """
         stale: list[int] = []
         for index, leg in enumerate(trip.legs):
             routed = leg.routed
             if routed is None:
                 continue
-            expected = self._resolver.resolve(leg.intent, override=leg.provider_override)
-            if routed.intent is not leg.intent or routed.provider != expected.capabilities.name:
+            if routed.routed_from is None:
+                if routed.intent is not leg.intent:
+                    stale.append(index)
+            elif routed.routed_from != self._fingerprint(trip, leg):
                 stale.append(index)
         return tuple(stale)
+
+    def _fingerprint(self, trip: Trip, leg: TripLeg) -> RouteFingerprint:
+        return RouteFingerprint.of(
+            self.leg_request(trip, leg), provider_override=leg.provider_override
+        )
 
     def leg_request(self, trip: Trip, leg: TripLeg) -> RouteRequest:
         """The routing request for one leg: its own waypoint span, and nothing else.
@@ -248,11 +265,20 @@ class TripRouter:
         cancels rather than being filed as "this leg did not route".
         """
         leg = trip.legs[index]
+        request = self.leg_request(trip, leg)
         try:
             provider = self._resolver.resolve(leg.intent, override=leg.provider_override)
-            return await provider.route(self.leg_request(trip, leg))
+            routed = await provider.route(request)
         except Exception as exc:  # noqa: BLE001 -- deliberate; see docstring
             return exc
+        # Stamped here rather than in each adapter: the fingerprint describes the request,
+        # which this layer owns, and asking every provider to attach one would be both
+        # duplicated and easy to forget in a new adapter.
+        return routed.model_copy(
+            update={
+                "routed_from": RouteFingerprint.of(request, provider_override=leg.provider_override)
+            }
+        )
 
     def _assemble(
         self, trip: Trip, outcomes: dict[int, RouteLeg | BaseException]
@@ -266,13 +292,18 @@ class TripRouter:
             if outcome is None:
                 legs.append(leg)  # Skipped, e.g. only_unrouted.
             elif isinstance(outcome, RouteLeg):
-                legs.append(leg.model_copy(update={"routed": outcome}))
+                # Clearing the marker matters as much as setting it: a leg that has just
+                # routed successfully must not stay flagged as broken.
+                legs.append(leg.model_copy(update={"routed": outcome, "last_routing_error": None}))
             elif isinstance(outcome, Exception):
                 # The prior geometry stays. Losing a good route because a re-route failed
                 # would be a downgrade the user never asked for — and `stitch_trip` refuses
                 # to export geometry that no longer matches its leg, so it cannot mislead.
-                legs.append(leg)
-                failures.append(_describe(index, outcome))
+                failure = _describe(index, outcome)
+                # Recorded on the leg as well as in `failures`: only the leg survives being
+                # saved, and `failures` is not part of the trip the store accepts.
+                legs.append(leg.model_copy(update={"last_routing_error": failure.code}))
+                failures.append(failure)
             else:
                 # Not an Exception at all — a BaseException that escaped gather. Cancellation
                 # and interrupts belong to the caller, not in a failure list.

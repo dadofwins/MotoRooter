@@ -8,7 +8,12 @@ from collections import OrderedDict
 from dataclasses import dataclass
 
 from motorooter.clock import Clock, SystemClock
-from motorooter.routing.models import ProviderCapabilities, RouteLeg, RouteRequest
+from motorooter.routing.models import (
+    COORDINATE_KEY_PRECISION,
+    ProviderCapabilities,
+    RouteLeg,
+    RouteRequest,
+)
 from motorooter.routing.protocol import RoutingProvider
 
 CacheKey = tuple[object, ...]
@@ -30,7 +35,7 @@ class CachingProvider:
         clock: Clock | None = None,
         ttl_s: float | None = None,
         max_entries: int = 512,
-        precision: int = 5,
+        precision: int = COORDINATE_KEY_PRECISION,
     ) -> None:
         """
         Args:
@@ -38,9 +43,8 @@ class CachingProvider:
             clock: time source; injected so TTL tests need no real waiting.
             ttl_s: entry lifetime. `None` keeps entries until evicted.
             max_entries: LRU capacity.
-            precision: decimal places coordinates are rounded to for the key. 5 is ~1.1 m,
-                enough to absorb float jitter between identical drags without merging
-                genuinely different waypoints.
+            precision: decimal places coordinates are rounded to for the key. Shared with
+                `RouteFingerprint` so the two agree on what counts as the same request.
         """
         self._inner = inner
         self._clock = clock or SystemClock()

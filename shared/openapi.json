@@ -480,6 +480,39 @@
         "title": "ReplanRequest",
         "type": "object"
       },
+      "RouteFingerprint": {
+        "description": "The request a leg's geometry was produced from.\n\nRecorded so staleness is decidable rather than guessed. Comparing a cached leg's\nendpoints against its waypoints cannot work \u2014 engines snap to the nearest routable node,\nsometimes by hundreds of metres, so there is no tolerance that separates snapping from a\nuser dragging the point. Comparing the *request* has no such ambiguity.\n\nStores rounded coordinates rather than a hash. A hash would be smaller and sufficient for\nequality, but when a rider reports a route wrongly marked stale, a hash says nothing and\nthese values name the field that moved.",
+        "properties": {
+          "intent": {
+            "$ref": "#/components/schemas/LegIntent"
+          },
+          "provider_override": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Provider Override"
+          },
+          "waypoints": {
+            "items": {
+              "$ref": "#/components/schemas/Coordinate"
+            },
+            "minItems": 2,
+            "title": "Waypoints",
+            "type": "array"
+          }
+        },
+        "required": [
+          "waypoints",
+          "intent"
+        ],
+        "title": "RouteFingerprint",
+        "type": "object"
+      },
       "RouteLeg": {
         "description": "A routed leg, normalized across providers.",
         "properties": {
@@ -518,6 +551,16 @@
           "provider": {
             "title": "Provider",
             "type": "string"
+          },
+          "routed_from": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RouteFingerprint"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "surface_spans": {
             "default": [],
@@ -757,6 +800,16 @@
           },
           "intent": {
             "$ref": "#/components/schemas/LegIntent"
+          },
+          "last_routing_error": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ErrorCode"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "provider_override": {
             "anyOf": [

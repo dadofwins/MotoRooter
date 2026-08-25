@@ -38,9 +38,9 @@ const NO_MAP_ID_NOTICE =
 
 /** A marker of either generation, reduced to the operations the canvas needs. */
 interface AttachedMarker {
-  detach(): void
-  move(position: google.maps.LatLngLiteral): void
-  on(event: string, handler: () => void): google.maps.MapsEventListener | null
+  readonly detach: () => void
+  readonly move: (position: google.maps.LatLngLiteral) => void
+  readonly on: (event: string, handler: () => void) => google.maps.MapsEventListener | null
 }
 
 interface MarkerInput {

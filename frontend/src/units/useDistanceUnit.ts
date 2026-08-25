@@ -31,7 +31,15 @@ function readStored(): DistanceUnit | null {
 
 export interface DistanceUnitPreference {
   readonly unit: DistanceUnit
-  setUnit(unit: DistanceUnit): void
+  /**
+   * A function-typed property, not a method.
+   *
+   * Method shorthand declares "this may be used", so destructuring it off the object — which
+   * every caller of a hook does — is flagged as detaching it from its receiver. These objects
+   * are records of functions with no `this` to lose, and saying so in the type is what makes
+   * `const { setUnit } = useDistanceUnit()` legitimate rather than merely harmless.
+   */
+  readonly setUnit: (unit: DistanceUnit) => void
 }
 
 export function useDistanceUnit(): DistanceUnitPreference {

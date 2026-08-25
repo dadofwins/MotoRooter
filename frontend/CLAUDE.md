@@ -111,6 +111,25 @@ Never edit anything under `backend/`.
 
 ## House rules
 
+- **A hook or factory that returns an object of helpers returns function-typed
+  *properties*, never method shorthand, and memoises the object.**
+
+  ```ts
+  //  ✗  intervalFor(intent: LegIntent): number | null
+  //  ✓  readonly intervalFor: (intent: LegIntent) => number | null
+  ```
+
+  Method shorthand declares "this may be used", so destructuring it off the result — which
+  every caller does — trips `unbound-method`. Worse, an object literal rebuilt each render
+  invalidates anything keyed on it: that is what silently destroyed a whole drag gesture,
+  because the session was keyed on a capabilities object that was new every time. Both hooks
+  that returned helpers hit this, one as a bug and one as a lint error.
+
+- **Verify with the exit code, never by reading the output.** `make check` prints ruff's
+  "All checks passed!" from the backend step and can still exit non-zero on the frontend
+  lint that follows. `make check; echo $?` is the only honest check, and piping it through
+  `grep` throws the status away.
+
 - **TDD, no exceptions.** Vitest + React Testing Library. Test first, watch it fail.
 - Strict TypeScript. `tsc --noEmit` is part of done; `noUncheckedIndexedAccess` and
   `exactOptionalPropertyTypes` are on deliberately.

@@ -1,5 +1,5 @@
 import { screen } from '@testing-library/dom'
-import { afterEach, describe, expect, it } from 'vitest'
+import { describe, expect, it } from 'vitest'
 import { createWaypointPin, waypointKind } from './waypointPin'
 
 /**
@@ -38,10 +38,6 @@ describe('createWaypointPin', () => {
     // AdvancedMarkerElement takes a `title`; without one, an unnamed waypoint hovers blank.
     expect(createWaypointPin({ kind: 'via', label: '2' }).title).toBe('Via point')
   })
-})
-
-afterEach(() => {
-  document.body.replaceChildren()
 })
 
 describe('waypointKind', () => {

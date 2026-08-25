@@ -29,14 +29,29 @@ import type { LegIntent, TripLeg, Waypoint } from '../api/types'
 export type LegRouter = Pick<ApiClient, 'routeLeg'>
 
 /**
+ * Intents that route through an engine able to report surface.
+ *
+ * Not a stylistic preference — a correctness constraint. An intent that resolves to an
+ * engine with no surface data returns zero spans, every metre renders as `unknown` grey,
+ * and the one distinction this app exists to draw silently disappears. Measured on
+ * Woodinville → Cashmere → Ellensburg: `twisty_paved` resolves to Google and reports 0
+ * spans over 270 km; `unpaved` resolves to ORS and reports 139.
+ *
+ * Kept as *intents* rather than provider names deliberately: which engine serves an intent
+ * is the backend's policy table to decide, and naming one here would hardcode today's
+ * answer to a question that is configuration.
+ */
+export const SURFACE_REPORTING_INTENTS = ['unpaved', 'technical_offroad'] as const
+
+/**
  * The intent every leg is routed with, until the UI can express one.
  *
- * `RouteLegRequest` requires an intent and there is no control for choosing one yet.
- * `twisty_paved` is the honest default for a first route: it is what the app is *for*,
- * where `highway_connector` would quietly make it a worse Google Maps. Whether the rider
- * picks this per leg or the assistant infers it is an open product question.
+ * `RouteLegRequest` requires an intent and there is no control for choosing one yet. Dirt
+ * is the point of an adventure motorcycle planner, and — see above — it is also the only
+ * way the rider sees any surface information at all. Whether the rider picks this per leg
+ * or the assistant infers it is still an open product question.
  */
-const SLICE_INTENT: LegIntent = 'twisty_paved'
+const SLICE_INTENT: LegIntent = 'unpaved'
 
 /**
  * How many routes to keep. Generous for undo and redo across an editing session, and small

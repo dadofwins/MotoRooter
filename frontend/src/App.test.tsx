@@ -4,7 +4,7 @@ import { App } from './App'
 import { ApiError } from './api/errors'
 import type { RequestOptions } from './api/client'
 import type { GoogleMaps } from './map/loadGoogleMaps'
-import type { RouteLegInput, RouteLegResponse } from './api/types'
+import type { Coordinate, RouteLegInput, RouteLegResponse, RoutingCapabilitiesResponse } from './api/types'
 
 /**
  * The shell, and the one rule it has to prove: **chat is an accelerator, never a
@@ -13,6 +13,22 @@ import type { RouteLegInput, RouteLegResponse } from './api/types'
  */
 
 const PIN_PROBE_ID = 'pin-probe'
+
+/** The shape Maps delivers position in. */
+function latLngEvent(coordinate: Coordinate): unknown {
+  return { latLng: { lat: () => coordinate.lat, lng: () => coordinate.lon } }
+}
+
+const CAPABILITIES: RoutingCapabilitiesResponse = {
+  providers: [],
+  intents: { unpaved: { provider: 'ors', live_update_interval_ms: 0 } },
+}
+
+interface FakeLine {
+  readonly options: Record<string, unknown>
+  map: unknown
+  mouseDown(coordinate: Coordinate): void
+}
 
 interface FakeMarker {
   readonly options: Record<string, unknown>
@@ -23,32 +39,48 @@ interface FakeMarker {
 function createFakeMaps() {
   const maps: FakeMap[] = []
   const markers: FakeMarker[] = []
-  const polylines: { options: Record<string, unknown>; map: unknown }[] = []
+  const polylines: FakeLine[] = []
   let clickHandler: ((event: unknown) => void) | null = null
 
   class FakeMap {
+    readonly handlers = new Map<string, (event: unknown) => void>()
     constructor() {
       maps.push(this)
     }
     addListener(event: string, handler: (event: unknown) => void): { remove: () => void } {
       if (event === 'click') clickHandler = handler
-      return { remove: () => undefined }
+      this.handlers.set(event, handler)
+      return { remove: () => this.handlers.delete(event) }
     }
     fitBounds(): void {
       // Nothing to assert here; framing is covered in MapCanvas's own tests.
+    }
+    setOptions(): void {
+      // Panning is toggled during a drag; asserted in MapCanvas's own tests.
+    }
+    mouseUp(coordinate: Coordinate): void {
+      this.handlers.get('mouseup')?.(latLngEvent(coordinate))
     }
   }
 
   const namespace = {
     Map: FakeMap,
-    Polyline: class {
+    Polyline: class implements FakeLine {
       map: unknown
+      readonly listeners = new Map<string, (event: unknown) => void>()
       constructor(readonly options: Record<string, unknown>) {
         this.map = options['map'] ?? null
         polylines.push(this)
       }
       setMap(map: unknown): void {
         this.map = map
+      }
+      addListener(event: string, handler: (event: unknown) => void): { remove: () => void } {
+        this.listeners.set(event, handler)
+        return { remove: () => this.listeners.delete(event) }
+      }
+      mouseDown(coordinate: Coordinate): void {
+        this.listeners.get('mousedown')?.(latLngEvent(coordinate))
       }
     },
     LatLngBounds: class {
@@ -151,6 +183,7 @@ const ROUTE_RESPONSE: RouteLegResponse = {
 function fakeRouter(response: RouteLegResponse = ROUTE_RESPONSE) {
   return {
     routeLeg: vi.fn((_request: RouteLegInput, _options?: RequestOptions) => Promise.resolve(response)),
+    routingCapabilities: vi.fn((_options?: RequestOptions) => Promise.resolve(CAPABILITIES)),
   }
 }
 
@@ -234,6 +267,7 @@ describe('App routing the placed points', () => {
       routeLeg: vi.fn((_request: RouteLegInput, _options?: RequestOptions) =>
         Promise.reject(new ApiError({ status: 422, code: 'no_route_found', detail: 'nope' })),
       ),
+      routingCapabilities: vi.fn((_options?: RequestOptions) => Promise.resolve(CAPABILITIES)),
     }
     render(<App mapLoader={fake.loader} mapId="motorooter-test-vector" client={router} />)
     await mapReady(fake)
@@ -259,6 +293,7 @@ describe('App routing the placed points', () => {
           }),
         ),
       ),
+      routingCapabilities: vi.fn((_options?: RequestOptions) => Promise.resolve(CAPABILITIES)),
     }
     render(<App mapLoader={fake.loader} mapId="motorooter-test-vector" client={router} />)
     await mapReady(fake)
@@ -277,6 +312,7 @@ describe('App routing the placed points', () => {
       routeLeg: vi.fn((_request: RouteLegInput, _options?: RequestOptions) =>
         Promise.reject(new ApiError({ status: 422, code: 'no_route_found', detail: 'no route found' })),
       ),
+      routingCapabilities: vi.fn((_options?: RequestOptions) => Promise.resolve(CAPABILITIES)),
     }
     render(<App mapLoader={fake.loader} mapId="motorooter-test-vector" client={router} />)
     await mapReady(fake)
@@ -285,6 +321,79 @@ describe('App routing the placed points', () => {
     fake.clickMap(48.1, -120.2)
 
     expect(await screen.findByRole('alert')).toHaveTextContent(/no route/i)
+  })
+})
+
+/**
+ * Dragging the drawn route, end to end through the real pieces.
+ *
+ * The map layer reports the gesture, DragSession decides where the via-point goes and
+ * schedules the request, and the result comes back to the same state the canvas draws from.
+ */
+describe('App dragging the route', () => {
+  async function routedApp() {
+    const fake = createFakeMaps()
+    const router = {
+      routeLeg: vi.fn((request: RouteLegInput, _options?: RequestOptions) =>
+        Promise.resolve({
+          leg: {
+            ...ROUTE_RESPONSE.leg,
+            // Echo the request back, so a leg is recognisably the route that was asked for.
+            geometry: [...request.waypoints],
+            routed_from: { intent: request.intent, waypoints: [...request.waypoints] },
+          },
+          live_update_interval_ms: 0,
+        }),
+      ),
+      routingCapabilities: vi.fn((_options?: RequestOptions) =>
+        Promise.resolve(CAPABILITIES),
+      ),
+    }
+
+    render(<App mapLoader={fake.loader} mapId="motorooter-test-vector" client={router} />)
+    await mapReady(fake)
+    fake.clickMap(47.6, -120.7)
+    fake.clickMap(48.1, -120.2)
+    await waitFor(() => expect(fake.polylines).toHaveLength(1))
+    return { fake, router }
+  }
+
+  it('inserts a via-point where the line was dragged and routes through it', async () => {
+    const { fake, router } = await routedApp()
+    const map = fake.maps[0]
+
+    act(() => {
+      fake.polylines[0]?.mouseDown({ lat: 47.9, lon: -120.4 }) // on the drawn line
+      map?.mouseUp({ lat: 47.9, lon: -121.0 }) // dragged west
+    })
+
+    await waitFor(() => expect(router.routeLeg).toHaveBeenCalledTimes(2))
+    const request = router.routeLeg.mock.calls[1]?.[0]
+    expect(request?.waypoints).toEqual([
+      { lat: 47.6, lon: -120.7 },
+      { lat: 47.9, lon: -121 }, // the via, between the two the rider placed
+      { lat: 48.1, lon: -120.2 },
+    ])
+  })
+
+  it('shows the dragged route, and does not re-request what the drag already fetched', async () => {
+    // The drag routes on release. Re-routing the same waypoints afterwards would cost a
+    // second request per drag against a free tier of roughly 2,000 a day.
+    const { fake, router } = await routedApp()
+    const map = fake.maps[0]
+
+    act(() => {
+      fake.polylines[0]?.mouseDown({ lat: 47.9, lon: -120.4 })
+      map?.mouseUp({ lat: 47.9, lon: -121.0 })
+    })
+    await waitFor(() => expect(router.routeLeg).toHaveBeenCalledTimes(2))
+    await waitFor(() => expect(screen.getByText(/3 points placed/i)).toBeInTheDocument())
+
+    // Settle anything the state change might have queued.
+    await act(async () => {
+      await Promise.resolve()
+    })
+    expect(router.routeLeg).toHaveBeenCalledTimes(2)
   })
 })
 

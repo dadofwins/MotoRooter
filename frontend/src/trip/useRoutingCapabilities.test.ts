@@ -19,6 +19,7 @@ const CAPABILITIES: RoutingCapabilitiesResponse = {
     {
       name: 'ors',
       prefers_unpaved: true,
+      reports_surface: true,
       map_matching: false,
       alternatives: true,
       elevation: true,

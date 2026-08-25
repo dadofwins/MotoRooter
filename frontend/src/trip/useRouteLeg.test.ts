@@ -2,7 +2,7 @@ import { act, renderHook, waitFor } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
 import { SURFACE_REPORTING_INTENTS, useRouteLeg } from './useRouteLeg'
 import type { RequestOptions } from '../api/client'
-import type { Coordinate, RouteLeg, RouteLegInput, RouteLegResponse, Waypoint } from '../api/types'
+import type { Coordinate, RouteLeg, RouteLegInput, RouteLegResponse, TripLeg, Waypoint } from '../api/types'
 
 /**
  * Routing the waypoints the user has placed.
@@ -42,6 +42,52 @@ function fakeClient(response: RouteLegResponse = RESPONSE) {
     routeLeg: vi.fn((_request: RouteLegInput, _options?: RequestOptions) => Promise.resolve(response)),
   }
 }
+
+describe('legs supplied by a drag', () => {
+  /**
+   * A drag routes the leg itself, on release. If the hook then re-routed the same waypoints
+   * it would spend a second request for geometry the app is already holding — once per
+   * drag, against a free tier of roughly 2,000 a day.
+   *
+   * Freshness is decided from `RouteLeg.routed_from` rather than from who called last.
+   */
+  function fresh(from: readonly Coordinate[]): TripLeg {
+    return {
+      intent: 'unpaved',
+      start_waypoint_index: 0,
+      end_waypoint_index: from.length - 1,
+      provider_override: null,
+      routed: {
+        ...routed(from),
+        intent: 'unpaved',
+        routed_from: { intent: 'unpaved', waypoints: [...from] },
+      },
+    }
+  }
+
+  it('uses them instead of re-requesting a route already in hand', async () => {
+    const client = fakeClient()
+    const points = [waypoint(47), waypoint(47.5), waypoint(48)]
+    const known = [fresh(points.map((p) => p.coordinate))]
+
+    const { result } = renderHook(() => useRouteLeg(client, points, known))
+
+    await waitFor(() => expect(result.current.isRouting).toBe(false))
+    expect(client.routeLeg).not.toHaveBeenCalled()
+    expect(result.current.legs).toBe(known)
+  })
+
+  it('re-requests when they no longer match the waypoints', async () => {
+    // The state right after a via-point is inserted and before its route comes back.
+    const client = fakeClient()
+    const stale = [fresh([{ lat: 47, lon: -120 }, { lat: 48, lon: -120 }])]
+    const points = [waypoint(47), waypoint(47.5), waypoint(48)]
+
+    renderHook(() => useRouteLeg(client, points, stale))
+
+    await waitFor(() => expect(client.routeLeg).toHaveBeenCalledTimes(1))
+  })
+})
 
 describe('the default routing intent', () => {
   it('is one that routes through an engine able to report surface', async () => {

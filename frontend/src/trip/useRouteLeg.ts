@@ -23,6 +23,7 @@
  */
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { ApiClient } from '../api/client'
+import { isLegStale } from '../routing/tripEdits'
 import type { LegIntent, TripLeg, Waypoint } from '../api/types'
 
 /** Only the one call is needed, so a test double stays a one-line object. */
@@ -75,7 +76,19 @@ interface Settled {
 
 const NOTHING: Settled = { legs: [], error: null, key: '' }
 
-export function useRouteLeg(client: LegRouter, waypoints: readonly Waypoint[]): RouteLegState {
+export function useRouteLeg(
+  client: LegRouter,
+  waypoints: readonly Waypoint[],
+  /**
+   * Legs the caller already holds — from a drag, which routes on release itself.
+   *
+   * Used instead of re-requesting when they still match the waypoints. Freshness comes from
+   * `RouteLeg.routed_from` rather than from who called last, so this cannot be fooled by
+   * ordering. Without it a drag costs two requests: one to place the via-point and one for
+   * the hook to discover the same route again.
+   */
+  known: readonly TripLeg[] | null = null,
+): RouteLegState {
   const [settled, setSettled] = useState<Settled>(NOTHING)
 
   /** Identifies a route by where it goes, not by which array object holds it. */
@@ -111,9 +124,13 @@ export function useRouteLeg(client: LegRouter, waypoints: readonly Waypoint[]): 
    */
   const [cache, setCache] = useState<ReadonlyMap<string, readonly TripLeg[]>>(() => new Map())
 
+  const knownIsFresh =
+    known !== null && known.length > 0 && !known.some((leg) => isLegStale(waypoints, leg))
+
   useEffect(() => {
     const points = latest.current
     if (points.length < 2) return undefined // nothing to route between yet
+    if (knownIsFresh) return undefined // the caller routed it; asking again buys nothing
     if (cache.has(routeKey)) return undefined // already have exactly this route
 
     // Mounting with two or more waypoints already in place — restored from persistence or
@@ -158,7 +175,7 @@ export function useRouteLeg(client: LegRouter, waypoints: readonly Waypoint[]): 
     return () => {
       controller.abort()
     }
-  }, [client, routeKey, cache])
+  }, [client, routeKey, cache, knownIsFresh])
 
   // What is *shown* is derived from what the route currently is, not from the last thing
   // that came back. Storing it instead is how a deleted route stays on the map: the effect
@@ -168,16 +185,16 @@ export function useRouteLeg(client: LegRouter, waypoints: readonly Waypoint[]): 
   const failedHere = routable && settled.key === routeKey && settled.error !== null
 
   return {
-    // A cached route shows immediately. Otherwise the previous line stays up while the new
-    // one is fetched — blanking the map between edits would be worse — but a route that no
+    // Freshly dragged legs win, then a cached route, then the previous line while the new
+    // one is fetched — blanking the map between edits would be worse. A route that no
     // longer has two points is simply gone.
-    legs: routable ? (cached ?? settled.legs) : [],
+    legs: routable ? ((knownIsFresh ? known : null) ?? cached ?? settled.legs) : [],
     // Only the current route's failure is worth showing. Otherwise removing the waypoints
     // that caused an error leaves an alert on screen that cannot be dismissed.
     error: failedHere ? settled.error : null,
     // Derived, not stored: setting a flag when the request starts would mean a state
     // update inside the effect, which cascades renders.
-    isRouting: routable && cached === undefined && !failedHere,
+    isRouting: routable && !knownIsFresh && cached === undefined && !failedHere,
   }
 }
 

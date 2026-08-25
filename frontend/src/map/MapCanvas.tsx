@@ -152,15 +152,19 @@ export function MapCanvas({
     onMapClickRef.current = onMapClick
   }, [onMapClick])
 
-  const dragHandlers = useRef<Pick<MapCanvasProps, 'onLegGrab' | 'onLegDrag' | 'onLegDrop'>>({})
+  // Explicit `| undefined` on each: exactOptionalPropertyTypes distinguishes "absent" from
+  // "present and undefined", and these are assigned wholesale on every change.
+  const dragHandlers = useRef<{
+    onLegGrab?: ((legIndex: number, at: Coordinate) => boolean) | undefined
+    onLegDrag?: ((at: Coordinate) => void) | undefined
+    onLegDrop?: ((at: Coordinate) => void) | undefined
+  }>({})
   useEffect(() => {
     dragHandlers.current = { onLegGrab, onLegDrag, onLegDrop }
   }, [onLegGrab, onLegDrag, onLegDrop])
 
   /** The gesture in progress, if any. Held in a ref: no render depends on it. */
   const gesture = useRef<{ last: Coordinate } | null>(null)
-  /** Ends the current gesture. Owned by the map effect, called from the line listeners. */
-  const endGestureRef = useRef<((at: Coordinate) => void) | null>(null)
   /**
    * Google emits a click after the mouseup that ended a drag. Without this, letting go of
    * the line would also drop a new waypoint wherever the drag finished.
@@ -220,7 +224,6 @@ export function MapCanvas({
       map.setOptions({ draggable: true })
       dragHandlers.current.onLegDrop?.(at)
     }
-    endGestureRef.current = endGesture
 
     const listeners = [
       map.addListener('click', (event: google.maps.MapMouseEvent) => {
@@ -259,7 +262,6 @@ export function MapCanvas({
     return () => {
       for (const listener of listeners) listener.remove()
       window.removeEventListener('mouseup', releasedOutside)
-      endGestureRef.current = null
       mapRef.current = null
     }
   }, [maps, initialOptions])

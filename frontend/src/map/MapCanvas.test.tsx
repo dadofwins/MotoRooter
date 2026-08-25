@@ -175,8 +175,6 @@ function createFakeMaps({ withMarkerLibrary = true }: { withMarkerLibrary?: bool
             'drag-handle',
           ) === true,
       ),
-    /** The live rubber band, if any. */
-    bands: () => polylines.filter((line) => line.map !== null && line.options.zIndex === 20),
   }
 }
 
@@ -254,25 +252,30 @@ describe('MapCanvas dragging the route', () => {
    * The frame-rate half of the gesture.
    *
    * A 1 Hz routed update is a fine cadence, but nothing moving between updates reads as a
-   * broken app rather than a thrifty one. So the handle and the two segments either side of
-   * it follow the cursor locally, at pointer speed, with no request and — critically — no
-   * trip through the state that feeds routing. Routing that through React is what made the
-   * drag session rebuild itself last round.
+   * broken app rather than a thrifty one. So a handle follows the cursor locally, at pointer
+   * speed, with no request and — critically — no trip through the state that feeds routing.
+   * Routing that through React is what made the drag session rebuild itself last round.
+   *
+   * The handle alone, deliberately. Straight tangents from the route to the cursor were
+   * tried and removed: they fan off a curved line and read as a second, competing route
+   * rather than as feedback about the one being dragged.
    */
-  describe('the local rubber band', () => {
-    it('puts a handle and a band on the map when the line is grabbed', async () => {
+  describe('the drag handle', () => {
+    it('puts a handle on the map when the line is grabbed, and nothing else', async () => {
       const { fake } = await dragging()
       expect(fake.handles()).toHaveLength(0)
+      const drawnBefore = fake.polylines.length
 
       act(() => {
         fake.polylines[0]?.mouseDown({ lat: 47.01, lon: -120 })
       })
 
       expect(fake.handles()).toHaveLength(1)
-      expect(fake.bands()).toHaveLength(1)
+      // No extra line: the dot carries "you are holding this point" on its own.
+      expect(fake.polylines).toHaveLength(drawnBefore)
     })
 
-    it('moves them with the cursor without building anything new', async () => {
+    it('moves with the cursor without building anything new', async () => {
       // Rebuilding overlays per pointer event is the difference between a gesture that
       // tracks the hand and one that stutters.
       const { fake } = await dragging()
@@ -290,26 +293,9 @@ describe('MapCanvas dragging the route', () => {
 
       expect(fake.polylines).toHaveLength(overlaysAfterGrab)
       expect(fake.handles()[0]?.position).toEqual({ lat: 47.01, lng: -120.3 })
-      expect(fake.bands()[0]?.path.at(1)).toEqual({ lat: 47.01, lng: -120.3 })
     })
 
-    it('spans the waypoints either side of the grab, so the band is the shape of the edit', async () => {
-      const { fake } = await dragging()
-
-      act(() => {
-        fake.polylines[0]?.mouseDown({ lat: 47.01, lon: -120 })
-      })
-
-      // Leg 0 runs between the first two waypoints, so the band joins them through the
-      // handle: previous waypoint, cursor, next waypoint.
-      expect(fake.bands()[0]?.path).toEqual([
-        { lat: 47, lng: -120 },
-        { lat: 47.01, lng: -120 },
-        { lat: 47.02, lng: -120 },
-      ])
-    })
-
-    it('clears them on release, on cancel, and on unmount', async () => {
+    it('clears it on release, on cancel, and on unmount', async () => {
       const { fake, view } = await dragging()
       const map = fake.maps[0]
 
@@ -319,7 +305,6 @@ describe('MapCanvas dragging the route', () => {
         map?.mouseUp({ lat: 47.01, lon: -120.3 })
       })
       expect(fake.handles()).toHaveLength(0)
-      expect(fake.bands()).toHaveLength(0)
 
       act(() => {
         fake.polylines[0]?.mouseDown({ lat: 47.01, lon: -120 })
@@ -332,7 +317,6 @@ describe('MapCanvas dragging the route', () => {
       })
       view.unmount()
       expect(fake.handles()).toHaveLength(0)
-      expect(fake.bands()).toHaveLength(0)
     })
   })
 

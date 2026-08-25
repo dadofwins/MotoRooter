@@ -312,6 +312,35 @@ Mirror the routing layer, which exists and works:
   biggest test of that rule: "find me more restaurants on the route" and a Restaurants button
   must run the same service function, not two implementations that drift.
 
+## Routing modes: the rider-facing vocabulary
+
+Three, named by Tim, mapping onto the existing `LegIntent` rather than a parallel vocabulary:
+
+| shown to the rider | `LegIntent` | engine | reports surface |
+|---|---|---|---|
+| Fast | `highway_connector` | Google | no |
+| Twisties (paved) | `twisty_paved` | Google | no |
+| Offroad | `unpaved` | ORS | **yes** |
+
+`technical_offroad` and `manual_track` stay unlabelled for now — the field expresses all five,
+so adding a label later is a label, not a migration.
+
+**Do not hardcode which modes report surface.** Read `reports_surface` from
+`GET /api/routing/capabilities` and resolve each intent to its provider. A hand-kept list
+goes stale the day the policy table repoints an intent, which has already happened once and
+produced an entirely grey route. The picker should tell a rider *at the moment of choosing*
+that Fast and Twisties cost them the dirt/paved/unsurveyed breakdown.
+
+**Mode is per-leg, not per-trip.** `Trip.default_intent` seeds new segments;
+`TripLeg.intent` decides how each one actually routes, and a rider can change it per segment
+when creating or dragging a point. The routing layer has supported this since the first
+branch — "a trip is a list of legs, and each leg carries its own routing policy" — and the
+vertical slice's single-leg-spanning-every-waypoint model is the thing standing in the way,
+not the architecture.
+
+Splitting into real legs also fixes drag latency: re-routing the affected leg is the design,
+and today "the affected leg" is the entire route.
+
 ## Surface reporting: unknown stays unknown
 
 `unpaved_fraction` counts only spans explicitly tagged unpaved. `Surface.UNKNOWN` is not

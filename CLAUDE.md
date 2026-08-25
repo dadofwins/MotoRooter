@@ -163,6 +163,27 @@ Caveat: hosted ORS's unpaved-preference tuning is real but limited (`profile_par
 `avoid_features`, preference weighting). If routing quality plateaus, self-hosted ORS with a custom
 profile is the next step, and Valhalla the one after.
 
+## Surface reporting: unknown stays unknown
+
+`unpaved_fraction` counts only spans explicitly tagged unpaved. `Surface.UNKNOWN` is not
+counted as either paved or dirt.
+
+This is a deliberate product decision, not an oversight, and it has a measured cost. An OSM
+audit of WABDR Section 3 (`scripts/wabdr_osm_audit.py`, 61 probes over 126 km) found **25% of
+the distance carries no `surface` tag at all** and 75% no `tracktype`. So the reported figure
+systematically *under*-states how much dirt a route contains — roughly 41% reported against
+~48% actual on that section.
+
+Under-reporting is the right failure direction: a rider who is told 41% and finds 48% has a
+better day than the reverse. But the UI must **show the unknown share** rather than let it
+silently vanish into the paved remainder. A route that is 40% dirt, 35% paved and 25%
+unsurveyed is a materially different proposition from one that is 40% dirt and 60% paved, and
+the rider is entitled to know which they are looking at.
+
+Do not "improve" this by inferring surface from `highway=track` outside the adapter layer.
+The ORS adapter already treats an untagged `track` as unpaved, which is a defensible
+wire-format reading; guessing anywhere else would inflate the headline statistic.
+
 ## Planning pipeline
 
 The five stages are distinct backend concerns — keep them in separate modules so each is testable

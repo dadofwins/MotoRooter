@@ -6,11 +6,14 @@ against: there is no WABDR track that says "yes, that is a good place to camp". 
 reference, so the output has to be something he can read and say "no, I would not stop
 there" — before any of it is wired into scoring.
 
-Search stage only, for now. Resolve and judge print as TODO so the shape is visible.
+Search and extract. Resolve and judge print as TODO so the shape stays visible.
+
+The extract stage exists because the first run of this script showed search returning pages
+*about* places rather than places — the output below is the check on whether that is fixed.
 
     uv run --project backend python scripts/discovery_spike.py
 
-Requires BRAVE_SEARCH_API_KEY and ORS_API_KEY.
+Requires BRAVE_SEARCH_API_KEY, ORS_API_KEY and OPENAI_API_KEY.
 """
 
 from __future__ import annotations
@@ -23,7 +26,9 @@ import textwrap
 sys.path.insert(0, str(__import__("pathlib").Path(__file__).resolve().parents[1] / "backend/src"))
 
 from motorooter.planning.discovery.corridor import anchors, spacing_of  # noqa: E402
+from motorooter.llm.providers.openai import OpenAiClient  # noqa: E402
 from motorooter.planning.discovery.errors import DiscoveryError  # noqa: E402
+from motorooter.planning.discovery.extract import PlaceExtractor  # noqa: E402
 from motorooter.planning.discovery.queries import queries_for, total_queries  # noqa: E402
 from motorooter.planning.discovery.sources.brave import BraveSearchSource  # noqa: E402
 from motorooter.routing.models import Coordinate, LegIntent, RouteRequest  # noqa: E402
@@ -46,6 +51,10 @@ CATEGORIES = [
     PoiCategory.FOOD,
 ]
 
+REGION = "Washington State, USA"
+"""Disambiguation. The first run matched Cayuse, Oregon and coastal Chinook, WA — neither of
+which is the pass. Reverse-geocoding the anchor would supply this; for now it is stated."""
+
 
 def wrap(text: str, indent: str = "      ") -> str:
     return textwrap.fill(text, width=96, initial_indent=indent, subsequent_indent=indent)
@@ -54,8 +63,10 @@ def wrap(text: str, indent: str = "      ") -> str:
 async def main() -> int:
     brave_key = os.environ.get("BRAVE_SEARCH_API_KEY")
     ors_key = os.environ.get("ORS_API_KEY")
-    if not brave_key or not ors_key:
-        print("need BRAVE_SEARCH_API_KEY and ORS_API_KEY", file=sys.stderr)
+    openai_key = os.environ.get("OPENAI_API_KEY")
+    model = os.environ.get("MOTOROOTER_LLM_MODEL", "gpt-5-mini")
+    if not brave_key or not ors_key or not openai_key:
+        print("need BRAVE_SEARCH_API_KEY, ORS_API_KEY and OPENAI_API_KEY", file=sys.stderr)
         return 1
 
     leg = await OrsProvider(api_key=ors_key).route(
@@ -69,29 +80,39 @@ async def main() -> int:
     print(f"this spike runs {len(PLACES) * len(CATEGORIES)} of them, on named places\n")
 
     source = BraveSearchSource(api_key=brave_key)
-    total = 0
+    extractor = PlaceExtractor(OpenAiClient(api_key=openai_key, model=model))
+
+    searched = 0
+    extracted = 0
     for place in PLACES:
         for query in queries_for(place, CATEGORIES):
             try:
-                found = await source.search(query, near=placed[0], limit=3)
+                results = await source.search(query, near=placed[0], limit=3)
             except DiscoveryError as exc:
                 print(f"  [{query.category.value}] {query.text}\n      FAILED: {exc}\n")
                 continue
 
+            searched += len(results)
             print(f"  [{query.category.value}] {query.text}")
-            if not found:
-                print("      (nothing)\n")
+            for result in results:
+                print(f"      page:  {result.name}")
+
+            named = await extractor.extract(
+                results, region=REGION, searched_for=query.place
+            )
+            extracted += len(named)
+            if not named:
+                print("      -> no place named\n")
                 continue
-            for candidate in found:
-                total += 1
-                print(f"      * {candidate.name}")
+            for candidate in named:
+                print(f"      PLACE: {candidate.name}")
                 if candidate.snippet:
-                    print(wrap(candidate.snippet, indent="        "))
-                print(f"        {candidate.url}")
+                    print(wrap(candidate.snippet, indent="             "))
             print()
 
-    print(f"{total} candidates, all unverified — none has a place_id or a real coordinate.")
-    print("TODO resolve: Places lookup turns each claim into a place_id, or drops it.")
+    print(f"{searched} search results -> {extracted} named places.")
+    print("All still unverified: none has a place_id or a real coordinate.")
+    print("TODO resolve: Places lookup turns each name into a place_id, or drops it.")
     print("TODO judge:   computed metrics plus the snippets above, scored with a reason.")
     return 0
 

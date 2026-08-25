@@ -18,13 +18,18 @@ from motorooter.trips.errors import (
     TripStorageUnavailable,
 )
 from motorooter.trips.gcs import GcsObjectStore, StaticTokenSource
-from motorooter.trips.objects import InMemoryObjectStore, ObjectStoreUnavailable
+from motorooter.trips.objects import (
+    InMemoryObjectStore,
+    ObjectStoreUnavailable,
+    StoredObject,
+)
 from motorooter.trips.slug import InvalidSlug
 from motorooter.trips.store import TRIP_DOCUMENT, GcsTripStore, TripStore
 from tests.trips.fake_gcs import BASE_URL, BUCKET, FakeGcs, upload_count, written_trip
 from tests.trips.store_contract import (
     TripStoreContract,
     TripStoreRoundTripContract,
+    TripStoreVersioningContract,
     fully_populated_trip,
     make_trip,
 )
@@ -83,6 +88,20 @@ class TestOverTheRealApiShapeRoundTrip(TripStoreRoundTripContract):
         return gcs_store
 
 
+class TestGcsTripStoreVersioning(TripStoreVersioningContract):
+    @pytest.fixture
+    def store(self, objects):
+        return GcsTripStore(objects)
+
+
+class TestOverTheRealApiShapeVersioning(TripStoreVersioningContract):
+    """Optimistic concurrency end to end, including the 412 the JSON API actually returns."""
+
+    @pytest.fixture
+    def store(self, gcs_store):
+        return gcs_store
+
+
 def test_satisfies_the_protocol(objects):
     assert isinstance(GcsTripStore(objects), TripStore)
 
@@ -125,11 +144,13 @@ class InterleavingObjectStore(InMemoryObjectStore):
         await asyncio.sleep(0)
         return await super().exists(path)
 
-    async def write(self, path: str, data: bytes, *, if_absent: bool = False) -> None:
+    async def write(
+        self, path: str, data: bytes, *, if_generation_match: int | None = None
+    ) -> int:
         await asyncio.sleep(0)
-        await super().write(path, data, if_absent=if_absent)
+        return await super().write(path, data, if_generation_match=if_generation_match)
 
-    async def read(self, path: str) -> bytes:
+    async def read(self, path: str) -> StoredObject:
         await asyncio.sleep(0)
         return await super().read(path)
 
@@ -191,7 +212,7 @@ class VanishingObjectStore(InMemoryObjectStore):
         super().__init__()
         self._doomed = doomed
 
-    async def read(self, path: str) -> bytes:
+    async def read(self, path: str) -> StoredObject:
         if self._doomed in path:
             await super().delete(path)
         return await super().read(path)
@@ -280,6 +301,27 @@ class TestCorruptDocuments:
         document = make_trip().model_dump_json()
         future = document.replace('"schema_version":1', '"schema_version":"99"')
         await objects.write("trips/oregon-backcountry/trip.json", future.encode())
+        with pytest.raises(TripDocumentInvalid):
+            await store.get("oregon-backcountry")
+
+    async def test_a_document_stored_under_the_wrong_slug_is_refused(self, store, objects):
+        """The body's slug is the trip's identity to a client, so it cannot be trusted.
+
+        Copying trips/a/trip.json to trips/b/ would otherwise list two entries both claiming
+        to be "a", and a body carrying "slug": "../../admin" would reach the frontend
+        unvalidated even though `_path` would refuse to write it.
+        """
+        await store.create(make_trip("real-trip"))
+        copied = (await objects.read("trips/real-trip/trip.json")).data
+        await objects.write("trips/impostor/trip.json", copied)
+        with pytest.raises(TripDocumentInvalid, match="impostor"):
+            await store.list()
+
+    async def test_a_document_claiming_a_traversal_slug_is_refused_on_read(self, store, objects):
+        forged = make_trip().model_dump_json().replace(
+            '"slug":"oregon-backcountry"', '"slug":"../../admin"'
+        )
+        await objects.write("trips/oregon-backcountry/trip.json", forged.encode())
         with pytest.raises(TripDocumentInvalid):
             await store.get("oregon-backcountry")
 

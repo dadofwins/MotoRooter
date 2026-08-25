@@ -10,6 +10,7 @@ import pytest
 
 from motorooter.app import create_app
 from motorooter.routing.factory import RoutingSettings
+from motorooter.trips.errors import TripStorageConfigError
 from motorooter.trips.factory import TripStorageSettings
 from motorooter.trips.gcs import GcsObjectStore
 from motorooter.trips.store import GcsTripStore, InMemoryTripStore
@@ -39,9 +40,10 @@ def test_a_configured_bucket_is_used_when_not_offline(monkeypatch):
     assert isinstance(create_app(LIVE).state.trip_store, GcsTripStore)
 
 
-def test_no_bucket_falls_back_to_memory():
-    """Durability is opt-in, but the deploy that forgets it should be visible, not silent."""
-    assert isinstance(create_app(LIVE).state.trip_store, InMemoryTripStore)
+def test_no_bucket_and_not_offline_refuses_to_start():
+    """Better a failed deploy than a revision that comes up healthy and loses every trip."""
+    with pytest.raises(TripStorageConfigError):
+        create_app(LIVE)
 
 
 def test_explicit_storage_settings_win_over_the_environment(monkeypatch):

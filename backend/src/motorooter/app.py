@@ -104,7 +104,7 @@ def _storage_settings_for(routing_config: RoutingSettings) -> TripStorageSetting
     quietly point it at someone's real bucket.
     """
     if routing_config.offline:
-        return TripStorageSettings()
+        return TripStorageSettings(offline=True)
     return storage_settings_from_env()
 
 

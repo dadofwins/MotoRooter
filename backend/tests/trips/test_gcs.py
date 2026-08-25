@@ -16,6 +16,7 @@ from motorooter.trips.gcs import (
     StaticTokenSource,
 )
 from motorooter.trips.objects import (
+    MUST_NOT_EXIST,
     ObjectAlreadyExists,
     ObjectNotFound,
     ObjectStoreUnavailable,
@@ -57,7 +58,7 @@ class TestRequestShape:
 
     async def test_create_sends_the_if_generation_match_precondition(self, fake_gcs):
         """`ifGenerationMatch=0` is what makes create-if-absent atomic instead of racy."""
-        await build_store().write("trips/a/trip.json", b"x", if_absent=True)
+        await build_store().write("trips/a/trip.json", b"x", if_generation_match=MUST_NOT_EXIST)
         post = next(r for r in fake_gcs.requests if r.method == "POST")
         assert "ifGenerationMatch=0" in post.url.raw_path.decode()
 
@@ -111,11 +112,92 @@ class TestErrorTranslation:
             with pytest.raises(ObjectNotFound):
                 await build_store().read("trips/a/trip.json")
 
+
+BUCKET_GONE = {
+    "error": {"code": 404, "message": "The specified bucket does not exist.", "errors": []}
+}
+
+
+class TestAMissingBucketIsNotAMissingTrip:
+    """An unreachable bucket answering 404 per object would report every trip as deleted.
+
+    That is the data-loss shape: the API says 404, the client believes the trip is gone, and
+    creating over the top is then the obvious next move.
+    """
+
+    @staticmethod
+    def _bucket_gone():
+        mock = respx.mock(assert_all_called=False)
+        mock.start()
+        mock.route(host=httpx.URL(BASE_URL).host).mock(
+            return_value=httpx.Response(404, json=BUCKET_GONE)
+        )
+        return mock
+
+    async def test_read_reports_unavailability(self):
+        mock = self._bucket_gone()
+        try:
+            with pytest.raises(ObjectStoreUnavailable):
+                await build_store().read("trips/a/trip.json")
+        finally:
+            mock.stop()
+
+    async def test_exists_does_not_quietly_answer_false(self):
+        """The dangerous one: "no trip here" for an entire unreachable bucket."""
+        mock = self._bucket_gone()
+        try:
+            with pytest.raises(ObjectStoreUnavailable):
+                await build_store().exists("trips/a/trip.json")
+        finally:
+            mock.stop()
+
+    async def test_delete_reports_unavailability(self):
+        mock = self._bucket_gone()
+        try:
+            with pytest.raises(ObjectStoreUnavailable):
+                await build_store().delete("trips/a/trip.json")
+        finally:
+            mock.stop()
+
+    async def test_a_404_from_the_listing_endpoint_is_always_bucket_level(self):
+        """Listing an existing bucket returns 200 with no items even when empty."""
+        with respx.mock(assert_all_called=False) as mock:
+            mock.route(host=httpx.URL(BASE_URL).host).mock(return_value=httpx.Response(404))
+            with pytest.raises(ObjectStoreUnavailable):
+                await build_store().list_prefix("trips/")
+
+    async def test_the_message_names_the_bucket_so_the_cause_is_obvious(self):
+        mock = self._bucket_gone()
+        try:
+            with pytest.raises(ObjectStoreUnavailable, match=BUCKET):
+                await build_store().read("trips/a/trip.json")
+        finally:
+            mock.stop()
+
+
+class TestMalformedListings:
+    async def test_a_null_items_array_does_not_raise_a_raw_type_error(self):
+        """A proxy answering `{"items": null}` must not leak TypeError through the seam."""
+        with respx.mock(assert_all_called=False) as mock:
+            mock.route(host=httpx.URL(BASE_URL).host).mock(
+                return_value=httpx.Response(200, json={"items": None})
+            )
+            assert await build_store().list_prefix("trips/") == []
+
+    async def test_non_dict_items_are_skipped_rather_than_crashing(self):
+        with respx.mock(assert_all_called=False) as mock:
+            mock.route(host=httpx.URL(BASE_URL).host).mock(
+                return_value=httpx.Response(200, json={"items": ["not-an-object"]})
+            )
+            assert await build_store().list_prefix("trips/") == []
+
     async def test_precondition_failure_is_already_exists(self):
         with respx.mock(assert_all_called=False) as mock:
             mock.route(host=httpx.URL(BASE_URL).host).mock(return_value=httpx.Response(412))
             with pytest.raises(ObjectAlreadyExists):
-                await build_store().write("trips/a/trip.json", b"x", if_absent=True)
+                await build_store().write(
+                    "trips/a/trip.json", b"x", if_generation_match=MUST_NOT_EXIST
+                )
 
     async def test_transport_error_is_unavailable(self):
         with respx.mock(assert_all_called=False) as mock:

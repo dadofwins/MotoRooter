@@ -3,7 +3,11 @@
 import pytest
 
 from motorooter.trips.store import InMemoryTripStore, TripStore
-from tests.trips.store_contract import TripStoreContract, TripStoreRoundTripContract
+from tests.trips.store_contract import (
+    TripStoreContract,
+    TripStoreRoundTripContract,
+    TripStoreVersioningContract,
+)
 
 
 class TestInMemoryStore(TripStoreContract):
@@ -13,6 +17,12 @@ class TestInMemoryStore(TripStoreContract):
 
 
 class TestInMemoryStoreRoundTrip(TripStoreRoundTripContract):
+    @pytest.fixture
+    def store(self):
+        return InMemoryTripStore()
+
+
+class TestInMemoryStoreVersioning(TripStoreVersioningContract):
     @pytest.fixture
     def store(self):
         return InMemoryTripStore()

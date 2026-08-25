@@ -18,4 +18,4 @@ async def test_stored_bytes_are_not_aliased():
     data = bytearray(b"original")
     await objects.write("trips/a/trip.json", bytes(data))
     data[:] = b"mutated!"
-    assert await objects.read("trips/a/trip.json") == b"original"
+    assert (await objects.read("trips/a/trip.json")).data == b"original"

@@ -14,8 +14,10 @@ Two Cloud Storage properties the design leans on:
   splice of both. That is why there is no write-then-swap here — which is just as well,
   since GCS has no rename, and the FUSE layer that pretends otherwise emulates it with a
   copy plus a delete.
-- **`ifGenerationMatch=0` succeeds only if the object does not exist.** That is what makes
-  `create` refuse to clobber without a check-then-write race.
+- **`ifGenerationMatch` is evaluated server-side.** With `0` it succeeds only if nothing is
+  live at that path, which is how `create` refuses to clobber without a check-then-write
+  race. With a generation read earlier it succeeds only if nothing has changed since, which
+  is what makes read-merge-write safe for a document two clients can edit at once.
 """
 
 import asyncio
@@ -26,9 +28,12 @@ import httpx
 
 from motorooter.clock import Clock, SystemClock
 from motorooter.trips.objects import (
+    MUST_NOT_EXIST,
     ObjectAlreadyExists,
     ObjectNotFound,
     ObjectStoreUnavailable,
+    ObjectVersionMismatch,
+    StoredObject,
 )
 
 GCS_BASE_URL = "https://storage.googleapis.com"
@@ -183,26 +188,35 @@ class GcsObjectStore:
     def token_source(self) -> AccessTokenSource:
         return self._token_source
 
-    async def read(self, path: str) -> bytes:
+    @property
+    def client(self) -> httpx.AsyncClient | None:
+        """The shared connection pool, if one was injected."""
+        return self._client
+
+    async def read(self, path: str) -> StoredObject:
         response = await self._request("GET", self._object_url(path), params={"alt": "media"})
         self._raise_for_status(response, path)
-        return response.content
+        return StoredObject(data=response.content, generation=self._generation_of(response, path))
 
     async def exists(self, path: str) -> bool:
         # Metadata rather than media: a trip document carries full route geometry, and
         # probing for one should not pay to download it.
         response = await self._request("GET", self._object_url(path))
-        if response.status_code == 404:
+        if response.status_code == 404 and not self._is_missing_bucket(response):
             return False
+        # A bucket-level 404 falls through to _raise_for_status deliberately. Answering
+        # False here would report an entire unreachable bucket as "no trip at that slug",
+        # and a caller checking whether a name is free would then create over live data.
         self._raise_for_status(response, path)
         return True
 
-    async def write(self, path: str, data: bytes, *, if_absent: bool = False) -> None:
+    async def write(
+        self, path: str, data: bytes, *, if_generation_match: int | None = None
+    ) -> int:
         params = {"uploadType": "media", "name": path}
-        if if_absent:
-            # Generation 0 means "no live object". The precondition is evaluated by GCS,
-            # so two racing creates cannot both pass it.
-            params["ifGenerationMatch"] = "0"
+        if if_generation_match is not None:
+            # Evaluated by GCS, so two racing writers cannot both pass it.
+            params["ifGenerationMatch"] = str(if_generation_match)
 
         response = await self._request(
             "POST",
@@ -211,7 +225,8 @@ class GcsObjectStore:
             content=data,
             headers={"Content-Type": self._content_type},
         )
-        self._raise_for_status(response, path)
+        self._raise_for_status(response, path, expected_generation=if_generation_match)
+        return self._generation_in_body(response, path)
 
     async def delete(self, path: str) -> None:
         response = await self._request("DELETE", self._object_url(path))
@@ -225,11 +240,21 @@ class GcsObjectStore:
             response = await self._request(
                 "GET", f"{self._base_url}/storage/v1/b/{self._bucket}/o", params=params
             )
+            if response.status_code == 404:
+                # Listing an existing bucket returns 200 with no items even when empty, so
+                # a 404 here can only mean the bucket itself is gone. No ambiguity to weigh.
+                msg = (
+                    f"Cloud Storage bucket {self._bucket!r} does not exist or is not "
+                    f"visible to this service account"
+                )
+                raise ObjectStoreUnavailable(msg)
             self._raise_for_status(response, prefix)
             body = self._json(response)
 
-            for item in body.get("items", []):
-                name = item.get("name")
+            # `or []` rather than a default: GCS omits `items`, but a proxy answering
+            # `{"items": null}` would otherwise raise a raw TypeError through the seam.
+            for item in body.get("items") or []:
+                name = item.get("name") if isinstance(item, dict) else None
                 if isinstance(name, str):
                     paths.append(name)
 
@@ -275,19 +300,76 @@ class GcsObjectStore:
             msg = f"Cloud Storage request failed: {exc}"
             raise ObjectStoreUnavailable(msg) from exc
 
-    def _raise_for_status(self, response: httpx.Response, path: str) -> None:
+    def _raise_for_status(
+        self,
+        response: httpx.Response,
+        path: str,
+        *,
+        expected_generation: int | None = None,
+    ) -> None:
         if response.is_success:
             return
         status = response.status_code
+
         if status == 404:
+            if self._is_missing_bucket(response):
+                # Not "no such trip". A whole unreachable bucket answering 404 per object
+                # would let the API report every trip as deleted, and a client could then
+                # create over data that is merely unreachable.
+                msg = (
+                    f"Cloud Storage bucket {self._bucket!r} does not exist or is not "
+                    f"visible to this service account: {self._error_message(response)}"
+                )
+                raise ObjectStoreUnavailable(msg)
             raise ObjectNotFound(path)
+
         if status == 412:
-            raise ObjectAlreadyExists(path)
+            # Both preconditions fail with 412; only the request knows which was asked for.
+            if expected_generation == MUST_NOT_EXIST:
+                raise ObjectAlreadyExists(path)
+            raise ObjectVersionMismatch(path, expected_generation or 0)
+
         # Everything else — including 401 and 403 — is unavailability rather than absence.
-        # A misconfigured service account reading as "no such trip" would be a data-loss
-        # bug: the API would answer 404, and a client could then create over live data.
         msg = f"Cloud Storage returned HTTP {status} for {path!r}: {self._error_message(response)}"
         raise ObjectStoreUnavailable(msg)
+
+    @staticmethod
+    def _is_missing_bucket(response: httpx.Response) -> bool:
+        """Whether a 404 is about the bucket rather than the object.
+
+        GCS uses `reason: notFound` for both and distinguishes them only in prose, so this
+        reads the message. Imprecise, and deliberately biased: misreading a missing object
+        as a missing bucket costs a 503 on a request that should have been a 404, while the
+        reverse direction reports live data as deleted.
+        """
+        try:
+            body = response.json()
+        except ValueError:
+            return False
+        error = body.get("error") if isinstance(body, dict) else None
+        message = str(error.get("message", "")) if isinstance(error, dict) else ""
+        return "bucket" in message.lower()
+
+    def _generation_of(self, response: httpx.Response, path: str) -> int:
+        """Generation from a media download, which reports it in a header."""
+        raw = response.headers.get("x-goog-generation")
+        if raw is None:
+            msg = f"Cloud Storage omitted x-goog-generation reading {path!r}"
+            raise ObjectStoreUnavailable(msg)
+        try:
+            return int(raw)
+        except ValueError as exc:
+            msg = f"Cloud Storage returned a non-numeric generation {raw!r} for {path!r}"
+            raise ObjectStoreUnavailable(msg) from exc
+
+    def _generation_in_body(self, response: httpx.Response, path: str) -> int:
+        """Generation from an upload, which reports it in the object metadata."""
+        raw = self._json(response).get("generation")
+        try:
+            return int(str(raw))
+        except (TypeError, ValueError) as exc:
+            msg = f"Cloud Storage returned no usable generation writing {path!r}: {raw!r}"
+            raise ObjectStoreUnavailable(msg) from exc
 
     @staticmethod
     def _json(response: httpx.Response) -> dict[str, Any]:

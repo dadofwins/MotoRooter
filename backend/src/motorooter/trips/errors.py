@@ -29,6 +29,22 @@ class TripStorageUnavailable(TripError):
     """The backing store could not be reached. Maps to 503."""
 
 
+class TripModifiedConcurrently(TripError):
+    """The trip changed between the caller's read and its write. Maps to 409.
+
+    Distinct from `TripAlreadyExists`, which means "choose another name". This means
+    "re-read and merge again": someone else saved an edit to the same trip first, and
+    writing anyway would roll their fields back to the state both writers read.
+    """
+
+    def __init__(self, slug: str, expected_version: int) -> None:
+        self.slug = slug
+        self.expected_version = expected_version
+        super().__init__(
+            f"trip {slug!r} was modified by someone else since version {expected_version}"
+        )
+
+
 class TripDocumentInvalid(TripError):
     """A stored trip document could not be read back as a `Trip`. Maps to 500.
 

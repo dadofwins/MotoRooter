@@ -13,7 +13,11 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from motorooter.routing.models import Coordinate, LegIntent, RouteLeg, Surface, SurfaceSpan
-from motorooter.trips.errors import TripAlreadyExists, TripNotFound
+from motorooter.trips.errors import (
+    TripAlreadyExists,
+    TripModifiedConcurrently,
+    TripNotFound,
+)
 from motorooter.trips.models import Poi, PoiCategory, PoiSource, Trip, TripLeg, Waypoint
 
 T0 = datetime(2026, 8, 25, 12, 0, tzinfo=UTC)
@@ -142,6 +146,89 @@ class TripStoreContract:
         await store.create(fully_populated_trip())
         summary = (await store.list())[0]
         assert not hasattr(summary, "legs")
+
+
+class TripStoreVersioningContract:
+    """Optimistic concurrency, required of every store.
+
+    Held against the in-memory implementation as well as Cloud Storage on purpose. If only
+    the durable store versioned, the API's retry-on-conflict path would be exercised in
+    production and dead in every test — which is precisely how a concurrency bug survives a
+    green suite.
+
+    The failure this prevents is not merely a lost write. Two clients editing different
+    fields of one trip each read version 1, each build "version 1 plus my change", and the
+    second write rolls back the first one's field — while both are told they succeeded.
+    """
+
+    @pytest.fixture
+    def store(self):
+        raise NotImplementedError("override the `store` fixture")
+
+    async def test_get_versioned_returns_the_trip_and_a_version(self, store):
+        await store.create(make_trip())
+        versioned = await store.get_versioned("oregon-backcountry")
+        assert versioned.trip.name == "Oregon Backcountry"
+
+    async def test_get_versioned_on_a_missing_trip_raises(self, store):
+        with pytest.raises(TripNotFound):
+            await store.get_versioned("no-such-trip")
+
+    async def test_the_version_changes_when_the_trip_is_written(self, store):
+        await store.create(make_trip())
+        first = (await store.get_versioned("oregon-backcountry")).version
+        await store.put(make_trip(name="Renamed"))
+        assert (await store.get_versioned("oregon-backcountry")).version != first
+
+    async def test_a_conditional_put_on_the_current_version_succeeds(self, store):
+        await store.create(make_trip())
+        versioned = await store.get_versioned("oregon-backcountry")
+        await store.put(make_trip(name="Renamed"), if_version=versioned.version)
+        assert (await store.get("oregon-backcountry")).name == "Renamed"
+
+    async def test_a_conditional_put_on_a_stale_version_is_refused(self, store):
+        await store.create(make_trip())
+        stale = (await store.get_versioned("oregon-backcountry")).version
+        await store.put(make_trip(name="Someone Else"))
+        with pytest.raises(TripModifiedConcurrently):
+            await store.put(make_trip(name="Mine"), if_version=stale)
+
+    async def test_a_refused_put_leaves_the_winners_trip_intact(self, store):
+        await store.create(make_trip())
+        stale = (await store.get_versioned("oregon-backcountry")).version
+        await store.put(make_trip(name="Winner"))
+        with pytest.raises(TripModifiedConcurrently):
+            await store.put(make_trip(name="Loser"), if_version=stale)
+        assert (await store.get("oregon-backcountry")).name == "Winner"
+
+    async def test_an_unconditional_put_still_overwrites(self, store):
+        """The existing contract is unchanged; versioning is opt-in per call."""
+        await store.create(make_trip())
+        await store.put(make_trip(name="Renamed"))
+        assert (await store.get("oregon-backcountry")).name == "Renamed"
+
+    async def test_a_conditional_put_to_a_deleted_trip_does_not_resurrect_it(self, store):
+        await store.create(make_trip())
+        stale = (await store.get_versioned("oregon-backcountry")).version
+        await store.delete("oregon-backcountry")
+        with pytest.raises(TripModifiedConcurrently):
+            await store.put(make_trip(name="Zombie"), if_version=stale)
+        assert await store.exists("oregon-backcountry") is False
+
+    async def test_read_merge_write_preserves_a_concurrent_edit_to_another_field(self, store):
+        """The whole point. Sequential here; the conflict is what the retry loop needs."""
+        await store.create(make_trip())
+        mine = await store.get_versioned("oregon-backcountry")
+
+        # Someone else renames the trip while we are editing waypoints.
+        await store.put(make_trip(name="Their Name"))
+
+        with pytest.raises(TripModifiedConcurrently):
+            await store.put(
+                mine.trip.model_copy(update={"waypoints": mine.trip.waypoints[:1], "legs": ()}),
+                if_version=mine.version,
+            )
+        assert (await store.get("oregon-backcountry")).name == "Their Name"
 
 
 class TripStoreRoundTripContract:

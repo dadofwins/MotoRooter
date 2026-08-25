@@ -86,7 +86,12 @@ class FakeGcs:
         if name not in self.objects:
             return self._error(404, f"no such object: {name}")
         if params.get("alt", [""])[0] == "media":
-            return httpx.Response(200, content=self.objects[name][0])
+            data, generation = self.objects[name]
+            # Real GCS reports the generation of a media download in this header; without
+            # it the adapter has no version to hand back for a conditional write.
+            return httpx.Response(
+                200, content=data, headers={"x-goog-generation": str(generation)}
+            )
         return httpx.Response(200, json=self._metadata(name))
 
     def _delete(self, name: str) -> httpx.Response:

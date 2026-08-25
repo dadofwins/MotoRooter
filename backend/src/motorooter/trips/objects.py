@@ -9,14 +9,44 @@ sits between `GcsTripStore` and Cloud Storage. Splitting it out buys three thing
 - swapping the backing store (a GCS FUSE mount, an emulator, a different cloud) costs an
   adapter rather than a rewrite, exactly as `RoutingProvider` does for engines.
 
-The one non-obvious operation is `write(..., if_absent=True)`. Refusing to clobber has to
-be a property of the *write*, not a read followed by a write: everything here is public and
-unauthenticated, so two clients creating the same slug at the same time is an ordinary
-event, and a check-then-write leaves a window in which both see "absent" and one silently
-loses their trip.
+The one non-obvious part is the `if_generation_match` precondition on `write`. Concurrency
+control has to be a property of the *write*, not a read followed by a write: everything here
+is public and unauthenticated, so two clients touching one slug at the same time is ordinary,
+and a check-then-write leaves a window in which both see the same state and one silently
+loses their edit.
+
+There is exactly one mutating primitive with exactly one precondition, rather than a boolean
+for creates and something else for updates. Two mechanisms for one job is how they drift.
+
+    write(path, data)                                     # unconditional; last writer wins
+    write(path, data, if_generation_match=MUST_NOT_EXIST) # create, refusing to clobber
+    write(path, data, if_generation_match=n)              # replace only if unchanged since n
+
+The third form is what makes read-merge-write safe. Without it, two clients each editing a
+different field of the same document do not merely lose one write — the loser's fields are
+rolled back to the state both of them read, and both clients are told they succeeded.
 """
 
+import dataclasses
 from typing import Protocol, runtime_checkable
+
+MUST_NOT_EXIST = 0
+"""Precondition sentinel: the write succeeds only if no object is live at that path.
+
+Zero rather than a separate flag because that is what object stores actually implement — a
+generation of 0 means "no live object" — so the seam expresses the primitive rather than a
+translation of it.
+"""
+
+
+@dataclasses.dataclass(frozen=True)
+class StoredObject:
+    """An object's bytes and the version they were read at."""
+
+    data: bytes
+    generation: int
+    """Opaque version, monotonic per object. Pass back as `if_generation_match` to write
+    only if nothing has changed since this read."""
 
 
 class ObjectStoreError(Exception):
@@ -30,11 +60,24 @@ class ObjectNotFound(ObjectStoreError):
 
 
 class ObjectAlreadyExists(ObjectStoreError):
-    """A conditional create lost the race, or the object was already there."""
+    """A create lost the race, or the object was already there."""
 
     def __init__(self, path: str) -> None:
         self.path = path
         super().__init__(f"an object already exists at {path!r}")
+
+
+class ObjectVersionMismatch(ObjectStoreError):
+    """The object changed between the caller's read and its write.
+
+    Distinct from `ObjectAlreadyExists` because callers answer them differently: one means
+    "pick another name", the other means "re-read and merge again".
+    """
+
+    def __init__(self, path: str, expected: int) -> None:
+        self.path = path
+        self.expected = expected
+        super().__init__(f"object at {path!r} is no longer at generation {expected}")
 
 
 class ObjectStoreUnavailable(ObjectStoreError):
@@ -45,22 +88,33 @@ class ObjectStoreUnavailable(ObjectStoreError):
 class ObjectStore(Protocol):
     """Bytes keyed by path. Writes are atomic: a reader never sees a partial object."""
 
-    async def read(self, path: str) -> bytes:
-        """Raises ObjectNotFound if absent."""
+    async def read(self, path: str) -> StoredObject:
+        """Bytes plus the generation they were read at.
+
+        Raises:
+            ObjectNotFound: nothing is stored at that path.
+        """
         ...
 
     async def exists(self, path: str) -> bool:
         """Presence without transferring the body."""
         ...
 
-    async def write(self, path: str, data: bytes, *, if_absent: bool = False) -> None:
-        """Create or replace.
+    async def write(
+        self, path: str, data: bytes, *, if_generation_match: int | None = None
+    ) -> int:
+        """Create or replace, returning the new generation.
 
         Args:
-            if_absent: fail rather than overwrite. Atomic — no check-then-write window.
+            if_generation_match: `None` writes unconditionally. `MUST_NOT_EXIST` creates,
+                failing if anything is already there. Any other value replaces only if the
+                object is still at that generation. Evaluated by the store, so there is no
+                check-then-write window.
 
         Raises:
-            ObjectAlreadyExists: `if_absent` was set and the object was already there.
+            ObjectAlreadyExists: `MUST_NOT_EXIST` was requested and something was there.
+            ObjectVersionMismatch: a generation was requested and the object is not at it,
+                including because it has since been deleted.
         """
         ...
 
@@ -81,9 +135,12 @@ class InMemoryObjectStore:
     """
 
     def __init__(self) -> None:
-        self._objects: dict[str, bytes] = {}
+        self._objects: dict[str, StoredObject] = {}
+        # Shared across paths rather than per-path, so a generation is never reused by a
+        # different object and a stale version can never accidentally match.
+        self._next_generation = 1
 
-    async def read(self, path: str) -> bytes:
+    async def read(self, path: str) -> StoredObject:
         try:
             return self._objects[path]
         except KeyError:
@@ -92,10 +149,27 @@ class InMemoryObjectStore:
     async def exists(self, path: str) -> bool:
         return path in self._objects
 
-    async def write(self, path: str, data: bytes, *, if_absent: bool = False) -> None:
-        if if_absent and path in self._objects:
-            raise ObjectAlreadyExists(path)
-        self._objects[path] = data
+    async def write(
+        self, path: str, data: bytes, *, if_generation_match: int | None = None
+    ) -> int:
+        self._check_precondition(path, if_generation_match)
+        generation = self._next_generation
+        self._next_generation += 1
+        self._objects[path] = StoredObject(data=data, generation=generation)
+        return generation
+
+    def _check_precondition(self, path: str, expected: int | None) -> None:
+        if expected is None:
+            return
+        current = self._objects.get(path)
+        if expected == MUST_NOT_EXIST:
+            if current is not None:
+                raise ObjectAlreadyExists(path)
+            return
+        # A missing object is a mismatch, not a create: it was deleted under the caller,
+        # and silently recreating it would resurrect data someone chose to remove.
+        if current is None or current.generation != expected:
+            raise ObjectVersionMismatch(path, expected)
 
     async def delete(self, path: str) -> None:
         if path not in self._objects:

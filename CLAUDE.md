@@ -13,6 +13,16 @@ for a motorcycle GPS.
 the assistant can take must also be reachable via map interaction or a form control. If you add a
 tool to the LLM layer, you owe it a UI affordance in the same change.
 
+## Milestones
+
+`docs/milestones.md` holds the current milestone definition and the ordering that follows
+from it. **M0 (routing quality) has passed.** M1 is the MVP planning experience: chat with
+working tool calls, drag-to-reroute, one-button POI generation, Places detail on click, and
+routing through selected POIs.
+
+The LLM tool layer gates three of M1's five items and is the long pole. Nothing else in the
+backend queue precedes it.
+
 ## Parallel work
 
 Three sessions work on this repo at once — a backend engineer, a frontend engineer, and an

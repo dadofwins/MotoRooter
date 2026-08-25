@@ -30,8 +30,22 @@ for entry in "backend:../MotoRooter-be" "frontend:../MotoRooter-fe"; do
     state=IDLE
     detail="branch merged, tree clean — needs an assignment"
   elif [[ "$dirty" -eq 0 && "$ahead" -eq 0 ]]; then
-    state=STARTING
-    detail="fresh branch, nothing committed yet"
+    # A branch with nothing on disk is ambiguous, and the ambiguity resolves with time: at
+    # one minute it is someone getting started, at twenty it is someone stopped. Reporting
+    # both as STARTING hid a backend session that had written nothing for twenty minutes,
+    # which Tim noticed and this script did not.
+    # When the branch ref last moved, i.e. when it was created. `.git` in a worktree is a
+    # pointer file whose mtime dates from worktree creation, which is hours out.
+    created=$(git -C "$dir" reflog show --date=unix -1 "$branch" 2>/dev/null \
+              | grep -oE '@\{[0-9]+\}' | tr -dc '0-9')
+    idle_for=$(( $(date +%s) - ${created:-$(date +%s)} ))
+    if (( idle_for > 900 )); then
+      state=STALLED
+      detail="branch created $(( idle_for / 60 ))m ago, nothing written — ask, do not assume"
+    else
+      state=STARTING
+      detail="fresh branch, nothing committed yet"
+    fi
   elif [[ "$dirty" -gt 0 ]]; then
     state=WORKING; detail="$dirty uncommitted file(s)"
   else

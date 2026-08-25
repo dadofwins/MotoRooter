@@ -18,7 +18,9 @@ from motorooter.api.routers import places, routing, trips
 from motorooter.api.schemas import HealthResponse
 from motorooter.api.streaming import apply_streaming_media_types
 from motorooter.routing.factory import RoutingSettings, build_routing
-from motorooter.trips.store import InMemoryTripStore, TripStore
+from motorooter.trips.factory import TripStorageSettings, build_trip_store
+from motorooter.trips.factory import settings_from_env as storage_settings_from_env
+from motorooter.trips.store import TripStore
 
 STATIC_DIR = Path(os.environ.get("MOTOROOTER_STATIC_DIR", "static"))
 
@@ -40,6 +42,7 @@ def routing_settings_from_env() -> RoutingSettings:
 def create_app(
     settings: RoutingSettings | None = None,
     *,
+    storage_settings: TripStorageSettings | None = None,
     trip_store: TripStore | None = None,
 ) -> FastAPI:
     """Build the application.
@@ -47,16 +50,20 @@ def create_app(
     Routing is wired here so a misconfigured policy raises `RoutingConfigError` at startup
     and fails the deploy, rather than surfacing on a user's first dirt leg.
 
-    `trip_store` defaults to the in-memory implementation, which is correct for local
-    development and tests but loses everything on restart. Production must inject a
-    durable store — Cloud Run's filesystem is ephemeral and per-instance.
+    Storage defaults to whatever the environment configures: Cloud Storage when
+    `MOTOROOTER_TRIPS_BUCKET` is set, otherwise the in-memory implementation, which is
+    correct for local development and tests but loses everything on restart. Production
+    must set the bucket — Cloud Run's filesystem is ephemeral and per-instance.
     """
     app = FastAPI(title="MotoRooter", version="0.1.0")
 
-    registry, resolver = build_routing(settings or routing_settings_from_env())
+    routing_config = settings or routing_settings_from_env()
+    registry, resolver = build_routing(routing_config)
     app.state.provider_registry = registry
     app.state.policy_resolver = resolver
-    app.state.trip_store = trip_store or InMemoryTripStore()
+    app.state.trip_store = trip_store or build_trip_store(
+        storage_settings or _storage_settings_for(routing_config)
+    )
 
     register_exception_handlers(app)
 
@@ -87,6 +94,18 @@ def _install_openapi_postprocess(app: FastAPI) -> None:
         return app.openapi_schema
 
     app.openapi = openapi  # type: ignore[method-assign]
+
+
+def _storage_settings_for(routing_config: RoutingSettings) -> TripStorageSettings:
+    """Offline means no external services, storage included.
+
+    Reading the bucket out of the ambient environment in offline mode would make the test
+    suite depend on the developer's shell, and a stray `MOTOROOTER_TRIPS_BUCKET` would
+    quietly point it at someone's real bucket.
+    """
+    if routing_config.offline:
+        return TripStorageSettings(offline=True)
+    return storage_settings_from_env()
 
 
 def _mount_frontend(app: FastAPI) -> None:

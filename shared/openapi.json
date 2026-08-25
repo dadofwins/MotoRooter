@@ -64,6 +64,8 @@
           "invalid_slug",
           "trip_not_found",
           "trip_already_exists",
+          "trip_modified_concurrently",
+          "trip_document_invalid",
           "trip_storage_unavailable",
           "validation_error",
           "not_implemented",

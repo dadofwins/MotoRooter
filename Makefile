@@ -22,6 +22,17 @@ dev-backend: ## API on :8000. Uses real providers if backend/.env has keys, else
 	@# wiring, and useless for judging whether a route looks right — so prefer real routing
 	@# whenever credentials exist, and say which mode is running rather than leaving someone
 	@# to wonder why their route ignores the roads.
+	@# Refuse to start if something already holds the port. Uvicorn would fail to bind and
+	@# exit, but `make dev` runs the frontend in parallel, so the UI comes up and proxies to
+	@# whatever IS listening — which, after a day of verifying branches in scratch worktrees,
+	@# was a stale offline server drawing straight lines. Tim reported it as broken routing.
+	@if ss -ltn 2>/dev/null | grep -q ':8000 ' || lsof -i :8000 >/dev/null 2>&1; then \
+		echo "REFUSING: something is already listening on :8000."; \
+		echo "  It may be a stale server from another worktree, which will silently serve"; \
+		echo "  the frontend and can be in a different mode than you expect."; \
+		echo "  Clear it with:  pkill -f 'uvicorn motorooter'"; \
+		exit 1; \
+	fi
 	@cd backend && if grep -qs '^ORS_API_KEY=.\+' .env; then \
 		echo "dev-backend: REAL providers (ORS + Google) — routes follow actual roads"; \
 		set -a && . ./.env && set +a && \

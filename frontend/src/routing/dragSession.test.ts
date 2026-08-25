@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { DragSession, type LegRouter } from './dragSession'
+import { routeLeg } from '../api/fixtures'
 import type { RouteEdit } from './tripEdits'
 import type { Coordinate, RouteLeg, RouteLegInput, RouteLegResponse, TripLeg, Waypoint } from '../api/types'
 import type { RequestOptions } from '../api/client'
@@ -22,15 +23,7 @@ function waypoint(lat: number): Waypoint {
 }
 
 function routed(geometry: readonly Coordinate[]): RouteLeg {
-  return {
-    geometry: [...geometry],
-    distance_m: 1000,
-    duration_s: 60,
-    provider: 'fake',
-    intent: 'unpaved',
-    surface_spans: [],
-    ascent_m: null,
-  }
+  return routeLeg({ geometry: [...geometry] })
 }
 
 function leg(start: number, end: number, intent: TripLeg['intent'] = 'unpaved'): TripLeg {

@@ -4,6 +4,7 @@ import { App } from './App'
 import { ApiError, ApiNotImplementedError } from './api/errors'
 import type { RequestOptions } from './api/client'
 import type { GoogleMaps } from './map/loadGoogleMaps'
+import { poi as poiFixture, routeLeg, routeLegResponse } from './api/fixtures'
 import type {
   Coordinate,
   Poi,
@@ -199,23 +200,23 @@ async function pinLabels(
     .map((pin) => pin.title)
 }
 
-const ROUTE_RESPONSE: RouteLegResponse = {
-  leg: {
+/**
+ * The route a fake provider returns. Built from the factory so a field the backend adds is
+ * one edit in src/api/fixtures.ts rather than a broken literal in every test file — which
+ * has now happened three times, each blocking a backend handoff.
+ */
+const ROUTE_RESPONSE: RouteLegResponse = routeLegResponse({
+  leg: routeLeg({
     geometry: [
       { lat: 47.6, lon: -120.7 },
       { lat: 47.9, lon: -120.4 },
       { lat: 48.1, lon: -120.2 },
     ],
     distance_m: 42_000,
-    duration_s: 3600,
-    provider: 'fake',
     intent: 'twisty_paved',
-    surface_spans: [],
-    ascent_m: null,
-  },
+  }),
   live_update_interval_ms: 0,
-  estimated_duration_s: 900,
-}
+})
 
 function fakeRouter(response: RouteLegResponse = ROUTE_RESPONSE) {
   return {
@@ -575,16 +576,11 @@ describe('App', () => {
  * Points of interest, and putting one on the route with the mouse alone.
  */
 describe('App and points of interest', () => {
-  const CAMP: Poi = {
-    id: 'poi-1',
+  const CAMP: Poi = poiFixture({
     name: 'Lone Fir Campground',
     category: 'campground',
     coordinate: { lat: 47.9, lon: -120.35 },
-    source: 'places',
-    place_id: 'ChIJ123',
-    note: null,
-    on_route: false,
-  }
+  })
 
   async function appWithPoi(place: Poi = CAMP) {
     const fake = createFakeMaps()
@@ -655,9 +651,12 @@ describe('App units and time', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Kilometres' }))
 
     expect(await screen.findByText(/points placed/)).toHaveTextContent('42 km')
-    // The breakdown followed, rather than staying in miles: more than one figure in km
-    // means the summary line and the surface rows agree.
-    expect(screen.getAllByText(/km$/).length).toBeGreaterThan(1)
+    // The breakdown followed rather than staying in miles. Asserted on the surface row
+    // specifically: anchoring on /km$/ broke the moment a riding time was appended to the
+    // summary line, which made the test about line endings rather than about units.
+    const surfaceRow = screen.getByRole('list').querySelector('li')
+    expect(surfaceRow?.textContent).toContain('km')
+    expect(surfaceRow?.textContent).not.toContain('mi')
     view.unmount()
   })
 
@@ -682,14 +681,14 @@ describe('App units and time', () => {
     )
   })
 
-  it('shows riding time when something knows it, and nothing when nothing does', async () => {
+  it('shows the riding time the routed leg came back with', async () => {
+    // From the response, never from leg.duration_s — that one is a bicycle time on dirt.
     const fake = createFakeMaps()
-    const withTime = render(
+    render(
       <App
         mapLoader={fake.loader}
         mapId="motorooter-test-vector"
-        client={fakeRouter()}
-        estimatedDurationS={4 * 3600 + 1140}
+        client={fakeRouter(routeLegResponse({ estimated_duration_s: 4 * 3600 + 1140 }))}
       />,
     )
     await mapReady(fake)
@@ -698,16 +697,17 @@ describe('App units and time', () => {
 
     // Hedged on purpose: the speeds behind it are reasoned guesses, not measurements.
     expect(await screen.findByText(/about 4h 20m/)).toBeInTheDocument()
-    withTime.unmount()
+  })
 
-    const bare = createFakeMaps()
-    render(<App mapLoader={bare.loader} mapId="motorooter-test-vector" client={fakeRouter()} />)
-    await mapReady(bare)
-    bare.clickMap(47.6, -120.7)
-    bare.clickMap(48.1, -120.2)
+  it('shows no time until there is a route to estimate', async () => {
+    const fake = createFakeMaps()
+    render(<App mapLoader={fake.loader} mapId="motorooter-test-vector" client={fakeRouter()} />)
+    await mapReady(fake)
 
-    // No placeholder and no zero: an estimate nobody has made is not shown.
-    await waitFor(() => expect(screen.getByText(/points placed/)).toBeInTheDocument())
+    fake.clickMap(47.6, -120.7)
+
+    // One point is not a route. No placeholder and not zero, which would read as "under 5m".
+    await waitFor(() => expect(screen.getByText(/1 point placed/)).toBeInTheDocument())
     expect(screen.queryByText(/about/)).not.toBeInTheDocument()
   })
 })

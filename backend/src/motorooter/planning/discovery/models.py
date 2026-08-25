@@ -70,6 +70,14 @@ class ResolvedCandidate(BaseModel):
     coordinate: Coordinate
     """From Places. Not the claim — a source naming the wrong valley must not move the pin."""
 
+    distance_off_route_m: float | None = Field(default=None, ge=0.0)
+    """How far off the corridor it sits, measured when the coordinate first existed.
+
+    Recorded here rather than recomputed later because resolution is the first moment there
+    is a coordinate to measure, and the same number is both the relevance filter and evidence
+    for the judge. Computing it twice would let the two copies disagree.
+    """
+
     def to_poi(self, *, poi_id: str, on_route: bool = False, note: str | None = None) -> Poi:
         """The verified POI this resolves to.
 

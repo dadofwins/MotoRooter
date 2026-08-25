@@ -1,0 +1,59 @@
+# Runs the same `make check` the engineers run locally, on every branch push.
+#
+# The point is that a handoff arrives already verified, so review can be about design
+# rather than "did you run the tests". `make handoff` gates on this locally too — CI is the
+# backstop for the case where someone pushes directly.
+
+name: check
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+
+concurrency:
+  # Supersede in-flight runs for the same branch; only the tip matters.
+  group: check-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          cache-dependency-glob: backend/uv.lock
+
+      - name: Install Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install backend
+        working-directory: backend
+        run: uv sync --frozen
+
+      - name: Install frontend
+        working-directory: frontend
+        run: npm ci
+
+      - name: Lint
+        run: make lint
+
+      - name: Typecheck
+        run: make typecheck
+
+      # Regenerates the OpenAPI document and the frontend types, then fails if either
+      # differs from what was committed. This is what stops the backend changing a shape
+      # without the frontend's generated types following.
+      - name: Contract is in sync
+        run: make contract-check
+
+      - name: Tests
+        run: make test

@@ -163,6 +163,41 @@ Caveat: hosted ORS's unpaved-preference tuning is real but limited (`profile_par
 `avoid_features`, preference weighting). If routing quality plateaus, self-hosted ORS with a custom
 profile is the next step, and Valhalla the one after.
 
+## Routing quality: validated (M0, 2026-08-25)
+
+The riskiest assumption in the project has been tested against a real route and **confirmed
+acceptable by the rider**. WABDR Section 3 (Ellensburg–Cashmere, 126.7 km) routed through
+hosted ORS `cycling-mountain` and compared against the published BDR track
+(`scripts/routing_spike.py`):
+
+| intermediate waypoints | follows the BDR (within 100 m) | median deviation |
+|---|---|---|
+| none | 37% | 782 m |
+| 8 (one per ~16 km) | 58% | **50 m** |
+| 20 (one per ~6 km) | 78% | **26 m** |
+
+Three conclusions, all load-bearing:
+
+**1. Hosted ORS is good enough. Do not self-host yet.** At realistic waypoint density the
+engine puts you on the same road. Self-hosted ORS with a custom moto profile, and Valhalla,
+are both deprioritised until something else forces them. The pluggable architecture still
+earns its keep — it just is not needed today.
+
+**2. Waypoint density is a hard product requirement, not a nicety.** Endpoint-to-endpoint
+routing does not reproduce a curated route, and never will: a BDR exists because people chose
+those roads, not because they are optimal under any cost function. **The LLM must emit
+waypoints at roughly 10–15 km spacing.** A tool that returns only start, end and must-sees
+will produce a plausible route down the wrong roads, and nothing downstream will notice.
+
+**3. Provider durations are unusable — compute our own.** `cycling-mountain` returns *bicycle*
+times: 8.0 h for 133 km, about 16 km/h. Trip planning is duration-driven, so a rider would be
+told a four-hour day takes eight. Derive ETA from distance and surface; ignore
+`RouteLeg.duration_s` from this provider for anything user-facing.
+
+Unresolved: reported ascent (6,400–8,800 m against the reference's 3,188 m) looks wrong.
+Either the profile takes much steeper lines or ORS elevation is noisy over gravel. Do not show
+climb figures to a user until someone checks.
+
 ## Surface reporting: unknown stays unknown
 
 `unpaved_fraction` counts only spans explicitly tagged unpaved. `Surface.UNKNOWN` is not

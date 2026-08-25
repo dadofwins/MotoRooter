@@ -216,15 +216,32 @@ climb figures to a user until someone checks.
 
 ## Discovery architecture
 
-Discovery has three stages, and they answer different questions with different tools. Mixing
-them is the main way this goes wrong.
+Discovery has **four** stages, and they answer different questions with different tools.
+Mixing them is the main way this goes wrong.
 
 ```
-  SEARCH            RESOLVE                  JUDGE
-  Brave web search  Google Places lookup     computed metrics + LLM
-  what exists and   does it exist, where     how good is it, and
-  what is it like   exactly, and is it open  is it worth the detour
+  SEARCH            EXTRACT              RESOLVE                JUDGE
+  Brave web search  LLM reads snippets   Google Places lookup   metrics + LLM
+  what is written   which PLACES are     does it exist, where   how good is it,
+  about this area   named in that text   exactly, is it open    worth the detour
 ```
+
+**Why four and not three.** The original design went straight from search to Places, and a
+spike on a real corridor showed it yields almost nothing: search returns pages *about* places,
+not places. Twenty results from Chinook Pass gave "Camping Near Chinook Pass | Free Campsites
+Near You", "The Essential Guide to the Chinook Scenic Byway", a Reddit thread, and an article
+about Northern California. Feeding those titles to Places resolves to nothing — or worse, to
+something real with the wrong name.
+
+The information is there, but in the *snippet* rather than the title: "These dispersed camping
+sites are located outside of the Halfway Flat Campground area..." names a real place a title
+never would. So a stage reads the prose and names the places in it.
+
+This fits the rule rather than bending it: pulling a place name out of a paragraph is not
+measurable, it is precisely a language task, and a far narrower question than scoring. It has
+a natural guard — **the model may only name places whose names appear in the text it was
+given**, so it cannot invent a campsite, and every extraction is checkable against its source.
+Cost is one call per result batch, not per candidate, so it is not a fan-out multiplier.
 
 **1. Search — Brave.** This is the only source for the half of the product that matters most.
 Places knows a restaurant exists and its rating; it does not know a road is a great
@@ -233,12 +250,17 @@ and web search is the only way to reach it. Queries are generated per corridor a
 category: "best motorcycle roads near <pass>", "wild camping <forest> BDR", "<town>
 motorcycle friendly hotel".
 
-**2. Resolve — Google Places.** Search results and model output are both *claims*. Places
+**2. Extract — LLM over snippets.** Names the places a search result is *about*, constrained
+to names present in the text. Also the natural place to drop irrelevant results (a Northern
+California article answering a Washington query) and to add region context to ambiguous names
+— "Cayuse" matched Cayuse, Oregon, and "Chinook" the coastal town rather than the pass.
+
+**3. Resolve — Google Places.** Search results and model output are both *claims*. Places
 turns a claim into a real `place_id` with real coordinates, hours and rating. Nothing reaches
 the map unresolved — the `Poi` model already refuses to pin an unverified LLM suggestion to
 the route. A candidate that will not resolve is dropped, not guessed at.
 
-**3. Judge — computed first, LLM second.**
+**4. Judge — computed first, LLM second.**
 
 > **Measure what is measurable; ask the model only what is not.**
 

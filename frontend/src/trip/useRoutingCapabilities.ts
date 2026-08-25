@@ -22,8 +22,11 @@ export interface RoutingCapabilitiesState {
   /**
    * Milliseconds between live re-routes while dragging this intent, or `null` for
    * preview-only: rubber-band locally and route only on release.
+   *
+   * A function-typed property rather than a method, so destructuring it off the hook result
+   * is legitimate — see the note in `useDistanceUnit`.
    */
-  intervalFor(intent: LegIntent): number | null
+  readonly intervalFor: (intent: LegIntent) => number | null
 }
 
 export function useRoutingCapabilities(client: CapabilitiesReader): RoutingCapabilitiesState {

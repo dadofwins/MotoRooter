@@ -58,4 +58,8 @@ afterEach(() => {
   } catch {
     // Nothing to clear if storage is unavailable.
   }
+  // The URL is shared state too — the third door after the document and storage. A test that
+  // put ?trip=... there made a later one load that trip instead of creating one, so it failed
+  // only in shuffled order. Anything global is reset here rather than per file.
+  window.history.replaceState(null, '', '/')
 })

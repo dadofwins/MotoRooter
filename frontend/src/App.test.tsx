@@ -4,10 +4,18 @@ import { App } from './App'
 import { ApiError, ApiNotImplementedError } from './api/errors'
 import type { RequestOptions } from './api/client'
 import type { GoogleMaps } from './map/loadGoogleMaps'
-import { poi as poiFixture, routeLeg, routeLegResponse } from './api/fixtures'
+import {
+  poi as poiFixture,
+  routeLeg,
+  routeLegResponse,
+  trip as tripFixture,
+  waypoint as waypointFixture,
+} from './api/fixtures'
 import type {
   Coordinate,
+  CreateTripRequest,
   Poi,
+  UpdateTripRequest,
   RouteLegInput,
   RouteLegResponse,
   RoutingCapabilitiesResponse,
@@ -218,8 +226,24 @@ const ROUTE_RESPONSE: RouteLegResponse = routeLegResponse({
   live_update_interval_ms: 0,
 })
 
+/**
+ * Every call App makes, in one place.
+ *
+ * The same reasoning as the fixture factory: App gaining a dependency should be one edit
+ * here, not a broken literal in every test that renders it. Overriding one method is
+ * `{ ...fakeRouter(), routeLeg: ... }`.
+ */
 function fakeRouter(response: RouteLegResponse = ROUTE_RESPONSE) {
   return {
+    createTrip: vi.fn((request: CreateTripRequest, _options?: RequestOptions) =>
+      Promise.resolve(tripFixture({ slug: request.slug ?? 'derived', name: request.name })),
+    ),
+    getTrip: vi.fn((slug: string, _options?: RequestOptions) =>
+      Promise.resolve(tripFixture({ slug })),
+    ),
+    updateTrip: vi.fn((slug: string, _request: UpdateTripRequest, _options?: RequestOptions) =>
+      Promise.resolve(tripFixture({ slug })),
+    ),
     routeLeg: vi.fn((_request: RouteLegInput, _options?: RequestOptions) => Promise.resolve(response)),
     routingCapabilities: vi.fn((_options?: RequestOptions) => Promise.resolve(CAPABILITIES)),
     placeDetail: vi.fn((_placeId: string, _options?: RequestOptions) =>
@@ -307,6 +331,7 @@ describe('App routing the placed points', () => {
   it('drops a routing error once the points that caused it are gone', async () => {
     const fake = createFakeMaps()
     const router = {
+      ...fakeRouter(),
       routeLeg: vi.fn((_request: RouteLegInput, _options?: RequestOptions) =>
         Promise.reject(new ApiError({ status: 422, code: 'no_route_found', detail: 'nope' })),
       ),
@@ -330,6 +355,7 @@ describe('App routing the placed points', () => {
   it('never shows an internal error string to the rider', async () => {
     const fake = createFakeMaps()
     const router = {
+      ...fakeRouter(),
       routeLeg: vi.fn((_request: RouteLegInput, _options?: RequestOptions) =>
         Promise.reject(
           new ApiError({
@@ -358,6 +384,7 @@ describe('App routing the placed points', () => {
   it('says when a route cannot be found instead of leaving the map silently empty', async () => {
     const fake = createFakeMaps()
     const router = {
+      ...fakeRouter(),
       routeLeg: vi.fn((_request: RouteLegInput, _options?: RequestOptions) =>
         Promise.reject(new ApiError({ status: 422, code: 'no_route_found', detail: 'no route found' })),
       ),
@@ -386,6 +413,7 @@ describe('App dragging the route', () => {
   async function routedApp() {
     const fake = createFakeMaps()
     const router = {
+      ...fakeRouter(),
       routeLeg: vi.fn((request: RouteLegInput, _options?: RequestOptions) =>
         Promise.resolve({
           leg: {
@@ -709,5 +737,93 @@ describe('App units and time', () => {
     // One point is not a route. No placeholder and not zero, which would read as "under 5m".
     await waitFor(() => expect(screen.getByText(/1 point placed/)).toBeInTheDocument())
     expect(screen.queryByText(/about/)).not.toBeInTheDocument()
+  })
+})
+
+/**
+ * The trip as a document.
+ *
+ * Before this, nothing survived a reload and nothing could be shared — and chat and replan are
+ * both addressed by a slug the app never had.
+ */
+describe('App saving the trip', () => {
+  async function placed() {
+    const fake = createFakeMaps()
+    const router = fakeRouter()
+    render(<App mapLoader={fake.loader} mapId="motorooter-test-vector" client={router} />)
+    await mapReady(fake)
+    fake.clickMap(47.6, -120.7)
+    return { fake, router }
+  }
+
+  it('creates a trip on the first point, without asking for a name', async () => {
+    // A rider should not fill in a form before putting two points on a map.
+    const { router } = await placed()
+
+    await waitFor(() => expect(router.createTrip).toHaveBeenCalledTimes(1), { timeout: 3000 })
+    expect(router.createTrip.mock.calls[0]?.[0].slug).toMatch(/^trip-/)
+  })
+
+  it('puts the slug in the URL and says the link is shareable', async () => {
+    await placed()
+
+    expect(await screen.findByText(/shareable/i, {}, { timeout: 3000 })).toBeInTheDocument()
+    expect(new URL(window.location.href).searchParams.get('trip')).toMatch(/^trip-/)
+  })
+
+  it('saves what is on the map, not an empty document', async () => {
+    const { router } = await placed()
+
+    await waitFor(() => expect(router.updateTrip).toHaveBeenCalled(), { timeout: 3000 })
+    expect(router.updateTrip.mock.calls[0]?.[1].waypoints).toHaveLength(1)
+  })
+
+  it('creates nothing for a map nobody has touched', async () => {
+    const fake = createFakeMaps()
+    const router = fakeRouter()
+    render(<App mapLoader={fake.loader} mapId="motorooter-test-vector" client={router} />)
+    await mapReady(fake)
+
+    // An empty map is not a trip; creating one on load would litter the bucket with blanks.
+    await new Promise((resolve) => setTimeout(resolve, 1200))
+    expect(router.createTrip).not.toHaveBeenCalled()
+  })
+
+  it('shows a trip named in the URL instead of an empty map', async () => {
+    window.history.replaceState(null, '', '/?trip=wabdr-north')
+    const fake = createFakeMaps()
+    const router = fakeRouter()
+    router.getTrip.mockResolvedValue(
+      tripFixture({
+        slug: 'wabdr-north',
+        waypoints: [waypointFixture(47.6, -120.7), waypointFixture(48.1, -120.2)],
+      }),
+    )
+
+    render(<App mapLoader={fake.loader} mapId="motorooter-test-vector" client={router} />)
+    await mapReady(fake)
+
+    // Two pins from storage, without the rider clicking anything.
+    await waitFor(() => expect(attachedPins(fake)).toHaveLength(2))
+  })
+
+  it('says so when somebody else edited the trip first', async () => {
+    window.history.replaceState(null, '', '/?trip=wabdr-north')
+    const fake = createFakeMaps()
+    const router = fakeRouter()
+    router.getTrip.mockResolvedValue(tripFixture({ slug: 'wabdr-north' }))
+    router.updateTrip.mockRejectedValue(
+      new ApiError({ status: 409, code: 'trip_modified_concurrently', detail: 'contended' }),
+    )
+
+    render(<App mapLoader={fake.loader} mapId="motorooter-test-vector" client={router} />)
+    await mapReady(fake)
+    fake.clickMap(47.6, -120.7)
+
+    // Not a generic error: the rider is told their change was replaced, which is what
+    // happened, and the stored trip is re-read rather than merged against.
+    expect(
+      await screen.findByText(/somebody else edited/i, {}, { timeout: 3000 }),
+    ).toBeInTheDocument()
   })
 })

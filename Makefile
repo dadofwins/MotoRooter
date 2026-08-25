@@ -17,7 +17,23 @@ install: ## Install backend and frontend dependencies
 dev: ## Run backend and frontend dev servers together
 	$(MAKE) -j2 dev-backend dev-frontend
 
-dev-backend: ## API on :8000, backed by FakeProvider so no API keys are needed
+dev-backend: ## API on :8000. Uses real providers if backend/.env has keys, else FakeProvider.
+	@# FakeProvider interpolates STRAIGHT LINES between waypoints. That is fine for testing
+	@# wiring, and useless for judging whether a route looks right — so prefer real routing
+	@# whenever credentials exist, and say which mode is running rather than leaving someone
+	@# to wonder why their route ignores the roads.
+	@cd backend && if grep -qs '^ORS_API_KEY=.\+' .env; then \
+		echo "dev-backend: REAL providers (ORS + Google) — routes follow actual roads"; \
+		set -a && . ./.env && set +a && \
+		MOTOROOTER_OFFLINE=0 uv run uvicorn motorooter.app:create_app \
+			--factory --reload --port 8000; \
+	else \
+		echo "dev-backend: OFFLINE (FakeProvider) — routes will be STRAIGHT LINES, no keys found"; \
+		MOTOROOTER_OFFLINE=1 uv run uvicorn motorooter.app:create_app \
+			--factory --reload --port 8000; \
+	fi
+
+dev-backend-offline: ## Force FakeProvider even when keys exist (hermetic, no quota spend)
 	cd backend && MOTOROOTER_OFFLINE=1 uv run uvicorn motorooter.app:create_app \
 		--factory --reload --port 8000
 
@@ -102,6 +118,20 @@ handoff: ## Verify, push, and ask the integrator for review. MSG="what to look a
 	@$(MAKE) --no-print-directory check
 	@git push -u origin $(BRANCH)
 	@printf '%s\n' "$(MSG)" | scripts/mail send integrator "review request: $(BRANCH)"
+
+handoff-blocked: ## Push a branch that CANNOT pass check alone, for the integrator to resolve.
+	@test -n "$(MSG)" || { echo 'usage: make handoff-blocked MSG="what fails and why you cannot fix it"'; exit 1; }
+	@test "$(BRANCH)" != "main" || { echo 'refusing: not from main'; exit 1; }
+	@test -z "$$(git status --porcelain)" || { echo 'refusing: commit your work first'; exit 1; }
+	@# Deliberately skips `make check`. The gate exists to stop broken work being handed off,
+	@# but a change that is correct on your side and breaks the other side's build is a real
+	@# and recurring case — a signed-off contract change is the obvious one. Blocking it just
+	@# means the work sits unpushed and invisible.
+	@git fetch -q origin
+	@git push -u origin $(BRANCH)
+	@printf 'BLOCKED — needs integrator resolution.\n\n%s\n' "$(MSG)" \
+		| scripts/mail send integrator "BLOCKED: $(BRANCH)"
+	@echo "pushed $(BRANCH) and flagged it as blocked. Start something else."
 
 mail-watch: ## Stream new messages for this role. Point the Monitor tool at this.
 	@scripts/mail watch $(ROLE)

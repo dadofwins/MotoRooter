@@ -114,6 +114,17 @@ replaces PR comments.
    proceed if checks fail, so a broken branch cannot be handed over.
 3. Keep working. The review arrives in your mailbox.
 
+**If your branch cannot pass `make check` alone** — a signed-off contract change that breaks
+the other side's build is the usual case — do not sit on it unpushed:
+
+```sh
+make handoff-blocked MSG="what fails, and why it is not yours to fix"
+```
+
+That skips the gate deliberately, pushes, and flags the branch as needing integrator
+resolution. The gate exists to stop *broken* work being handed off, not to hide work that is
+correct on your side and blocked on someone else's file.
+
 **Integrator** is woken by the message, reviews the diff, fans out subagent reviewers where
 the change is large or risky, and mails findings back to the author's box. Cross-review by
 the other engineer is requested the same way.

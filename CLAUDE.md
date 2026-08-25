@@ -251,9 +251,18 @@ category: "best motorcycle roads near <pass>", "wild camping <forest> BDR", "<to
 motorcycle friendly hotel".
 
 **2. Extract — LLM over snippets.** Names the places a search result is *about*, constrained
-to names present in the text. Also the natural place to drop irrelevant results (a Northern
-California article answering a Washington query) and to add region context to ambiguous names
-— "Cayuse" matched Cayuse, Oregon, and "Chinook" the coastal town rather than the pass.
+to names present in the text so it cannot invent one. Grounded is not the same as useful,
+though: one live snippet produced eight grounded names, most of them the geography the real
+place sits *inside*, and a national forest pinned on a map is worse than nothing. Prefer
+deterministic pruning — drop the place we searched for, collapse duplicates, cap the count —
+and reach for the prompt only for what those cannot express.
+
+**Relevance is NOT decided here.** From text alone the finest available judgement is "in the
+right state", and a corridor is tens of metres wide. A Cayuse Pass query returned Miller Peak,
+Stafford Creek and De Roux Horse Camp: real, correctly grounded, correctly Washington, and
+100 km away in the Teanaway. The model has no way to know that. Relevance is a distance check
+against the route **after** resolve, because it needs coordinates and only Places produces
+them — which turns a judgement into arithmetic, as the rule requires.
 
 **3. Resolve — Google Places.** Search results and model output are both *claims*. Places
 turns a claim into a real `place_id` with real coordinates, hours and rating. Nothing reaches

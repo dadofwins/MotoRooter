@@ -1030,13 +1030,22 @@ describe('App arriving', () => {
     const first = render(
       <App mapLoader={fake.loader} mapId="motorooter-test-vector" client={router} />,
     )
-    await waitFor(() => expect(screen.getByText(/WABDR North/)).toBeInTheDocument())
+    // Wait for the *write*, not for the name to appear. The rail shows the name as soon as the
+    // trip loads, but the list is recorded in a later effect — so waiting on the heading let
+    // the unmount beat the write, and the second render found an empty list. Roughly one run
+    // in four, which findBy on the far side could not fix because nothing was ever stored.
+    await waitFor(() => {
+      expect(localStorage.getItem('motorooter.visitedTrips')).toContain('wabdr-north')
+    })
     first.unmount()
 
     // A fresh arrival with no trip in the URL: the door, now with a way back.
     window.history.replaceState(null, '', '/')
     render(<App mapLoader={createFakeMaps().loader} mapId="motorooter-test-vector" client={router} />)
 
-    expect(screen.getByRole('button', { name: 'WABDR North' })).toBeInTheDocument()
+    // findBy, not getBy: the list is read from storage in an effect, so on a fresh mount there
+    // is a tick between rendering and the button existing. A synchronous assertion here passes
+    // only when it wins that race — which it did twice out of three.
+    expect(await screen.findByRole('button', { name: 'WABDR North' })).toBeInTheDocument()
   })
 })

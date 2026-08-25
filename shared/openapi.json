@@ -1,0 +1,1952 @@
+{
+  "components": {
+    "schemas": {
+      "Coordinate": {
+        "description": "A WGS84 point.\n\nFrozen and hashable so requests built from coordinates can be used as cache keys.",
+        "properties": {
+          "lat": {
+            "maximum": 90.0,
+            "minimum": -90.0,
+            "title": "Lat",
+            "type": "number"
+          },
+          "lon": {
+            "maximum": 180.0,
+            "minimum": -180.0,
+            "title": "Lon",
+            "type": "number"
+          }
+        },
+        "required": [
+          "lat",
+          "lon"
+        ],
+        "title": "Coordinate",
+        "type": "object"
+      },
+      "CreateTripRequest": {
+        "description": "Create a trip. Everything is public and unauthenticated for now.",
+        "properties": {
+          "name": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          },
+          "slug": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Explicit slug. Omit to derive one from the name.",
+            "title": "Slug"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "title": "CreateTripRequest",
+        "type": "object"
+      },
+      "ErrorResponse": {
+        "description": "Uniform error body. `code` is stable and machine-readable; `detail` is for humans.",
+        "properties": {
+          "code": {
+            "title": "Code",
+            "type": "string"
+          },
+          "detail": {
+            "title": "Detail",
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "detail"
+        ],
+        "title": "ErrorResponse",
+        "type": "object"
+      },
+      "HealthResponse": {
+        "properties": {
+          "providers": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Providers",
+            "type": "array"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "status",
+          "providers"
+        ],
+        "title": "HealthResponse",
+        "type": "object"
+      },
+      "IntentRouting": {
+        "description": "How one leg intent is currently routed, and how fast the UI may re-request it.",
+        "properties": {
+          "live_update_interval_ms": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Minimum milliseconds between live re-routes while dragging. null means preview-only: rubber-band locally and route only on release.",
+            "title": "Live Update Interval Ms"
+          },
+          "provider": {
+            "title": "Provider",
+            "type": "string"
+          }
+        },
+        "required": [
+          "provider"
+        ],
+        "title": "IntentRouting",
+        "type": "object"
+      },
+      "LegIntent": {
+        "description": "What a leg is *for*. The policy resolver maps this to a provider and profile.\n\nThis is the unit of \"different routing algorithm per road type\" \u2014 it is a property\nof trip data, not a branch in routing code.",
+        "enum": [
+          "highway_connector",
+          "twisty_paved",
+          "unpaved",
+          "technical_offroad",
+          "manual_track"
+        ],
+        "title": "LegIntent",
+        "type": "string"
+      },
+      "Poi": {
+        "description": "A point of interest, as persisted in the trip document.",
+        "properties": {
+          "category": {
+            "$ref": "#/components/schemas/PoiCategory"
+          },
+          "coordinate": {
+            "$ref": "#/components/schemas/Coordinate"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          },
+          "on_route": {
+            "default": false,
+            "title": "On Route",
+            "type": "boolean"
+          },
+          "place_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Place Id"
+          },
+          "source": {
+            "$ref": "#/components/schemas/PoiSource"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "category",
+          "coordinate",
+          "source"
+        ],
+        "title": "Poi",
+        "type": "object"
+      },
+      "PoiCategory": {
+        "description": "What a point of interest is, which drives its map icon and discovery prompt.",
+        "enum": [
+          "wild_camp",
+          "campground",
+          "hotel",
+          "unique_stay",
+          "food",
+          "fuel",
+          "water",
+          "viewpoint",
+          "mechanic"
+        ],
+        "title": "PoiCategory",
+        "type": "string"
+      },
+      "PoiDetail": {
+        "description": "Display data for the POI dialog. Response-only \u2014 never written to storage.\n\nEverything beyond `poi` is re-fetched from Places on demand, because caching it would\nbreach Google's terms.",
+        "properties": {
+          "opening_hours": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Opening Hours",
+            "type": "array"
+          },
+          "phone": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Phone"
+          },
+          "photo_urls": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Photo Urls",
+            "type": "array"
+          },
+          "poi": {
+            "$ref": "#/components/schemas/Poi"
+          },
+          "rating": {
+            "anyOf": [
+              {
+                "maximum": 5.0,
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rating"
+          },
+          "reviews": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Reviews",
+            "type": "array"
+          },
+          "user_rating_count": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "User Rating Count"
+          },
+          "website": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Website"
+          }
+        },
+        "required": [
+          "poi"
+        ],
+        "title": "PoiDetail",
+        "type": "object"
+      },
+      "PoiDetailResponse": {
+        "description": "Places-backed display data for the POI dialog.\n\nNever cached server-side beyond `place_id`; Google's terms do not permit it.",
+        "properties": {
+          "detail": {
+            "$ref": "#/components/schemas/PoiDetail"
+          }
+        },
+        "required": [
+          "detail"
+        ],
+        "title": "PoiDetailResponse",
+        "type": "object"
+      },
+      "PoiSource": {
+        "description": "Where a POI came from, which determines how far to trust its coordinates.",
+        "enum": [
+          "llm_suggested",
+          "places",
+          "user"
+        ],
+        "title": "PoiSource",
+        "type": "string"
+      },
+      "ProviderCapabilities": {
+        "description": "What a provider can do and what it costs.\n\nThe policy resolver dispatches on these fields rather than on provider names, so\nadding an engine never touches dispatch logic.",
+        "properties": {
+          "alternatives": {
+            "default": false,
+            "title": "Alternatives",
+            "type": "boolean"
+          },
+          "daily_quota": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Daily Quota"
+          },
+          "elevation": {
+            "default": false,
+            "title": "Elevation",
+            "type": "boolean"
+          },
+          "live_update_interval_ms": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Live Update Interval Ms"
+          },
+          "map_matching": {
+            "default": false,
+            "title": "Map Matching",
+            "type": "boolean"
+          },
+          "max_waypoints": {
+            "default": 50,
+            "minimum": 2.0,
+            "title": "Max Waypoints",
+            "type": "integer"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "prefers_unpaved": {
+            "default": false,
+            "title": "Prefers Unpaved",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "title": "ProviderCapabilities",
+        "type": "object"
+      },
+      "ReplanEvent": {
+        "description": "One streamed progress event from a replan.",
+        "properties": {
+          "legs": {
+            "description": "Legs re-routed by this stage, if any.",
+            "items": {
+              "$ref": "#/components/schemas/TripLeg"
+            },
+            "title": "Legs",
+            "type": "array"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "pois": {
+            "description": "POIs discovered so far in this stage. Cumulative per stage, not total.",
+            "items": {
+              "$ref": "#/components/schemas/Poi"
+            },
+            "title": "Pois",
+            "type": "array"
+          },
+          "progress": {
+            "anyOf": [
+              {
+                "maximum": 1.0,
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Progress"
+          },
+          "stage": {
+            "description": "One of: route_search, discovery, enrichment, done.",
+            "title": "Stage",
+            "type": "string"
+          }
+        },
+        "required": [
+          "stage",
+          "message"
+        ],
+        "title": "ReplanEvent",
+        "type": "object"
+      },
+      "ReplanRequest": {
+        "description": "Start the slow path. Explicitly user-triggered; never fired by a route edit.",
+        "properties": {
+          "categories": {
+            "description": "Which kinds of POI to discover along the route.",
+            "items": {
+              "$ref": "#/components/schemas/PoiCategory"
+            },
+            "title": "Categories",
+            "type": "array"
+          },
+          "preserve_pinned": {
+            "default": true,
+            "description": "Keep POIs the user pinned and legs they have not touched, rather than discarding the whole plan.",
+            "title": "Preserve Pinned",
+            "type": "boolean"
+          },
+          "prompt": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Free-text steer from the chat bar, e.g. 'prefer hot springs'.",
+            "title": "Prompt"
+          }
+        },
+        "title": "ReplanRequest",
+        "type": "object"
+      },
+      "RouteLeg": {
+        "description": "A routed leg, normalized across providers.",
+        "properties": {
+          "ascent_m": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ascent M"
+          },
+          "distance_m": {
+            "minimum": 0.0,
+            "title": "Distance M",
+            "type": "number"
+          },
+          "duration_s": {
+            "minimum": 0.0,
+            "title": "Duration S",
+            "type": "number"
+          },
+          "geometry": {
+            "items": {
+              "$ref": "#/components/schemas/Coordinate"
+            },
+            "minItems": 2,
+            "title": "Geometry",
+            "type": "array"
+          },
+          "intent": {
+            "$ref": "#/components/schemas/LegIntent"
+          },
+          "provider": {
+            "title": "Provider",
+            "type": "string"
+          },
+          "surface_spans": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/SurfaceSpan"
+            },
+            "title": "Surface Spans",
+            "type": "array"
+          }
+        },
+        "required": [
+          "geometry",
+          "distance_m",
+          "duration_s",
+          "provider",
+          "intent"
+        ],
+        "title": "RouteLeg",
+        "type": "object"
+      },
+      "RouteLegRequest": {
+        "description": "Route one leg. The fast path \u2014 no LLM involvement, no persistence.",
+        "properties": {
+          "avoid_ferries": {
+            "default": false,
+            "title": "Avoid Ferries",
+            "type": "boolean"
+          },
+          "avoid_highways": {
+            "default": false,
+            "title": "Avoid Highways",
+            "type": "boolean"
+          },
+          "avoid_tolls": {
+            "default": false,
+            "title": "Avoid Tolls",
+            "type": "boolean"
+          },
+          "intent": {
+            "$ref": "#/components/schemas/LegIntent"
+          },
+          "provider_override": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Pin this leg to a named engine, bypassing the policy table.",
+            "title": "Provider Override"
+          },
+          "want_elevation": {
+            "default": false,
+            "title": "Want Elevation",
+            "type": "boolean"
+          },
+          "waypoints": {
+            "items": {
+              "$ref": "#/components/schemas/Coordinate"
+            },
+            "minItems": 2,
+            "title": "Waypoints",
+            "type": "array"
+          }
+        },
+        "required": [
+          "waypoints",
+          "intent"
+        ],
+        "title": "RouteLegRequest",
+        "type": "object"
+      },
+      "RouteLegResponse": {
+        "properties": {
+          "leg": {
+            "$ref": "#/components/schemas/RouteLeg"
+          },
+          "live_update_interval_ms": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Throttle budget for the engine that served this leg.",
+            "title": "Live Update Interval Ms"
+          }
+        },
+        "required": [
+          "leg"
+        ],
+        "title": "RouteLegResponse",
+        "type": "object"
+      },
+      "RoutingCapabilitiesResponse": {
+        "description": "Lets the frontend throttle per provider without hardcoding an engine name.",
+        "properties": {
+          "intents": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/IntentRouting"
+            },
+            "title": "Intents",
+            "type": "object"
+          },
+          "providers": {
+            "items": {
+              "$ref": "#/components/schemas/ProviderCapabilities"
+            },
+            "title": "Providers",
+            "type": "array"
+          }
+        },
+        "required": [
+          "providers",
+          "intents"
+        ],
+        "title": "RoutingCapabilitiesResponse",
+        "type": "object"
+      },
+      "Surface": {
+        "enum": [
+          "paved",
+          "unpaved",
+          "unknown"
+        ],
+        "title": "Surface",
+        "type": "string"
+      },
+      "SurfaceSpan": {
+        "description": "A run of geometry sharing one surface type, as inclusive indices into `geometry`.",
+        "properties": {
+          "end_index": {
+            "exclusiveMinimum": 0.0,
+            "title": "End Index",
+            "type": "integer"
+          },
+          "start_index": {
+            "minimum": 0.0,
+            "title": "Start Index",
+            "type": "integer"
+          },
+          "surface": {
+            "$ref": "#/components/schemas/Surface"
+          }
+        },
+        "required": [
+          "start_index",
+          "end_index",
+          "surface"
+        ],
+        "title": "SurfaceSpan",
+        "type": "object"
+      },
+      "Trip": {
+        "description": "A saved trip. Serialized verbatim to `trips/<slug>/trip.json`.",
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "edited_at": {
+            "format": "date-time",
+            "title": "Edited At",
+            "type": "string"
+          },
+          "legs": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/TripLeg"
+            },
+            "title": "Legs",
+            "type": "array"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "planned_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Planned At"
+          },
+          "pois": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/Poi"
+            },
+            "title": "Pois",
+            "type": "array"
+          },
+          "schema_version": {
+            "default": 1,
+            "title": "Schema Version",
+            "type": "integer"
+          },
+          "slug": {
+            "title": "Slug",
+            "type": "string"
+          },
+          "waypoints": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/Waypoint"
+            },
+            "title": "Waypoints",
+            "type": "array"
+          }
+        },
+        "required": [
+          "slug",
+          "name",
+          "created_at",
+          "edited_at"
+        ],
+        "title": "Trip",
+        "type": "object"
+      },
+      "TripLeg": {
+        "description": "One section of the route, spanning a pair of waypoints.\n\nEach leg carries its own intent and optional provider override, which is what makes\nper-road-type routing a property of the data rather than a branch in routing code.",
+        "properties": {
+          "end_waypoint_index": {
+            "exclusiveMinimum": 0.0,
+            "title": "End Waypoint Index",
+            "type": "integer"
+          },
+          "intent": {
+            "$ref": "#/components/schemas/LegIntent"
+          },
+          "provider_override": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Provider Override"
+          },
+          "routed": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RouteLeg"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "start_waypoint_index": {
+            "minimum": 0.0,
+            "title": "Start Waypoint Index",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "intent",
+          "start_waypoint_index",
+          "end_waypoint_index"
+        ],
+        "title": "TripLeg",
+        "type": "object"
+      },
+      "TripSummary": {
+        "description": "Listing entry. Avoids shipping full geometry for every trip in the index.",
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "edited_at": {
+            "format": "date-time",
+            "title": "Edited At",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "needs_replan": {
+            "title": "Needs Replan",
+            "type": "boolean"
+          },
+          "slug": {
+            "title": "Slug",
+            "type": "string"
+          },
+          "total_distance_m": {
+            "title": "Total Distance M",
+            "type": "number"
+          }
+        },
+        "required": [
+          "slug",
+          "name",
+          "created_at",
+          "edited_at",
+          "total_distance_m",
+          "needs_replan"
+        ],
+        "title": "TripSummary",
+        "type": "object"
+      },
+      "UpdateTripRequest": {
+        "description": "Replace a trip's editable content.\n\nA full replacement rather than a patch: the frontend holds the authoritative trip\nstate while editing, and partial updates would need conflict rules that an\nunauthenticated prototype cannot enforce anyway.",
+        "properties": {
+          "legs": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/TripLeg"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Legs"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "pois": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/Poi"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pois"
+          },
+          "waypoints": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/Waypoint"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Waypoints"
+          }
+        },
+        "title": "UpdateTripRequest",
+        "type": "object"
+      },
+      "Waypoint": {
+        "description": "An anchor the route must pass through.",
+        "properties": {
+          "coordinate": {
+            "$ref": "#/components/schemas/Coordinate"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "pinned": {
+            "default": true,
+            "title": "Pinned",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "coordinate"
+        ],
+        "title": "Waypoint",
+        "type": "object"
+      }
+    }
+  },
+  "info": {
+    "title": "MotoRooter",
+    "version": "0.1.0"
+  },
+  "openapi": "3.1.0",
+  "paths": {
+    "/api/health": {
+      "get": {
+        "operationId": "health_api_health_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HealthResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Health",
+        "tags": [
+          "health"
+        ]
+      }
+    },
+    "/api/places/{place_id}": {
+      "get": {
+        "operationId": "get_place_detail_api_places__place_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "place_id",
+            "required": true,
+            "schema": {
+              "title": "Place Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          },
+          "501": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PoiDetailResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "502": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Bad Gateway"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "summary": "Fetch POI display data (not yet implemented)",
+        "tags": [
+          "places"
+        ]
+      }
+    },
+    "/api/routing/capabilities": {
+      "get": {
+        "description": "What each engine supports, and the drag-throttle budget per leg intent.\n\nThe frontend reads `live_update_interval_ms` from here rather than hardcoding a\nper-engine constant, so retuning throttles is a backend config change.",
+        "operationId": "capabilities_api_routing_capabilities_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RoutingCapabilitiesResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          },
+          "502": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Bad Gateway"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "summary": "Capabilities",
+        "tags": [
+          "routing"
+        ]
+      }
+    },
+    "/api/routing/leg": {
+      "post": {
+        "description": "Route a single leg.\n\nCalled on every throttled drag update and again on release, so it must stay cheap.\nRouting errors are translated to HTTP by the registered exception handlers.",
+        "operationId": "route_leg_api_routing_leg_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RouteLegRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RouteLegResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          },
+          "502": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Bad Gateway"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "summary": "Route Leg",
+        "tags": [
+          "routing"
+        ]
+      }
+    },
+    "/api/trips": {
+      "get": {
+        "operationId": "list_trips_api_trips_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/TripSummary"
+                  },
+                  "title": "Response List Trips Api Trips Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          },
+          "502": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Bad Gateway"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "summary": "List Trips",
+        "tags": [
+          "trips"
+        ]
+      },
+      "post": {
+        "description": "Create an empty trip.\n\nAn explicit slug is validated strictly; a derived one is slugified from the name.\nEither way it is checked before it can become a storage path.",
+        "operationId": "create_trip_api_trips_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateTripRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Trip"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          },
+          "502": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Bad Gateway"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "summary": "Create Trip",
+        "tags": [
+          "trips"
+        ]
+      }
+    },
+    "/api/trips/{slug}": {
+      "delete": {
+        "operationId": "delete_trip_api_trips__slug__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "slug",
+            "required": true,
+            "schema": {
+              "title": "Slug",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          },
+          "502": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Bad Gateway"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "summary": "Delete Trip",
+        "tags": [
+          "trips"
+        ]
+      },
+      "get": {
+        "operationId": "get_trip_api_trips__slug__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "slug",
+            "required": true,
+            "schema": {
+              "title": "Slug",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Trip"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          },
+          "502": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Bad Gateway"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "summary": "Get Trip",
+        "tags": [
+          "trips"
+        ]
+      },
+      "put": {
+        "description": "Replace a trip's editable content.\n\n`edited_at` advances only when geometry actually changes, since it is what drives the\nreplan staleness flag \u2014 bumping it on a rename would spuriously mark discovery stale.",
+        "operationId": "update_trip_api_trips__slug__put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "slug",
+            "required": true,
+            "schema": {
+              "title": "Slug",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateTripRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Trip"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          },
+          "502": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Bad Gateway"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "summary": "Update Trip",
+        "tags": [
+          "trips"
+        ]
+      }
+    },
+    "/api/trips/{slug}/gpx": {
+      "get": {
+        "description": "Returns a GPX file containing a track plus ordered waypoints, targeted at motorcycle GPS units.",
+        "operationId": "export_gpx_api_trips__slug__gpx_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "slug",
+            "required": true,
+            "schema": {
+              "title": "Slug",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/gpx+xml": {}
+            },
+            "description": "OK"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          },
+          "501": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "502": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Bad Gateway"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "summary": "Export GPX (not yet implemented)",
+        "tags": [
+          "trips"
+        ]
+      }
+    },
+    "/api/trips/{slug}/replan": {
+      "post": {
+        "description": "Runs LLM route search, POI discovery, and Places enrichment, streaming Server-Sent Events whose data is a ReplanEvent. Explicitly user-triggered \u2014 never fired automatically by a route edit.",
+        "operationId": "replan_api_trips__slug__replan_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "slug",
+            "required": true,
+            "schema": {
+              "title": "Slug",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReplanRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          },
+          "501": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReplanEvent"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "502": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Bad Gateway"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "summary": "Start a replan (not yet implemented)",
+        "tags": [
+          "trips"
+        ]
+      }
+    }
+  }
+}

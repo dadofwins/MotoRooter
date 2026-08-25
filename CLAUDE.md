@@ -13,16 +13,32 @@ for a motorcycle GPS.
 the assistant can take must also be reachable via map interaction or a form control. If you add a
 tool to the LLM layer, you owe it a UI affordance in the same change.
 
+## Parallel work
+
+Three sessions work on this repo at once — a backend engineer, a frontend engineer, and an
+integrator — each in its own git worktree. **Read `docs/parallel-work.md` before starting**:
+it defines file ownership, the contract-change protocol, and the review loop. Scoped
+instructions live in `backend/CLAUDE.md` and `frontend/CLAUDE.md`.
+
+The one rule worth repeating here: `backend/src/motorooter/api/schemas.py` is the frontend
+contract. It generates `shared/openapi.json`, which generates `frontend/src/api/schema.ts`.
+Changing an existing shape there needs integrator sign-off; `make contract-check` fails CI
+if the generated files drift.
+
 ## Status
 
 **Built:** the routing layer end to end — domain models, `RoutingProvider` protocol, shared adapter
 contract suite, `FakeProvider`, ORS and Google Directions adapters, polyline codec, registry,
-policy resolver, caching/retry/quota decorators, and the config factory. Plus the frontend
-`DragScheduler` (fast-path throttle, sequence numbers, commit-on-release), an app shell, the
-multi-stage Dockerfile, and Cloud Build config.
+policy resolver, caching/retry/quota decorators, config factory. Trip and POI models, slug
+validation, `TripStore` protocol with an in-memory implementation and a shared store contract
+suite. The REST API surface with generated TypeScript types. Frontend `DragScheduler` (throttle,
+sequence numbers, commit-on-release), app shell, multi-stage Dockerfile, Cloud Build config.
 
-**Not built:** trip persistence to Cloud Storage, the LLM tool layer, discovery and Places
-enrichment, GPX export, the Google Maps canvas, and the chat UI.
+**Stubbed with frozen schemas** (501, so the frontend can build against real shapes): replan,
+GPX export, Places enrichment.
+
+**Not built:** `GcsTripStore`, leg stitching, GPX export, the LLM tool layer, discovery and
+Places enrichment, the Google Maps canvas, and the chat UI.
 
 Update this section as reality changes, and do not describe a component as existing until it does.
 

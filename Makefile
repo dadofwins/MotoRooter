@@ -43,7 +43,20 @@ typecheck: ## mypy --strict and tsc --noEmit
 	cd backend && uv run mypy
 	cd frontend && npm run typecheck
 
-check: lint typecheck test ## Everything CI runs
+contract: ## Regenerate shared/openapi.json and the frontend TypeScript types
+	cd backend && uv run python scripts/export_openapi.py
+	cd frontend && npm run generate:types
+
+contract-check: ## Fail if the committed contract has drifted from the code
+	@$(MAKE) --no-print-directory contract
+	@git diff --exit-code -- shared/openapi.json frontend/src/api/schema.ts \
+		|| { echo ""; \
+		     echo "ERROR: the API contract is out of date."; \
+		     echo "The backend changed shapes without regenerating. Run 'make contract',"; \
+		     echo "commit the result, and flag it — this is a frontend-breaking change."; \
+		     exit 1; }
+
+check: lint typecheck contract-check test ## Everything CI runs
 
 build: ## Build the container image
 	docker build -f infra/Dockerfile -t $(IMAGE):latest .

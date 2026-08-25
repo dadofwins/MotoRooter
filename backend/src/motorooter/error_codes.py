@@ -32,6 +32,11 @@ class ErrorCode(StrEnum):
     QUOTA_EXCEEDED = "quota_exceeded"
     PROVIDER_UNAVAILABLE = "provider_unavailable"
 
+    LLM_UNAVAILABLE = "llm_unavailable"
+    LLM_QUOTA_EXCEEDED = "llm_quota_exceeded"
+    LLM_REFUSED = "llm_refused"
+    TOOL_CALL_FAILED = "tool_call_failed"
+
     INVALID_SLUG = "invalid_slug"
     TRIP_NOT_FOUND = "trip_not_found"
     TRIP_ALREADY_EXISTS = "trip_already_exists"

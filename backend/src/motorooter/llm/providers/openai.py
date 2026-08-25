@@ -15,6 +15,7 @@ from collections.abc import Sequence
 from typing import Any
 
 import httpx
+from pydantic import ValidationError
 
 from motorooter.llm.errors import LlmQuotaExceeded, LlmRefused, LlmUnavailable
 from motorooter.llm.messages import (
@@ -150,9 +151,12 @@ class OpenAiClient:
                 content=message.get("content"),
                 tool_calls=tuple(self._decode_call(call) for call in message.get("tool_calls", [])),
             )
-        except (TypeError, KeyError, IndexError, AttributeError) as exc:
+        except (TypeError, KeyError, IndexError, AttributeError, ValidationError) as exc:
             # A shape change upstream is an availability problem, not a caller error, and
-            # must not escape as a KeyError from inside an adapter.
+            # must not escape as a raw exception from inside an adapter. `ValidationError`
+            # belongs here too: `content` arriving as a list of parts, or a numeric
+            # tool-call id from a compatible endpoint, both fail model construction rather
+            # than dict access.
             msg = f"unrecognized OpenAI response shape: {exc}"
             raise LlmUnavailable(msg) from exc
 

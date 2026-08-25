@@ -6,7 +6,7 @@ import httpx
 import pytest
 import respx
 
-from motorooter.llm.errors import LlmQuotaExceeded, LlmRefused, LlmUnavailable
+from motorooter.llm.errors import LlmError, LlmQuotaExceeded, LlmRefused, LlmUnavailable
 from motorooter.llm.messages import (
     AssistantMessage,
     SystemMessage,
@@ -145,8 +145,62 @@ class TestReadingTheReply:
         assert len(answer.tool_calls) == 1
 
 
+MALFORMED_BODIES: list[Any] = [
+    {"unexpected": True},
+    {"choices": []},
+    {"choices": [{}]},
+    {"choices": [{"message": None}]},
+    {"choices": [{"message": {"content": [{"type": "text", "text": "hi"}]}}]},
+    {"choices": [{"message": {"content": "x", "tool_calls": [{"id": 12345}]}}]},
+    {"choices": [{"message": {"content": "x", "tool_calls": [{"id": "a"}]}}]},
+    {"choices": [{"message": {"content": "x", "tool_calls": "not-a-list"}}]},
+    {"choices": "not-a-list"},
+    [],
+    "a bare string",
+    None,
+]
+
+
+class TestNothingButAnLlmErrorEscapes:
+    """The invariant, rather than the exceptions I happened to think of.
+
+    The previous version of this listed `httpx` errors and `KeyError`, which is a list of
+    guesses. Two real escapes were sitting outside it: `content` arriving as a list of parts,
+    and a numeric tool-call id — both raise `pydantic.ValidationError` from the model
+    constructors, and both surfaced as a 500 `internal_error` instead of a 502.
+    """
+
+    @pytest.mark.parametrize("body", MALFORMED_BODIES)
+    async def test_a_malformed_body_raises_only_an_llm_error(self, mock_openai, body):
+        mock_openai.post(COMPLETIONS_URL).mock(return_value=httpx.Response(200, json=body))
+        with pytest.raises(LlmError):
+            await build_client().complete([UserMessage(content="hi")], [ECHO_SPEC])
+
+    @pytest.mark.parametrize("status", [200, 400, 401, 403, 404, 409, 418, 429, 500, 503])
+    async def test_any_status_with_a_junk_body_raises_only_an_llm_error(self, mock_openai, status):
+        mock_openai.post(COMPLETIONS_URL).mock(
+            return_value=httpx.Response(status, content=b"\x00\x01 not text")
+        )
+        with pytest.raises(LlmError):
+            await build_client().complete([UserMessage(content="hi")], [ECHO_SPEC])
+
+    @pytest.mark.parametrize(
+        "error",
+        [
+            httpx.ConnectError("no route"),
+            httpx.ReadTimeout("slow"),
+            httpx.RemoteProtocolError("bad framing"),
+            httpx.TooManyRedirects("looping"),
+        ],
+    )
+    async def test_any_transport_error_raises_only_an_llm_error(self, mock_openai, error):
+        mock_openai.post(COMPLETIONS_URL).mock(side_effect=error)
+        with pytest.raises(LlmError):
+            await build_client().complete([UserMessage(content="hi")], [ECHO_SPEC])
+
+
 class TestFailureTranslation:
-    """No httpx exception and no KeyError may escape this module."""
+    """Beyond the invariant: the *right* LlmError, since callers act on the difference."""
 
     @pytest.mark.parametrize("status", [500, 502, 503, 504])
     async def test_upstream_failures_are_unavailable(self, mock_openai, status):

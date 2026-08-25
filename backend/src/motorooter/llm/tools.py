@@ -15,9 +15,24 @@ from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
 from typing import Any, ClassVar
 
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel, ConfigDict, ValidationError
 
 from motorooter.llm.errors import ToolCallFailed
+
+
+class ToolArguments(BaseModel):
+    """Base for a tool's argument model. Rejects fields it does not declare.
+
+    Pydantic ignores unknown fields by default, which is the wrong default for model output:
+    a model sending `radius` against a schema declaring `radius_m` gets the 5 km default
+    silently. It asked for 50 km, got 5, and was told nothing — and neither was the user.
+
+    Forbidding extras turns that into a reported error the model can correct, and publishes
+    `additionalProperties: false` in the schema so it is told the rule up front rather than
+    only after breaking it.
+    """
+
+    model_config = ConfigDict(extra="forbid")
 
 
 @dataclass(frozen=True)
@@ -52,6 +67,7 @@ class Tool:
     comment: vague descriptions are the most common cause of a model picking wrongly."""
 
     arguments: ClassVar[type[BaseModel]]
+    """Must forbid extra fields — subclass `ToolArguments`. Checked at registration."""
 
     def spec(self) -> dict[str, Any]:
         """The tool declaration sent to the model."""
@@ -75,12 +91,31 @@ class Tool:
         except ValueError as exc:
             msg = f"arguments for {self.name!r} are not valid JSON: {exc}"
             raise ToolCallFailed(msg) from exc
+        except RecursionError as exc:
+            # `json.loads` raises this, not a ValueError, on deeply nested input — so a
+            # model sending 60,000 open brackets aborted the whole run mid-stream. It is a
+            # malformed argument like any other and belongs back with the model.
+            msg = f"arguments for {self.name!r} are nested too deeply to parse"
+            raise ToolCallFailed(msg) from exc
 
         try:
             return self.arguments.model_validate(parsed)
         except ValidationError as exc:
-            msg = f"arguments for {self.name!r} do not match its schema: {exc}"
-            raise ToolCallFailed(msg) from exc
+            raise ToolCallFailed(self._explain(exc)) from exc
+
+    def _explain(self, exc: ValidationError) -> str:
+        """Describe a validation failure in terms a model can act on.
+
+        Not `str(ValidationError)`: that embeds the offending input value and a docs URL,
+        both of which then travel to the model and onward to an unauthenticated screen. The
+        field path and the expected type are the parts that help it correct itself, and they
+        are the parts we author.
+        """
+        problems = [
+            f"{'.'.join(str(part) for part in error['loc']) or '<root>'}: {error['type']}"
+            for error in exc.errors()
+        ]
+        return f"arguments for {self.name!r} do not match its schema — {'; '.join(problems)}"
 
     async def run(self, arguments: Any) -> ToolOutcome:  # noqa: ANN401 -- narrowed by subclass
         raise NotImplementedError
@@ -92,6 +127,14 @@ class ToolRegistry:
     def __init__(self, tools: Iterable[Tool]) -> None:
         self._tools: dict[str, Tool] = {}
         for tool in tools:
+            if not _forbids_extra_fields(tool.arguments):
+                # A startup check rather than a runtime surprise: a tool author who forgets
+                # `ToolArguments` would otherwise ship a tool that silently drops fields.
+                msg = (
+                    f"tool {tool.name!r} has an arguments model that allows extra fields; "
+                    "subclass ToolArguments so unknown fields are refused rather than ignored"
+                )
+                raise ToolCallFailed(msg)
             if tool.name in self._tools:
                 # Same reasoning as the provider registry: registration order would quietly
                 # decide which implementation the model reaches.
@@ -119,3 +162,7 @@ class ToolRegistry:
             available = ", ".join(sorted(self._tools))
             msg = f"no tool named {name!r}. Available tools: {available}"
             raise ToolCallFailed(msg) from None
+
+
+def _forbids_extra_fields(model: type[BaseModel]) -> bool:
+    return model.model_config.get("extra") == "forbid"

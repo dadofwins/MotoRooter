@@ -12,15 +12,15 @@ conversation.
 """
 
 import pytest
-from pydantic import BaseModel
 
-from motorooter.llm.agent import Agent, AgentEvent, ToolCallFailed
+from motorooter.llm.agent import Agent, AgentEvent, AgentLimits
+from motorooter.llm.errors import ToolCallFailed
 from motorooter.llm.messages import AssistantMessage, ToolCall, ToolMessage, UserMessage
 from motorooter.llm.providers.fake import FakeLlmClient
-from motorooter.llm.tools import Tool, ToolOutcome, ToolRegistry
+from motorooter.llm.tools import Tool, ToolArguments, ToolOutcome, ToolRegistry
 
 
-class EchoArgs(BaseModel):
+class EchoArgs(ToolArguments):
     text: str
 
 
@@ -209,25 +209,29 @@ class TestAMisbehavingModel:
         """Otherwise one chat turn bills forever. Cost is not the design driver; a runaway
         loop is still a bug, and this is the only place that can stop it."""
         looping = FakeLlmClient(replies=(calls("echo", '{"text": "again"}'),), repeat_last=True)
-        events = await collect(Agent(looping, registry, max_turns=3))
+        events = await collect(Agent(looping, registry, limits=AgentLimits(max_turns=3)))
         assert looping.call_count == 3
         assert events[-1].kind == "done"
 
     async def test_being_cut_off_is_visible_rather_than_silent(self, registry):
         looping = FakeLlmClient(replies=(calls("echo", '{"text": "again"}'),), repeat_last=True)
-        events = await collect(Agent(looping, registry, max_turns=2))
-        assert any(event.kind == "truncated" for event in events)
-
-    async def test_max_turns_must_be_positive(self, registry):
-        with pytest.raises(ValueError):
-            Agent(FakeLlmClient(replies=()), registry, max_turns=0)
+        events = await collect(Agent(looping, registry, limits=AgentLimits(max_turns=2)))
+        assert events[-1].truncated is True
 
 
 class TestAFailingTool:
-    async def test_the_failure_is_reported_to_the_model(self, registry):
+    async def test_an_unexpected_failure_is_reported_without_its_text(self, registry):
+        """The tool is named so the model can route around it; the exception is not.
+
+        `ExplodingTool` raises a plain RuntimeError, which is the path where the message
+        came from somewhere we do not control. See test_agent_limits.py for why that
+        matters on an unauthenticated surface.
+        """
         client = FakeLlmClient(replies=(calls("explode", '{"text": "x"}'), says("Sorry.")))
         await collect(Agent(client, ToolRegistry([ExplodingTool()])))
-        assert "down" in str(client.conversations[-1])
+        conversation = str(client.conversations[-1])
+        assert "explode" in conversation
+        assert "the upstream service is down" not in conversation
 
     async def test_the_conversation_continues(self, registry):
         client = FakeLlmClient(replies=(calls("explode", '{"text": "x"}'), says("Recovered.")))

@@ -3,6 +3,25 @@
 Guidance for work inside `backend/`. The root `CLAUDE.md` holds shared architecture and
 still applies — read both.
 
+## Start of session: arm your mailbox
+
+You cannot see the other sessions' chat. You talk to them by mail.
+
+Before doing anything else, point the `Monitor` tool at `make mail-watch` with
+`persistent: true`. Incoming messages then arrive as notifications while you work. Then run
+`make mail-read` once to pick up anything waiting.
+
+When a branch is ready, hand off in one command — it runs `make check`, pushes, and mails
+the integrator, and refuses to proceed if checks fail:
+
+```sh
+make handoff MSG="what changed and what the reviewer should focus on"
+```
+
+Reply to a review with `scripts/mail send integrator "<subject>"`, body on stdin. Your role
+(backend) is inferred from your branch prefix; nothing to configure. Full protocol is in
+`docs/parallel-work.md`.
+
 ## Your role
 
 You are the principal backend engineer on MotoRooter. You own everything under `backend/`

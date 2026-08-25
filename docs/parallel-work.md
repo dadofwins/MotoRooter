@@ -65,31 +65,65 @@ make check      # ruff + mypy --strict + contract-check + pytest + vitest + tsc
 
 No exceptions. A branch that does not pass `make check` is not ready for review.
 
+## Talking to each other
+
+The three sessions cannot see each other's chat. They communicate through a **mailbox**:
+a directory outside every worktree (worktrees are separate directories, so anything inside
+one is invisible to the others). It lives at `../motorooter-mail/` and is not in git —
+it is coordination state, not source.
+
+```sh
+scripts/mail whoami            # your role, inferred from the branch prefix
+scripts/mail send <box> <subj> # body on stdin; boxes: integrator, backend, frontend
+scripts/mail read  <box>       # print unread and archive them
+scripts/mail peek  <box>       # print unread without archiving
+scripts/mail watch <box>       # one line per new message — for the Monitor tool
+```
+
+Your role is derived from the branch: `be/*` → backend, `fe/*` → frontend, `main` →
+integrator. Nothing to configure.
+
+**Arm your mailbox at the start of every session.** Point the `Monitor` tool at
+`make mail-watch` with `persistent: true`. Each incoming message then arrives as a
+notification while you keep working — you never poll, and you never miss a handoff.
+
+Messages are archived rather than deleted, so `../motorooter-mail/<role>/archive/` is the
+record of what was asked and why.
+
 ## Review protocol
 
-Review is local — there is no `gh` CLI installed, so no pull requests.
+Review is local — there is no `gh` CLI installed, so no pull requests. The mailbox
+replaces PR comments.
 
 **Author:**
 
-1. `make check` passes.
-2. Commit and push your branch: `git push -u origin be/trip-storage`.
-3. Run `/code-review` on your own diff first and fix what it finds. Do not send the
-   reviewer things you could have caught yourself.
-4. Tell Tim the branch is ready and what to look at.
+1. Run `/code-review` on your own diff and fix what it finds. Do not send the reviewer
+   things you could have caught yourself.
+2. Hand off in one command:
 
-**Reviewer** (the other engineer, in their own worktree):
+   ```sh
+   make handoff MSG="GcsTripStore. Focus on JSON round-trip fidelity and the FUSE rename path."
+   ```
+
+   That runs `make check`, pushes the branch, and mails the integrator. It refuses to
+   proceed if checks fail, so a broken branch cannot be handed over.
+3. Keep working. The review arrives in your mailbox.
+
+**Integrator** is woken by the message, reviews the diff, fans out subagent reviewers where
+the change is large or risky, and mails findings back to the author's box. Cross-review by
+the other engineer is requested the same way.
+
+**Reviewer** (whichever session is asked):
 
 ```sh
 git fetch origin
 git diff main...origin/be/trip-storage
 ```
 
-Then run `/code-review` scoped to that diff and report findings back through Tim. Findings
-live in chat scrollback, so state them compactly: file, line, what breaks, and a concrete
+Findings go back by mail. State them compactly: file, line, what breaks, and a concrete
 failure case. Vague "consider refactoring" notes are not worth the round trip.
 
-**What each reviewer is looking for.** Review from your own perspective, not the author's —
-that is the whole point of cross-review:
+Review from *your own* perspective, not the author's — that is the point of cross-review:
 
 - The **frontend engineer** reviewing backend work asks: is the API shape actually usable
   from a component? Are error codes distinguishable? Does anything here force the client
@@ -99,6 +133,36 @@ that is the whole point of cross-review:
   not guarantee? Is it treating LLM-suggested data as verified?
 
 **Integrator** does a final pass and merges to `main`.
+
+## Escalation
+
+Review rounds are capped at **two** per branch. If a disagreement survives two rounds, the
+integrator stops the loop and brings Tim in with a short summary of both positions — not a
+transcript. Two agents arguing politely can burn a great deal of budget without converging.
+
+Escalate immediately, without waiting for round two, when:
+
+- The disagreement is about the API contract or an architectural decision already recorded
+  in `CLAUDE.md`.
+- Resolving it would change scope, cost, or the deploy shape.
+- Either side is asking for a third-party service, dependency, or credential that does not
+  already exist.
+
+The integrator never merges to `main` without telling Tim.
+
+## Branch size
+
+Hand off **one queue item at a time**. A branch that implements three things is a branch
+nobody can review properly, and it blocks the other engineer for longer. Finish item 1,
+`make handoff`, start item 2 on a fresh branch while the review runs.
+
+## Settled decisions
+
+The choices recorded in `CLAUDE.md` — OpenRouteService over GraphHopper, single Cloud Run
+service, Cloud Storage for trips, contract-first types, chat-is-never-required — are
+settled. Do not silently redesign around them. If you think one is wrong, say so by mail
+with your reasoning and keep working on something else meanwhile; the integrator will
+escalate if it has merit.
 
 ## Merge order
 

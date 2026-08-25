@@ -1,0 +1,157 @@
+#!/usr/bin/env bash
+#
+# Message passing between the three Claude sessions working on this repo.
+#
+# Each session has a mailbox. Writing a file into someone's box is a message; a session
+# watching its own box gets woken when one arrives. That makes handoffs event-driven
+# instead of requiring anyone to poll or relay by hand.
+#
+# The mailbox lives OUTSIDE every worktree — worktrees are separate directories, so a
+# path inside one is invisible to the others. It is deliberately not in git: it is
+# coordination state, not source.
+#
+#   mail send <box> <subject>     read body from stdin, deliver to <box>
+#   mail watch <box>              print one line per new message; for the Monitor tool
+#   mail list <box>               list unread messages
+#   mail read <box>               print unread messages and archive them
+#   mail peek <box>               print unread without archiving
+#
+# Boxes: integrator, backend, frontend
+#
+# Examples:
+#   echo "be/trip-storage is ready. Focus on the GCS round-trip." \
+#     | scripts/mail send integrator "branch ready: be/trip-storage"
+#   scripts/mail read backend
+
+set -euo pipefail
+
+# Derive the mailbox from the *shared* git dir, so every worktree resolves the same path.
+# --path-format=absolute matters: from the main checkout --git-common-dir returns a bare
+# relative ".git", which would otherwise place the mailbox inside the repo.
+_main_worktree() {
+  dirname "$(git rev-parse --path-format=absolute --git-common-dir)"
+}
+MAIL_ROOT="${MOTOROOTER_MAIL:-$(dirname "$(_main_worktree)")/motorooter-mail}"
+
+BOXES=(integrator backend frontend)
+
+# Role is inferred from the branch prefix so no worktree needs configuring. Override with
+# MOTOROOTER_ROLE if you are working somewhere the convention does not hold.
+_default_role() {
+  case "$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo '')" in
+    be/*)  echo backend    ;;
+    fe/*)  echo frontend   ;;
+    main)  echo integrator ;;
+    *)     echo unknown    ;;
+  esac
+}
+FROM="${MOTOROOTER_ROLE:-$(_default_role)}"
+
+die() { echo "mail: $*" >&2; exit 1; }
+
+check_box() {
+  local box="$1"
+  for known in "${BOXES[@]}"; do [[ "$box" == "$known" ]] && return 0; done
+  die "unknown box '$box' (expected one of: ${BOXES[*]})"
+}
+
+box_dir() {
+  check_box "$1"
+  local dir="$MAIL_ROOT/$1/inbox"
+  mkdir -p "$dir" "$MAIL_ROOT/$1/archive"
+  printf '%s' "$dir"
+}
+
+slugify() { tr '[:upper:]' '[:lower:]' | tr -cs 'a-z0-9' '-' | sed 's/^-//; s/-$//' | cut -c1-60; }
+
+cmd_send() {
+  local box="${1:?usage: mail send <box> <subject>}" subject="${2:?subject required}"
+  local dir; dir="$(box_dir "$box")"
+  local stamp; stamp="$(date -u +%Y%m%dT%H%M%SZ)"
+  local file="$dir/${stamp}-${FROM}-$(printf '%s' "$subject" | slugify).md"
+
+  {
+    echo "---"
+    echo "from: $FROM"
+    echo "to: $box"
+    echo "subject: $subject"
+    echo "date: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    echo "branch: $(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo unknown)"
+    echo "commit: $(git rev-parse --short HEAD 2>/dev/null || echo unknown)"
+    echo "---"
+    echo
+    cat
+  } > "$file"
+
+  echo "delivered to $box: $(basename "$file")"
+}
+
+cmd_watch() {
+  local box="${1:?usage: mail watch <box>}"
+  local dir; dir="$(box_dir "$box")"
+  local name
+
+  # Seen-set kept in a shell variable rather than a temp file: no cleanup trap, and no
+  # pipeline subshell to lose state in.
+  local seen=" "
+  for f in "$dir"/*.md; do
+    [[ -e "$f" ]] || continue
+    seen+="$(basename "$f") "
+  done
+
+  # Polling rather than inotify: needs no extra package, and 3s against a local directory
+  # costs nothing. Swap in `inotifywait -m` if inotify-tools ever gets installed.
+  while true; do
+    for f in "$dir"/*.md; do
+      [[ -e "$f" ]] || continue
+      name="$(basename "$f")"
+      if [[ "$seen" != *" $name "* ]]; then
+        echo "NEW MESSAGE in $box: $name"
+        seen+="$name "
+      fi
+    done
+    sleep 3
+  done
+}
+
+cmd_list() {
+  local dir; dir="$(box_dir "${1:?usage: mail list <box>}")"
+  local n; n="$(find "$dir" -maxdepth 1 -type f -name '*.md' | wc -l)"
+  echo "$n unread in $1"
+  find "$dir" -maxdepth 1 -type f -name '*.md' -printf '  %f\n' 2>/dev/null | sort
+}
+
+_print_all() {
+  local dir="$1"
+  local found=0
+  while IFS= read -r f; do
+    found=1
+    echo "════════════════════════════════════════════════════════════"
+    cat "$f"
+    echo
+  done < <(find "$dir" -maxdepth 1 -type f -name '*.md' | sort)
+  [[ $found -eq 0 ]] && echo "(no unread messages)"
+  return 0
+}
+
+cmd_peek() { _print_all "$(box_dir "${1:?usage: mail peek <box>}")"; }
+
+cmd_read() {
+  local box="${1:?usage: mail read <box>}"
+  local dir; dir="$(box_dir "$box")"
+  _print_all "$dir"
+  # Archive rather than delete: the thread is the only record of what was asked and why.
+  find "$dir" -maxdepth 1 -type f -name '*.md' -exec mv {} "$MAIL_ROOT/$box/archive/" \;
+}
+
+cmd_whoami() { echo "$FROM"; }
+
+case "${1:-}" in
+  whoami) cmd_whoami ;;
+  send)  shift; cmd_send  "$@" ;;
+  watch) shift; cmd_watch "$@" ;;
+  list)  shift; cmd_list  "$@" ;;
+  read)  shift; cmd_read  "$@" ;;
+  peek)  shift; cmd_peek  "$@" ;;
+  *)     sed -n '3,28p' "$0" | sed 's/^# \?//'; exit 1 ;;
+esac

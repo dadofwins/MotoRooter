@@ -65,6 +65,24 @@ deploy: ## Build and deploy to Cloud Run
 	gcloud builds submit --config infra/cloudbuild.yaml \
 		--substitutions=_SERVICE=$(SERVICE),_REGION=$(REGION)
 
+ROLE   ?= $(shell scripts/mail whoami)
+BRANCH ?= $(shell git rev-parse --abbrev-ref HEAD)
+
+handoff: ## Verify, push, and ask the integrator for review. MSG="what to look at"
+	@test -n "$(MSG)" || { echo 'usage: make handoff MSG="what changed and what to focus on"'; exit 1; }
+	@$(MAKE) --no-print-directory check
+	@git push -u origin $(BRANCH)
+	@printf '%s\n' "$(MSG)" | scripts/mail send integrator "review request: $(BRANCH)"
+
+mail-watch: ## Stream new messages for this role. Point the Monitor tool at this.
+	@scripts/mail watch $(ROLE)
+
+mail-read: ## Print and archive unread messages for this role
+	@scripts/mail read $(ROLE)
+
+mail-peek: ## Print unread messages without archiving them
+	@scripts/mail peek $(ROLE)
+
 clean:
 	rm -rf backend/.venv backend/.pytest_cache backend/.mypy_cache backend/.ruff_cache
 	rm -rf frontend/node_modules frontend/dist

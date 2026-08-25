@@ -63,18 +63,28 @@ const MAX_CACHED_ROUTES = 50
 export interface RouteLegState {
   /** Legs ready to draw. Empty until a route has come back. */
   readonly legs: readonly TripLeg[]
+  /**
+   * Riding time for the route, in seconds, or `null` when nothing has estimated it.
+   *
+   * From `RouteLegResponse.estimated_duration_s`, derived server-side from distance and
+   * surface so the speed table has one home. Never `leg.duration_s`, which on dirt is a
+   * bicycle time — the backend measured 8 hours for 133 km. Null rather than zero, because
+   * zero is a duration and would read as "under 5m" for a route nobody has estimated.
+   */
+  readonly estimatedDurationS: number | null
   readonly isRouting: boolean
   readonly error: Error | null
 }
 
 interface Settled {
   readonly legs: readonly TripLeg[]
+  readonly estimatedDurationS: number | null
   readonly error: Error | null
   /** Which route this result is for, so progress can be derived rather than flagged. */
   readonly key: string
 }
 
-const NOTHING: Settled = { legs: [], error: null, key: '' }
+const NOTHING: Settled = { legs: [], estimatedDurationS: null, error: null, key: '' }
 
 export function useRouteLeg(
   client: LegRouter,
@@ -158,7 +168,12 @@ export function useRouteLeg(
             },
           ]
           setCache((previous) => remember(previous, routeKey, legs))
-          setSettled({ legs, error: null, key: routeKey })
+          setSettled({
+            legs,
+            estimatedDurationS: response.estimated_duration_s,
+            error: null,
+            key: routeKey,
+          })
         },
         (reason: unknown) => {
           if (sequence !== sequenceRef.current || controller.signal.aborted) return
@@ -166,6 +181,7 @@ export function useRouteLeg(
           // remembered as answered.
           setSettled({
             legs: [],
+            estimatedDurationS: null,
             error: reason instanceof Error ? reason : new Error(String(reason)),
             key: routeKey,
           })
@@ -189,6 +205,9 @@ export function useRouteLeg(
     // one is fetched — blanking the map between edits would be worse. A route that no
     // longer has two points is simply gone.
     legs: routable ? ((knownIsFresh ? known : null) ?? cached ?? settled.legs) : [],
+    // Tied to the route it was estimated for: a stale time beside a changed route is worse
+    // than none, and this is the number a rider plans a day around.
+    estimatedDurationS: routable && settled.key === routeKey ? settled.estimatedDurationS : null,
     // Only the current route's failure is worth showing. Otherwise removing the waypoints
     // that caused an error leaves an alert on screen that cannot be dismissed.
     error: failedHere ? settled.error : null,

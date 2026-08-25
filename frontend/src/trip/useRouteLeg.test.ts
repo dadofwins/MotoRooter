@@ -1,6 +1,7 @@
 import { act, renderHook, waitFor } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
 import { SURFACE_REPORTING_INTENTS, useRouteLeg } from './useRouteLeg'
+import { routeLeg, routeLegResponse } from '../api/fixtures'
 import type { RequestOptions } from '../api/client'
 import type { Coordinate, RouteLeg, RouteLegInput, RouteLegResponse, TripLeg, Waypoint } from '../api/types'
 
@@ -17,26 +18,19 @@ function waypoint(lat: number): Waypoint {
   return { coordinate: { lat, lon: -120 }, name: null, pinned: true }
 }
 
+/** A routed leg with the geometry a test cares about, and the factory's defaults for the rest. */
 function routed(geometry: readonly Coordinate[]): RouteLeg {
-  return {
-    geometry: [...geometry],
-    distance_m: 1234,
-    duration_s: 60,
-    provider: 'fake',
-    intent: 'twisty_paved',
-    surface_spans: [],
-    ascent_m: null,
-  }
+  return routeLeg({ geometry: [...geometry], distance_m: 1234, intent: 'twisty_paved' })
 }
 
-const RESPONSE: RouteLegResponse = {
+const RESPONSE: RouteLegResponse = routeLegResponse({
   leg: routed([
     { lat: 47, lon: -120 },
     { lat: 48, lon: -120 },
   ]),
   live_update_interval_ms: 0,
   estimated_duration_s: 900,
-}
+})
 
 function fakeClient(response: RouteLegResponse = RESPONSE) {
   return {
@@ -204,7 +198,7 @@ describe('useRouteLeg', () => {
       { lat: 49, lon: -120 },
     ])
     await act(async () => {
-      resolvers[1]?.({ leg: newest, live_update_interval_ms: 0, estimated_duration_s: 900 })
+      resolvers[1]?.(routeLegResponse({ leg: newest, live_update_interval_ms: 0 }))
       await Promise.resolve()
     })
     await act(async () => {

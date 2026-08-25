@@ -40,10 +40,11 @@ const DRAG_INTENT = 'unpaved'
  * about twice as long as a motorcycle takes, and trip planning is duration-driven, so a
  * four-hour day shown as eight makes day-splitting nonsense.
  *
- * `Trip.estimated_duration_s` is the one that may — derived from distance and surface rather
- * than from the engine. It is not on `TripLeg` yet, so this shell cannot sum it the way it
- * sums distance; it arrives as a prop until the backend exposes it per leg. Nothing is shown
- * when it is absent: no placeholder, no zero.
+ * `RouteLegResponse.estimated_duration_s` is the one that may — derived server-side from
+ * distance and surface, so the speed table has one home rather than a copy per client. It
+ * arrives with every routed leg, so the shell reads it the way it reads distance. Nothing is
+ * shown when nothing has estimated it: no placeholder, and not zero, because zero is a
+ * duration and would read as "under 5m".
  *
  * `ascent_m` remains unexplained against its reference and stays off screen.
  */
@@ -59,8 +60,6 @@ export interface AppProps {
    * answers 501 — so today they arrive only from a caller or a loaded trip.
    */
   readonly pois?: readonly Poi[]
-  /** Riding time for the whole route, when something knows it. See the note above. */
-  readonly estimatedDurationS?: number
 }
 
 const NO_POIS: readonly Poi[] = []
@@ -70,7 +69,6 @@ export function App({
   mapId = MAP_ID,
   client = apiClient,
   pois = NO_POIS,
-  estimatedDurationS,
 }: AppProps = {}): React.JSX.Element {
   const { unit, setUnit } = useDistanceUnit()
   const [waypoints, setWaypoints] = useState<readonly Waypoint[]>([])
@@ -94,7 +92,7 @@ export function App({
    * genuine change of cadence rebuilds it.
    */
   const dragIntervalMs = capabilities.intervalFor(DRAG_INTENT)
-  const { legs, isRouting, error } = useRouteLeg(client, waypoints, draggedLegs)
+  const { legs, estimatedDurationS, isRouting, error } = useRouteLeg(client, waypoints, draggedLegs)
 
   /** Provisional geometry during a gesture. Never saved, never in undo history. */
   const [preview, setPreview] = useState<readonly TripLeg[] | null>(null)
@@ -212,7 +210,7 @@ export function App({
             <p aria-live="polite">
               {waypoints.length} point{waypoints.length === 1 ? '' : 's'} placed
               {distanceM > 0 && ` · ${formatDistance(distanceM, unit)}`}
-              {estimatedDurationS !== undefined && ` · ${formatDuration(estimatedDurationS)}`}
+              {estimatedDurationS !== null && ` · ${formatDuration(estimatedDurationS)}`}
               {isRouting && ' · routing…'}
             </p>
             <button type="button" onClick={removeLastWaypoint}>

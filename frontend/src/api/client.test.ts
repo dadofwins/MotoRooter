@@ -122,6 +122,7 @@ const LEG_RESPONSE: RouteLegResponse = {
     ascent_m: null,
   },
   live_update_interval_ms: 3000,
+  estimated_duration_s: 900,
 }
 
 describe('request shape', () => {

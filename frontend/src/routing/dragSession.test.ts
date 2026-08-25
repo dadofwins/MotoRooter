@@ -47,13 +47,18 @@ function leg(start: number, end: number, intent: TripLeg['intent'] = 'unpaved'):
   }
 }
 
+/** Wraps a leg in a response, so a new required field lands in one place, not fifteen. */
+function legResponse(leg: RouteLeg, live_update_interval_ms: number | null = 3000): RouteLegResponse {
+  return { leg, live_update_interval_ms, estimated_duration_s: 60 }
+}
+
 const TRIP: RouteEdit = {
   waypoints: [waypoint(47), waypoint(48), waypoint(49)],
   legs: [leg(0, 1), leg(1, 2)],
 }
 
 function fakeClient(
-  response: RouteLegResponse = { leg: routed([{ lat: 0, lon: 0 }]), live_update_interval_ms: 3000 },
+  response: RouteLegResponse = legResponse(routed([{ lat: 0, lon: 0 }])),
 ) {
   return {
     // Typed parameters, so the recorded calls are checked against the real request shape
@@ -126,7 +131,7 @@ describe('DragSession', () => {
       { lat: 47.5, lon: -120.3 },
       { lat: 48, lon: -120 },
     ])
-    const client = fakeClient({ leg: fresh, live_update_interval_ms: 3000 })
+    const client = fakeClient(legResponse(fresh))
     const { drag, onCommit } = session(client)
 
     drag.begin(TRIP, { legIndex: 0, grabbed: { lat: 47.5, lon: -120 } })
@@ -184,7 +189,7 @@ describe('DragSession', () => {
           signal?.addEventListener('abort', () => {
             reject(new DOMException('aborted', 'AbortError'))
           })
-          setTimeout(() => resolve({ leg: routed([{ lat: 0, lon: 0 }]), live_update_interval_ms: 0 }), 0)
+          setTimeout(() => resolve(legResponse(routed([{ lat: 0, lon: 0 }]), 0)), 0)
         })
       }),
     }

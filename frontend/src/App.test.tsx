@@ -214,6 +214,7 @@ const ROUTE_RESPONSE: RouteLegResponse = {
     ascent_m: null,
   },
   live_update_interval_ms: 0,
+  estimated_duration_s: 900,
 }
 
 function fakeRouter(response: RouteLegResponse = ROUTE_RESPONSE) {
@@ -393,6 +394,7 @@ describe('App dragging the route', () => {
             routed_from: { intent: request.intent, waypoints: [...request.waypoints] },
           },
           live_update_interval_ms: 0,
+          estimated_duration_s: 900,
         }),
       ),
       routingCapabilities: vi.fn((_options?: RequestOptions) => Promise.resolve(CAPABILITIES)),

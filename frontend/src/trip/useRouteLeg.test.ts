@@ -35,6 +35,7 @@ const RESPONSE: RouteLegResponse = {
     { lat: 48, lon: -120 },
   ]),
   live_update_interval_ms: 0,
+  estimated_duration_s: 900,
 }
 
 function fakeClient(response: RouteLegResponse = RESPONSE) {
@@ -203,7 +204,7 @@ describe('useRouteLeg', () => {
       { lat: 49, lon: -120 },
     ])
     await act(async () => {
-      resolvers[1]?.({ leg: newest, live_update_interval_ms: 0 })
+      resolvers[1]?.({ leg: newest, live_update_interval_ms: 0, estimated_duration_s: 900 })
       await Promise.resolve()
     })
     await act(async () => {

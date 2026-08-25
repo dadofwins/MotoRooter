@@ -92,6 +92,50 @@ body {
   box-shadow: 0 1px 4px rgb(0 0 0 / 0.4);
 }
 
+/* The slow path. Sits with the route it acts on rather than in a toolbar. */
+.replan {
+  margin-top: 1rem;
+  padding-top: 1rem;
+  border-top: 1px solid rgb(0 0 0 / 0.12);
+}
+
+.replan button {
+  width: 100%;
+  padding: 0.5rem 0.75rem;
+  font: inherit;
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: #fff;
+  background: #1f6feb;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.replan button:disabled {
+  color: rgb(255 255 255 / 0.8);
+  background: #7f9fd0;
+  cursor: default;
+}
+
+.replan__progress {
+  margin: 0.5rem 0 0;
+  font-size: 0.8125rem;
+  color: rgb(0 0 0 / 0.55);
+}
+
+/* Stale suggestions a rider cannot detect are worse than none, so this is a warning rather
+   than a footnote. */
+.replan__stale {
+  margin: 0.5rem 0 0;
+  padding: 0.5rem 0.625rem;
+  font-size: 0.8125rem;
+  line-height: 1.4;
+  color: #3d2b00;
+  background: #fdf1c7;
+  border-radius: 6px;
+}
+
 /* Unit preference. It sits with the numbers it changes rather than in a settings screen
    nobody opens. */
 .units {
@@ -417,8 +461,13 @@ body {
   }
 
   .poi-dialog,
-  .surface {
+  .surface,
+  .replan {
     border-top-color: rgb(255 255 255 / 0.14);
+  }
+
+  .replan__progress {
+    color: rgb(255 255 255 / 0.55);
   }
 
   .surface__distance {

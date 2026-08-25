@@ -14,6 +14,8 @@ import {
 import type {
   Coordinate,
   CreateTripRequest,
+  ReplanEvent,
+  ReplanRequest,
   Poi,
   UpdateTripRequest,
   RouteLegInput,
@@ -235,6 +237,15 @@ const ROUTE_RESPONSE: RouteLegResponse = routeLegResponse({
  */
 function fakeRouter(response: RouteLegResponse = ROUTE_RESPONSE) {
   return {
+    // eslint-disable-next-line @typescript-eslint/require-await
+    replan: vi.fn(async function* (
+      _slug: string,
+      _request: ReplanRequest,
+      _options?: RequestOptions,
+    ) {
+      // Nothing found, which is the honest default and today's common outcome.
+      yield { stage: 'done', message: 'Done', pois: [], legs: [], progress: 1 }
+    }),
     createTrip: vi.fn((request: CreateTripRequest, _options?: RequestOptions) =>
       Promise.resolve(tripFixture({ slug: request.slug ?? 'derived', name: request.name })),
     ),
@@ -825,5 +836,130 @@ describe('App saving the trip', () => {
     expect(
       await screen.findByText(/somebody else edited/i, {}, { timeout: 3000 }),
     ).toBeInTheDocument()
+  })
+})
+
+/**
+ * The slow path, from the button to pins on the map.
+ *
+ * This is the last hop between discovery and a rider seeing anything, and the states that
+ * matter are the unglamorous ones: a run that takes half a minute, and a run that finds
+ * nothing — which today is the common outcome.
+ */
+describe('App finding places', () => {
+  function streaming(events: readonly ReplanEvent[], { thenHang = false } = {}) {
+    return {
+      ...fakeRouter(),
+      replan: vi.fn(async function* (
+        _slug: string,
+        _request: ReplanRequest,
+        _options?: RequestOptions,
+      ) {
+        for (const item of events) yield item
+        // A run that is still going. Without this the generator returns immediately and the
+        // in-progress states unmount before a test can look at them — which made one
+        // assertion vacuous rather than failing.
+        if (thenHang) await new Promise(() => undefined)
+      }),
+    }
+  }
+
+  async function routedTrip(client: ReturnType<typeof streaming>) {
+    const fake = createFakeMaps()
+    render(<App mapLoader={fake.loader} mapId="motorooter-test-vector" client={client} />)
+    await mapReady(fake)
+    fake.clickMap(47.6, -120.7)
+    fake.clickMap(48.1, -120.2)
+    // The button needs a saved trip to address.
+    await waitFor(() => expect(client.createTrip).toHaveBeenCalled(), { timeout: 3000 })
+    return { fake }
+  }
+
+  it('offers nothing to find until there is a route to find it along', async () => {
+    const client = streaming([])
+    const fake = createFakeMaps()
+    render(<App mapLoader={fake.loader} mapId="motorooter-test-vector" client={client} />)
+    await mapReady(fake)
+
+    expect(screen.queryByRole('button', { name: /find places/i })).not.toBeInTheDocument()
+  })
+
+  it('puts pins on the map as they are found, not when the run ends', async () => {
+    const client = streaming([
+      { stage: 'discovery', message: 'Searching', pois: [], legs: [], progress: 0.2 },
+      {
+        stage: 'discovery',
+        message: 'Found one',
+        pois: [poiFixture({ id: 'a', coordinate: { lat: 47.8, lon: -120.5 } })],
+        legs: [],
+        progress: 0.6,
+      },
+      { stage: 'done', message: 'Done', pois: [], legs: [], progress: 1 },
+    ])
+    const { fake } = await routedTrip(client)
+
+    fireEvent.click(screen.getByRole('button', { name: /find places/i }))
+
+    // Three pins: two waypoints and the discovered place.
+    await waitFor(() => expect(attachedPins(fake)).toHaveLength(3))
+  })
+
+  it('says what it is doing while it does it', async () => {
+    const client = streaming(
+      [{ stage: 'discovery', message: 'Searching for camps', pois: [], legs: [], progress: 0.4 }],
+      { thenHang: true },
+    )
+    await routedTrip(client)
+
+    fireEvent.click(screen.getByRole('button', { name: /find places/i }))
+
+    // A stage and a percentage, because "working" for thirty seconds reads as a hang.
+    expect(await screen.findByText(/Searching for camps/)).toBeInTheDocument()
+    expect(screen.getByText(/40%/)).toBeInTheDocument()
+  })
+
+  it('says it found nothing rather than leaving an empty map', async () => {
+    // The common outcome today: discovery yields about two POIs from twenty-seven results.
+    const client = streaming([{ stage: 'done', message: 'Done', pois: [], legs: [], progress: 1 }])
+    await routedTrip(client)
+
+    fireEvent.click(screen.getByRole('button', { name: /find places/i }))
+
+    expect(await screen.findByText(/no places found/i)).toBeInTheDocument()
+  })
+
+  it('does not run twice at once', async () => {
+    const client = streaming(
+      [{ stage: 'discovery', message: 'Searching', pois: [], legs: [], progress: 0.1 }],
+      { thenHang: true },
+    )
+    await routedTrip(client)
+
+    fireEvent.click(screen.getByRole('button', { name: /find places/i }))
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: /finding places/i })).toBeDisabled(),
+    )
+  })
+
+  it('keeps the map usable while the slow path runs', async () => {
+    // The two speeds must never block each other: dragging during a replan has to work.
+    const client = streaming(
+      [{ stage: 'discovery', message: 'Searching', pois: [], legs: [], progress: 0.1 }],
+      { thenHang: true },
+    )
+    const { fake } = await routedTrip(client)
+    await waitFor(() => expect(fake.polylines.length).toBeGreaterThan(0))
+
+    fireEvent.click(screen.getByRole('button', { name: /find places/i }))
+    act(() => {
+      fake.polylines[0]?.mouseDown({ lat: 47.9, lon: -120.4 })
+    })
+
+    // The gesture started, mid-replan.
+    expect(client.routeLeg).toHaveBeenCalled()
+    act(() => {
+      fake.maps[0]?.mouseUp({ lat: 47.9, lon: -121 })
+    })
+    await waitFor(() => expect(client.routeLeg).toHaveBeenCalledTimes(2))
   })
 })

@@ -28,6 +28,21 @@ const UNBUILT = 'That is not built yet.'
 const UNKNOWN = 'Something went wrong while routing. Try again.'
 const PLACE_UNKNOWN = 'Details for this place could not be loaded.'
 
+/**
+ * The same mapping, for a discovery run.
+ *
+ * Discovery answers 501 when the instance has no search, model or Places credentials, which is
+ * how the offline backend runs — so the generic "not built yet" would be a lie in the one
+ * configuration a rider is most likely to meet it in. It is built; this instance cannot reach
+ * what it needs.
+ */
+export function replanErrorMessage(error: unknown): string {
+  if (isNotImplemented(error)) {
+    return 'Finding places needs search credentials, which this instance is running without.'
+  }
+  return placeErrorMessage(error)
+}
+
 /** The same mapping, for a place lookup rather than a route. */
 export function placeErrorMessage(error: unknown): string {
   if (error instanceof ApiNetworkError) return UNREACHABLE

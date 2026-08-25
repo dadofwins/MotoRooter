@@ -31,8 +31,9 @@ import { isVerified } from './map/poiPin'
 import { PoiDetailDialog } from './poi/PoiDetailDialog'
 import { DragSession } from './routing/dragSession'
 import { addPoiToRoute, type RouteEdit } from './routing/tripEdits'
-import { routeErrorMessage } from './trip/routeErrorMessage'
+import { replanErrorMessage, routeErrorMessage } from './trip/routeErrorMessage'
 import { SurfaceSummary } from './trip/SurfaceSummary'
+import { needsReplan, useReplan } from './trip/useReplan'
 import { useRouteLeg } from './trip/useRouteLeg'
 import { useRoutingCapabilities } from './trip/useRoutingCapabilities'
 import { useStoredTrip, useTripSave } from './trip/useTripDocument'
@@ -42,7 +43,13 @@ import { useDistanceUnit } from './units/useDistanceUnit'
 /** Only the calls the shell makes, so a test double stays small. */
 type AppClient = Pick<
   ApiClient,
-  'routeLeg' | 'routingCapabilities' | 'placeDetail' | 'createTrip' | 'getTrip' | 'updateTrip'
+  | 'routeLeg'
+  | 'routingCapabilities'
+  | 'placeDetail'
+  | 'createTrip'
+  | 'getTrip'
+  | 'updateTrip'
+  | 'replan'
 >
 
 /** The intent a dragged leg keeps. Matches the one the slice routes with. */
@@ -108,7 +115,6 @@ export function App({
   // document once they do not.
   const live: Edited = edit.base === stored ? edit : fromStored()
   const waypoints = live.waypoints
-  const placed = live.pois
 
   /** Applies a change to whichever version is live, so an edit never resurrects a stale one. */
   const change = useCallback(
@@ -239,6 +245,33 @@ export function App({
   }, [])
 
   /**
+   * The slow path. Explicitly triggered, streamed into the map, and never blocking the fast
+   * one — dragging during a replan keeps working because nothing here waits on it.
+   */
+  const replan = useReplan(client)
+
+  /**
+   * Whether the suggestions are stale relative to the route.
+   *
+   * Derived rather than read: the flag is serialised on `TripSummary` and not on `Trip`. Shown
+   * on the button because stale suggestions a rider cannot detect are worse than none.
+   */
+  const stale = needsReplan(stored)
+
+  /**
+   * Places on the map: the trip's own, plus whatever the running replan has found so far.
+   *
+   * A union rather than a merge into state. Copying the stream into the trip needed a setState
+   * inside an effect watching it, which cascades renders; deriving gives pins that appear as
+   * they resolve and still get saved, because this is what the save is fed.
+   */
+  const placed = useMemo(() => {
+    if (replan.pois.length === 0) return live.pois
+    const known = new Set(live.pois.map((poi) => poi.id))
+    return [...live.pois, ...replan.pois.filter((found) => !known.has(found.id))]
+  }, [live.pois, replan.pois])
+
+  /**
    * Saving: created on the first waypoint, written on a debounce, addressed by a slug in the
    * URL. Without it nothing survived a reload and nothing could be shared, and both chat and
    * replan are addressed by that slug.
@@ -293,6 +326,45 @@ export function App({
         )}
 
         <SurfaceSummary legs={shownLegs} unit={unit} />
+
+        {save.slug !== null && (
+          <div className="replan">
+            <button
+              type="button"
+              onClick={() => {
+                replan.start(save.slug ?? '')
+              }}
+              disabled={replan.isRunning || waypoints.length < 2}
+            >
+              {replan.isRunning ? 'Finding places…' : 'Find places along the route'}
+            </button>
+            {replan.isRunning && (
+              // Which stage, not a spinner: "working" for thirty seconds is indistinguishable
+              // from a hang, and this run genuinely takes that long.
+              <p className="replan__progress" aria-live="polite">
+                {replan.message === '' ? (replan.stage ?? 'Starting…') : replan.message}
+                {replan.progress !== null && ` · ${String(Math.round(replan.progress * 100))}%`}
+              </p>
+            )}
+            {!replan.isRunning && stale && placed.length > 0 && (
+              // The route moved after these were found, so they describe a different trip.
+              <p className="replan__stale">
+                The route has changed since these places were found.
+              </p>
+            )}
+            {!replan.isRunning && replan.foundNothing && (
+              // A real outcome, and a common one today. Better said than left as an empty map.
+              <p className="replan__progress">No places found along this route.</p>
+            )}
+            {replan.error !== null && (
+              <p className="route-error" role="alert">
+                {/* Its own mapping: a 501 here means this instance has no credentials, not
+                    that the feature is unfinished. */}
+                {replanErrorMessage(replan.error)}
+              </p>
+            )}
+          </div>
+        )}
 
         {save.slug !== null && (
           // The link is the sharing model, so it is said rather than left in the address bar:

@@ -164,6 +164,20 @@ by chaining `commit && push` behind a check whose exit code a pipe had swallowed
 engineers had `make handoff` gating them and the integrator had good intentions; only one of
 those worked. `SKIP_PUSH_CHECK=1` is the escape hatch, and using it should feel deliberate.
 
+## Keeping everyone fed
+
+```sh
+scripts/queue-status
+```
+
+Who is on what, and — the point of it — who has **nothing to do**. The integrator's attention
+is event-driven: the mailbox wakes them when work *arrives* and stays silent when work
+*stops*. An engineer whose branch was merged and who was never given a next task is invisible
+to every other mechanism here. That is not hypothetical; one sat idle through three review
+rounds before Tim noticed.
+
+Run it after every merge. A merge notice is not an assignment.
+
 ## Escalation
 
 Review rounds are capped at **two** per branch. If a disagreement survives two rounds, the

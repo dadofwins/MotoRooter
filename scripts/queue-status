@@ -1,0 +1,43 @@
+#!/usr/bin/env bash
+# Who is working on what, and who has nothing to do.
+#
+# Exists because the integrator's attention is event-driven: the mailbox wakes them when
+# work ARRIVES and stays silent when work STOPS. An engineer whose branch was merged and who
+# was never given a next task is invisible — which is exactly how one sat idle while three
+# review rounds went past.
+
+set -euo pipefail
+cd "$(dirname "$(git rev-parse --path-format=absolute --git-common-dir)")"
+git fetch -q origin 2>/dev/null || true
+
+printf '%-12s %-24s %-9s %s\n' ROLE BRANCH STATE DETAIL
+for entry in "backend:../MotoRooter-be" "frontend:../MotoRooter-fe"; do
+  role="${entry%%:*}"; dir="${entry#*:}"
+  [[ -d "$dir" ]] || { printf '%-12s %-24s %-9s\n' "$role" "-" "MISSING"; continue; }
+
+  branch=$(git -C "$dir" rev-parse --abbrev-ref HEAD 2>/dev/null || echo '?')
+  dirty=$(git -C "$dir" status --porcelain 2>/dev/null | wc -l)
+  unread=$(ls -1 "$(dirname "$PWD")/motorooter-mail/$role/inbox" 2>/dev/null | wc -l)
+
+  # A clean tree with no commits ahead of main is ambiguous: the engineer has either
+  # finished and been left without work, or just created the branch and not committed yet.
+  # Those need opposite responses, so distinguish them by whether the branch was ever
+  # pushed — a name that exists on origin has been worked and handed off.
+  ahead=$(git -C "$dir" rev-list --count "origin/main..$branch" 2>/dev/null || echo 0)
+  pushed=$(git show-ref --verify --quiet "refs/remotes/origin/$branch" && echo yes || echo no)
+
+  if [[ "$dirty" -eq 0 && "$ahead" -eq 0 && "$pushed" == "yes" ]]; then
+    state=IDLE
+    detail="branch merged, tree clean — needs an assignment"
+  elif [[ "$dirty" -eq 0 && "$ahead" -eq 0 ]]; then
+    state=STARTING
+    detail="fresh branch, nothing committed yet"
+  elif [[ "$dirty" -gt 0 ]]; then
+    state=WORKING; detail="$dirty uncommitted file(s)"
+  else
+    state=COMMITTED; detail="$ahead commit(s) not yet merged"
+  fi
+  [[ "$unread" -gt 0 ]] && detail="$detail; $unread unread"
+
+  printf '%-12s %-24s %-9s %s\n' "$role" "$branch" "$state" "$detail"
+done

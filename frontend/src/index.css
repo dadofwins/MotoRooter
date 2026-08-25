@@ -92,6 +92,109 @@ body {
   box-shadow: 0 1px 4px rgb(0 0 0 / 0.4);
 }
 
+/* Surface breakdown. Colours are the route line's own, so one encoding is learned rather
+   than two, and validated for colour-blind separation in both modes (worst adjacent pair
+   ΔE 30 protan). Unsurveyed stays neutral grey on purpose: greyness is the meaning. */
+.surface {
+  margin-top: 1rem;
+  padding-top: 1rem;
+  border-top: 1px solid rgb(0 0 0 / 0.12);
+}
+
+/* A 2px gap in the surface colour separates the segments — a gap, never a border. */
+.surface__bar {
+  display: flex;
+  gap: 2px;
+  height: 10px;
+  margin-bottom: 0.625rem;
+}
+
+.surface__segment {
+  /* A 1 km dirt section on a 300 km route is 0.3% — about a pixel in this rail, and
+     effectively invisible. The floor keeps a real share from disappearing; it distorts the
+     bar very slightly, which is the right trade when the alternative is losing the segment
+     the rider is looking for. The exact figure is in the list beside it either way. */
+  min-width: 3px;
+  border-radius: 2px;
+}
+
+.surface__segment:first-child {
+  border-start-start-radius: 4px;
+  border-end-start-radius: 4px;
+}
+
+.surface__segment:last-child {
+  border-start-end-radius: 4px;
+  border-end-end-radius: 4px;
+}
+
+.surface__segment--unpaved,
+.surface__swatch--unpaved {
+  background: #c2571a;
+}
+
+.surface__segment--paved,
+.surface__swatch--paved {
+  background: #1f6feb;
+}
+
+.surface__segment--unknown,
+.surface__swatch--unknown {
+  background: #6b7280;
+}
+
+.surface__legend {
+  display: grid;
+  gap: 0.25rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: 0.8125rem;
+}
+
+.surface__legend li {
+  display: grid;
+  grid-template-columns: 0.75rem 1fr auto auto;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.surface__swatch {
+  width: 0.75rem;
+  height: 0.75rem;
+  border-radius: 2px;
+}
+
+/* Values wear text tokens, never the series colour. */
+.surface__share {
+  font-variant-numeric: tabular-nums;
+}
+
+.surface__distance {
+  font-variant-numeric: tabular-nums;
+  color: rgb(0 0 0 / 0.55);
+}
+
+/* Where hue cannot be relied on at all, texture carries identity — 45 degrees and its
+   mirror, never horizontal or vertical, which would read as gridlines. */
+@media (forced-colors: active), print {
+  .surface__segment--unpaved {
+    background-image: repeating-linear-gradient(
+      45deg,
+      transparent 0 3px,
+      currentColor 3px 5px
+    );
+  }
+
+  .surface__segment--unknown {
+    background-image: repeating-linear-gradient(
+      135deg,
+      transparent 0 3px,
+      currentColor 3px 5px
+    );
+  }
+}
+
 /* POI pins. Three axes carry the meaning: shape per group, glyph per category, colour last.
    A rider reads shape in sunlight long before hue, and may not read hue at all. */
 .poi {
@@ -287,8 +390,13 @@ body {
     border-color: rgb(0 0 0 / 0.6);
   }
 
-  .poi-dialog {
+  .poi-dialog,
+  .surface {
     border-top-color: rgb(255 255 255 / 0.14);
+  }
+
+  .surface__distance {
+    color: rgb(255 255 255 / 0.55);
   }
 
   .poi-dialog__kind,

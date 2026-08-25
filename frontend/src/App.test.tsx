@@ -278,7 +278,9 @@ describe('App routing the placed points', () => {
     fake.clickMap(47.6, -120.7)
     fake.clickMap(48.1, -120.2)
 
-    expect(await screen.findByText(/42 km/i)).toBeInTheDocument()
+    // Specific about which figure: the surface breakdown reports distances too, so a bare
+    // /42 km/ matches more than one thing.
+    expect(await screen.findByText(/points placed/)).toHaveTextContent('42 km')
   })
 
   it('removes the drawn route when the points that made it are undone', async () => {
@@ -292,7 +294,7 @@ describe('App routing the placed points', () => {
     fake.clickMap(47.6, -120.7)
     fake.clickMap(48.1, -120.2)
     await waitFor(() => expect(fake.polylines[0]?.map).not.toBeNull())
-    expect(await screen.findByText(/42 km/i)).toBeInTheDocument()
+    expect(await screen.findByText(/points placed/)).toHaveTextContent('42 km')
 
     fireEvent.click(screen.getByRole('button', { name: /remove last point/i }))
 

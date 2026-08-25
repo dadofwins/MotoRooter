@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import { describe, expect, it } from 'vitest'
 import { App } from './App'
 import type { GoogleMaps } from './map/loadGoogleMaps'
@@ -8,6 +8,8 @@ import type { GoogleMaps } from './map/loadGoogleMaps'
  * requirement.** Placing the start and end of a trip has to work with nothing but the
  * mouse, so these tests drive the map rather than the chat rail.
  */
+
+const PIN_PROBE_ID = 'pin-probe'
 
 interface FakeMarker {
   readonly options: Record<string, unknown>
@@ -60,18 +62,45 @@ function createFakeMaps() {
   }
 }
 
-/** Accessible names of the pins currently on the map. */
-function pinLabels(fake: ReturnType<typeof createFakeMaps>): (string | null)[] {
+/** The pin elements currently attached to the map. */
+function attachedPins(fake: ReturnType<typeof createFakeMaps>): HTMLElement[] {
   return fake.markers
     .filter((marker) => marker.map !== null)
-    .map((marker) => (marker.options['content'] as HTMLElement).getAttribute('aria-label'))
+    .map((marker) => marker.options['content'] as HTMLElement)
+}
+
+/**
+ * Waits for `expected` pins, then reads their names in route order.
+ *
+ * The wait and the DOM work are separate on purpose. `waitFor` retries whenever the
+ * document mutates, so a polled callback that attaches nodes retriggers itself forever.
+ * Only the settled result is put in the document, and into a probe node rather than
+ * `document.body`, which holds the React root under test.
+ */
+async function pinLabels(
+  fake: ReturnType<typeof createFakeMaps>,
+  expected: number,
+): Promise<string[]> {
+  await waitFor(() => {
+    expect(attachedPins(fake)).toHaveLength(expected)
+  })
+
+  const probe = document.getElementById(PIN_PROBE_ID) ?? document.createElement('div')
+  probe.id = PIN_PROBE_ID
+  document.body.append(probe)
+  probe.replaceChildren(...attachedPins(fake))
+
+  // Filtered by role: a pin the browser would treat as a generic div is not a pin.
+  return within(probe)
+    .queryAllByRole('img')
+    .map((pin) => pin.title)
 }
 
 describe('App', () => {
   it('opens by telling the user both ways of starting', () => {
     const fake = createFakeMaps()
 
-    render(<App mapLoader={fake.loader} />)
+    render(<App mapLoader={fake.loader} mapId="motorooter-test-vector" />)
 
     expect(screen.getByText(/describe your trip/i)).toBeInTheDocument()
     expect(screen.getByText(/set a start and end point on the map/i)).toBeInTheDocument()
@@ -79,22 +108,22 @@ describe('App', () => {
 
   it('places the start and the end from map clicks alone', async () => {
     const fake = createFakeMaps()
-    render(<App mapLoader={fake.loader} />)
+    render(<App mapLoader={fake.loader} mapId="motorooter-test-vector" />)
     await waitFor(() => expect(screen.queryByRole('status')).not.toBeInTheDocument())
 
     fake.clickMap(47.6, -120.7)
-    await waitFor(() => expect(pinLabels(fake)).toEqual(['Start']))
+    expect(await pinLabels(fake, 1)).toEqual(['Start'])
 
     fake.clickMap(48.1, -120.2)
-    await waitFor(() => expect(pinLabels(fake)).toEqual(['Start', 'End']))
+    expect(await pinLabels(fake, 2)).toEqual(['Start', 'End'])
 
     fake.clickMap(48.5, -119.9)
-    await waitFor(() => expect(pinLabels(fake)).toEqual(['Start', 'Via point', 'End']))
+    expect(await pinLabels(fake, 3)).toEqual(['Start', 'Via point', 'End'])
   })
 
   it('reports the point count, so the map is not the only feedback', async () => {
     const fake = createFakeMaps()
-    render(<App mapLoader={fake.loader} />)
+    render(<App mapLoader={fake.loader} mapId="motorooter-test-vector" />)
     await waitFor(() => expect(screen.queryByRole('status')).not.toBeInTheDocument())
 
     fake.clickMap(47.6, -120.7)
@@ -104,17 +133,17 @@ describe('App', () => {
 
   it('offers an undo for a misplaced point, and only when there is one to undo', async () => {
     const fake = createFakeMaps()
-    render(<App mapLoader={fake.loader} />)
+    render(<App mapLoader={fake.loader} mapId="motorooter-test-vector" />)
     await waitFor(() => expect(screen.queryByRole('status')).not.toBeInTheDocument())
 
     expect(screen.queryByRole('button', { name: /remove last point/i })).not.toBeInTheDocument()
 
     fake.clickMap(47.6, -120.7)
     fake.clickMap(48.1, -120.2)
-    await waitFor(() => expect(pinLabels(fake)).toHaveLength(2))
+    expect(await pinLabels(fake, 2)).toHaveLength(2)
 
     screen.getByRole('button', { name: /remove last point/i }).click()
 
-    await waitFor(() => expect(pinLabels(fake)).toEqual(['Start']))
+    expect(await pinLabels(fake, 1)).toEqual(['Start'])
   })
 })

@@ -16,6 +16,16 @@ describe('createMapOptions', () => {
     expect(options.mapId).toBe('motorooter-vector')
   })
 
+  it('drops vector along with the Map ID, since vector cannot work without one', () => {
+    // These two have to travel together. Asking for vector with no Map ID is a request
+    // Google cannot honour, and an earlier version of this test claimed a raster fallback
+    // while the code hardcoded VECTOR — both could not be true.
+    const options = createMapOptions({ ...base, mapId: '' })
+
+    expect('mapId' in options).toBe(false)
+    expect('renderingType' in options).toBe(false)
+  })
+
   it('converts lon to Google’s lng at the boundary, so the domain keeps its own naming', () => {
     const options = createMapOptions(base)
 
@@ -49,10 +59,4 @@ describe('createMapOptions', () => {
     expect(createMapOptions({ ...base, colorScheme: 'DARK' }).colorScheme).toBe('DARK')
   })
 
-  it('omits mapId rather than sending an empty one when none is configured', () => {
-    // An empty mapId is an error to the API, where an absent one falls back to raster.
-    const options = createMapOptions({ ...base, mapId: '' })
-
-    expect('mapId' in options).toBe(false)
-  })
 })

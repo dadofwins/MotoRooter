@@ -32,8 +32,10 @@ export function createMapOptions(input: MapOptionsInput): google.maps.MapOptions
   return {
     center: toLatLng(input.center),
     zoom: input.zoom,
-    renderingType: 'VECTOR',
-    ...(mapId === '' ? {} : { mapId }),
+    // Vector rendering requires a Map ID, so the two travel together or not at all.
+    // Asking for vector without one is a request Google cannot honour, and an empty mapId
+    // is an error rather than an absent one.
+    ...(mapId === '' ? {} : { mapId, renderingType: 'VECTOR' }),
     colorScheme: input.colorScheme ?? 'FOLLOW_SYSTEM',
 
     // One-finger pan. The alternative makes a phone in a parking lot infuriating.

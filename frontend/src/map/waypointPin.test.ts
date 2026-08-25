@@ -1,4 +1,5 @@
-import { describe, expect, it } from 'vitest'
+import { screen } from '@testing-library/dom'
+import { afterEach, describe, expect, it } from 'vitest'
 import { createWaypointPin, waypointKind } from './waypointPin'
 
 /**
@@ -21,12 +22,26 @@ describe('createWaypointPin', () => {
   })
 
   it('names itself for a screen reader, including any user-given place name', () => {
-    const unnamed = createWaypointPin({ kind: 'start', label: '1' })
-    const named = createWaypointPin({ kind: 'end', label: '4', name: 'Sun Mountain Lodge' })
+    // Queried by role and *computed accessible name*, not by reading the attribute back.
+    // ARIA prohibits aria-label on a generic element, so a bare div with the attribute set
+    // passes an attribute check while a screen reader announces nothing at all.
+    document.body.append(
+      createWaypointPin({ kind: 'start', label: '1' }),
+      createWaypointPin({ kind: 'end', label: '4', name: 'Sun Mountain Lodge' }),
+    )
 
-    expect(unnamed.getAttribute('aria-label')).toBe('Start')
-    expect(named.getAttribute('aria-label')).toBe('End: Sun Mountain Lodge')
+    expect(screen.getByRole('img', { name: 'Start' })).toBeInTheDocument()
+    expect(screen.getByRole('img', { name: 'End: Sun Mountain Lodge' })).toBeInTheDocument()
   })
+
+  it('carries a name the map itself can use as a tooltip', () => {
+    // AdvancedMarkerElement takes a `title`; without one, an unnamed waypoint hovers blank.
+    expect(createWaypointPin({ kind: 'via', label: '2' }).title).toBe('Via point')
+  })
+})
+
+afterEach(() => {
+  document.body.replaceChildren()
 })
 
 describe('waypointKind', () => {

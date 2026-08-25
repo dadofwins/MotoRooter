@@ -54,6 +54,22 @@ body {
   background: #e8e6e1;
 }
 
+/* Degraded-but-working state. A banner, not an overlay: the map underneath is usable and
+   nothing should have to be dismissed to get at it. */
+.map-canvas__notice {
+  position: absolute;
+  inset: auto 0.75rem 0.75rem;
+  margin: 0;
+  padding: 0.5rem 0.75rem;
+  font-size: 0.8125rem;
+  line-height: 1.4;
+  color: #3d2b00;
+  background: #fdf1c7;
+  border: 1px solid #e0c766;
+  border-radius: 6px;
+  box-shadow: 0 1px 6px rgb(0 0 0 / 0.2);
+}
+
 .map-canvas__message {
   max-width: 32rem;
   margin: 0;

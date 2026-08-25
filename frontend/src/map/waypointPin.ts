@@ -36,7 +36,14 @@ export function createWaypointPin(input: WaypointPinInput): HTMLElement {
   pin.textContent = input.label
 
   const kindText = ACCESSIBLE_KIND[input.kind]
-  // The shape and colour carry this information visually; the label carries it otherwise.
-  pin.setAttribute('aria-label', input.name === undefined ? kindText : `${kindText}: ${input.name}`)
+  const name = input.name === undefined ? kindText : `${kindText}: ${input.name}`
+
+  // `role="img"`, not a bare div: ARIA prohibits aria-label on a generic element, so
+  // browsers drop it and a screen reader announces nothing. The pin *is* a graphic whose
+  // meaning is carried by shape and colour, which is exactly what role="img" describes.
+  pin.setAttribute('role', 'img')
+  pin.setAttribute('aria-label', name)
+  // Also the marker's tooltip, so an unnamed waypoint is identifiable on hover too.
+  pin.title = name
   return pin
 }

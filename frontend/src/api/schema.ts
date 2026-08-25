@@ -164,7 +164,11 @@ export interface paths {
         put?: never;
         /**
          * Start a replan (not yet implemented)
-         * @description Runs LLM route search, POI discovery, and Places enrichment, streaming Server-Sent Events whose data is a ReplanEvent. Explicitly user-triggered — never fired automatically by a route edit.
+         * @description Runs LLM route search, POI discovery, and Places enrichment.
+         *
+         *     **Streams newline-delimited JSON** (`application/x-ndjson`): one `ReplanEvent` object per line, terminated by `\n`. Not Server-Sent Events — this is a POST with a request body, so `EventSource` cannot consume it, and hand-parsing SSE framing over `fetch` would cost the framing overhead for none of the benefit. Clients must tolerate a chunk boundary landing mid-line.
+         *
+         *     Explicitly user-triggered — never fired automatically by a route edit.
          */
         post: operations["replan_api_trips__slug__replan_post"];
         delete?: never;
@@ -703,7 +707,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["PoiDetailResponse"];
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
             /** @description Bad Gateway */
@@ -1334,7 +1338,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description OK */
+            /** @description GPX file. */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -1394,7 +1398,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
             /** @description Bad Gateway */
@@ -1432,6 +1436,15 @@ export interface operations {
             };
         };
         responses: {
+            /** @description Stream of ReplanEvent objects, one per line. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/x-ndjson": components["schemas"]["ReplanEvent"];
+                };
+            };
             /** @description Bad Request */
             400: {
                 headers: {
@@ -1477,13 +1490,13 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description Successful Response */
+            /** @description Not implemented yet. */
             501: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ReplanEvent"];
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
             /** @description Bad Gateway */

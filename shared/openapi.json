@@ -1000,7 +1000,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/PoiDetailResponse"
+                  "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
             },
@@ -1748,7 +1748,7 @@
             "content": {
               "application/gpx+xml": {}
             },
-            "description": "OK"
+            "description": "GPX file."
           },
           "400": {
             "content": {
@@ -1803,7 +1803,9 @@
           "501": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
               }
             },
             "description": "Successful Response"
@@ -1837,7 +1839,7 @@
     },
     "/api/trips/{slug}/replan": {
       "post": {
-        "description": "Runs LLM route search, POI discovery, and Places enrichment, streaming Server-Sent Events whose data is a ReplanEvent. Explicitly user-triggered \u2014 never fired automatically by a route edit.",
+        "description": "Runs LLM route search, POI discovery, and Places enrichment.\n\n**Streams newline-delimited JSON** (`application/x-ndjson`): one `ReplanEvent` object per line, terminated by `\\n`. Not Server-Sent Events \u2014 this is a POST with a request body, so `EventSource` cannot consume it, and hand-parsing SSE framing over `fetch` would cost the framing overhead for none of the benefit. Clients must tolerate a chunk boundary landing mid-line.\n\nExplicitly user-triggered \u2014 never fired automatically by a route edit.",
         "operationId": "replan_api_trips__slug__replan_post",
         "parameters": [
           {
@@ -1861,6 +1863,16 @@
           "required": true
         },
         "responses": {
+          "200": {
+            "content": {
+              "application/x-ndjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReplanEvent"
+                }
+              }
+            },
+            "description": "Stream of ReplanEvent objects, one per line."
+          },
           "400": {
             "content": {
               "application/json": {
@@ -1915,11 +1927,11 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ReplanEvent"
+                  "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
             },
-            "description": "Successful Response"
+            "description": "Not implemented yet."
           },
           "502": {
             "content": {

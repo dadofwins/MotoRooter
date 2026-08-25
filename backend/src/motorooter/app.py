@@ -7,6 +7,7 @@ it to static files at build time.
 
 import os
 from pathlib import Path
+from typing import Any
 
 from fastapi import FastAPI
 from fastapi.responses import FileResponse
@@ -15,6 +16,7 @@ from fastapi.staticfiles import StaticFiles
 from motorooter.api.exception_handlers import register_exception_handlers
 from motorooter.api.routers import places, routing, trips
 from motorooter.api.schemas import HealthResponse
+from motorooter.api.streaming import apply_streaming_media_types
 from motorooter.routing.factory import RoutingSettings, build_routing
 from motorooter.trips.store import InMemoryTripStore, TripStore
 
@@ -67,7 +69,24 @@ def create_app(
     app.include_router(places.router)
 
     _mount_frontend(app)
+    _install_openapi_postprocess(app)
     return app
+
+
+def _install_openapi_postprocess(app: FastAPI) -> None:
+    """Correct streaming media types in the generated document.
+
+    The frontend's TypeScript is generated from this schema, so it must describe what the
+    server actually sends.
+    """
+    base = app.openapi
+
+    def openapi() -> dict[str, Any]:
+        if app.openapi_schema is None:
+            app.openapi_schema = apply_streaming_media_types(base())
+        return app.openapi_schema
+
+    app.openapi = openapi  # type: ignore[method-assign]
 
 
 def _mount_frontend(app: FastAPI) -> None:

@@ -263,3 +263,13 @@ Thumbs.db
 #   Service account keys must never be committed; use ADC or Workload Identity.
 *-service-account*.json
 gha-creds-*.json
+
+# Local credential files
+#   config.yaml was committed and force-removed once. These patterns are deliberately
+#   broad: a generic filename is exactly what slips past a targeted rule.
+config.yaml
+config.local.*
+credentials*.y*ml
+secrets*.y*ml
+*.pem
+*.key

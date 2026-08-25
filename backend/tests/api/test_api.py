@@ -238,6 +238,96 @@ class TestTripUpdate:
         assert client.put("/api/trips/no-such-trip", json={"name": "x"}).status_code == 404
 
 
+class TestErrorEnvelope:
+    """Every error body must match the declared `ErrorResponse` shape.
+
+    Previously only status codes were asserted, which let FastAPI's built-in 422 handler —
+    `{"detail": [ ... ]}`, no `code`, detail as a list — contradict the OpenAPI document
+    unnoticed. Assert the shape, not just the status.
+    """
+
+    @staticmethod
+    def assert_envelope(response, code: str):
+        body = response.json()
+        assert set(body) == {"code", "detail"}, f"unexpected keys: {sorted(body)}"
+        assert body["code"] == code
+        assert isinstance(body["detail"], str), "detail must be a string, never a list"
+
+    def test_malformed_body_uses_the_envelope(self, client):
+        response = client.post(
+            "/api/routing/leg", json={"waypoints": [], "intent": LegIntent.UNPAVED.value}
+        )
+        assert response.status_code == 422
+        self.assert_envelope(response, "validation_error")
+
+    def test_domain_validator_failure_uses_the_envelope(self, client, trip):
+        """Unverified POI pinned to the route — raised during body parsing, not after."""
+        body = {
+            "pois": [
+                {
+                    "id": "p1",
+                    "name": "Hallucinated camp",
+                    "category": "wild_camp",
+                    "coordinate": {"lat": 45.0, "lon": -121.0},
+                    "source": "llm_suggested",
+                    "on_route": True,
+                }
+            ]
+        }
+        response = client.put(f"/api/trips/{trip['slug']}", json=body)
+        assert response.status_code == 422
+        self.assert_envelope(response, "validation_error")
+
+    def test_not_found_uses_the_envelope(self, client):
+        self.assert_envelope(client.get("/api/trips/no-such-trip"), "trip_not_found")
+
+    def test_invalid_slug_uses_the_envelope(self, client):
+        self.assert_envelope(client.get("/api/trips/UPPER"), "invalid_slug")
+
+    def test_conflict_uses_the_envelope(self, client, trip):
+        response = client.post("/api/trips", json={"name": "Oregon Backcountry"})
+        self.assert_envelope(response, "trip_already_exists")
+
+    def test_unimplemented_uses_the_envelope(self, client, trip):
+        """501 carries a code too, so clients switch on `code` uniformly."""
+        response = client.post(f"/api/trips/{trip['slug']}/replan", json={})
+        assert response.status_code == 501
+        self.assert_envelope(response, "not_implemented")
+
+
+class TestReplanStreamContract:
+    """Replan streams NDJSON, not SSE.
+
+    It is a POST with a body, so `EventSource` cannot consume it; hand-parsing SSE framing
+    over `fetch` would cost the framing overhead for none of the benefit.
+    """
+
+    @pytest.fixture
+    def replan_spec(self, client):
+        return client.get("/openapi.json").json()["paths"]["/api/trips/{slug}/replan"]["post"]
+
+    def test_success_media_type_is_ndjson(self, replan_spec):
+        assert list(replan_spec["responses"]["200"]["content"]) == ["application/x-ndjson"]
+
+    def test_stream_lines_are_replan_events(self, replan_spec):
+        schema = replan_spec["responses"]["200"]["content"]["application/x-ndjson"]["schema"]
+        assert schema["$ref"].endswith("/ReplanEvent")
+
+    def test_framing_is_documented(self, replan_spec):
+        description = replan_spec["description"]
+        assert "x-ndjson" in description
+        assert "Not Server-Sent Events" in description
+
+    def test_errors_on_this_route_are_json_not_ndjson(self, replan_spec):
+        """response_class would otherwise make every response on the route a stream."""
+        assert list(replan_spec["responses"]["501"]["content"]) == ["application/json"]
+
+    def test_error_schema_is_a_clean_ref(self, replan_spec):
+        """A `type` merged onto the $ref generates the wrong frontend type."""
+        schema = replan_spec["responses"]["501"]["content"]["application/json"]["schema"]
+        assert schema == {"$ref": "#/components/schemas/ErrorResponse"}
+
+
 class TestReservedEndpoints:
     """Stubs return 501 so the frontend can tell 'not built' from 'broken'."""
 

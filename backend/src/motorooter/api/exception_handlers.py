@@ -6,9 +6,11 @@ on; `detail` is the human-readable message.
 """
 
 from fastapi import FastAPI, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from pydantic import ValidationError
 
+from motorooter.api.errors import NotImplementedYet
 from motorooter.routing.errors import (
     InvalidRequest,
     NoRouteFound,
@@ -48,8 +50,13 @@ def _code(exc: Exception) -> str:
     return "".join(f"_{c.lower()}" if c.isupper() else c for c in name).lstrip("_")
 
 
+def _envelope(code: str, exc: Exception) -> dict[str, str]:
+    """The one error body shape. `detail` is always a string, never a list."""
+    return {"code": code, "detail": str(exc)}
+
+
 def _json(status: int, exc: Exception) -> JSONResponse:
-    return JSONResponse(status_code=status, content={"code": _code(exc), "detail": str(exc)})
+    return JSONResponse(status_code=status, content=_envelope(_code(exc), exc))
 
 
 def register_exception_handlers(app: FastAPI) -> None:
@@ -67,16 +74,31 @@ def register_exception_handlers(app: FastAPI) -> None:
     async def _slug(_: Request, exc: Exception) -> JSONResponse:
         return _json(400, exc)
 
+    @app.exception_handler(RequestValidationError)
+    async def _request_validation(_: Request, exc: Exception) -> JSONResponse:
+        """Malformed request bodies and path/query parameters.
+
+        FastAPI's built-in handler answers with `{"detail": [ ... ]}` — no `code`, and
+        `detail` as a list of error dicts rather than a string. That contradicts the
+        `ErrorResponse` shape the OpenAPI document declares for 422, so clients reading
+        `body.code` get `undefined`. Overriding it makes the declared contract true.
+
+        This also covers domain model validators (leg contiguity, waypoint indices,
+        unverified POIs pinned to the route): those run while the body is being parsed into
+        `UpdateTripRequest`, so pydantic's `ValidationError` is wrapped in a
+        `RequestValidationError` before it can reach a handler of its own.
+        """
+        return JSONResponse(status_code=422, content=_envelope("validation_error", exc))
+
     @app.exception_handler(ValidationError)
     async def _model_validation(_: Request, exc: Exception) -> JSONResponse:
-        """Domain invariants violated by an otherwise well-formed request body.
+        """Model validation raised outside request parsing.
 
-        FastAPI only converts validation errors raised while *parsing* a request. Model
-        validators that run later — leg contiguity, waypoint indices, unverified POIs
-        pinned to the route — raise here instead, and without this handler they would
-        surface as a 500 rather than the client error they are.
+        Rare — most invalid input is caught above — but a validator tripped while building a
+        response or re-validating a stored object would otherwise surface as a 500.
         """
-        return JSONResponse(
-            status_code=422,
-            content={"code": "validation_error", "detail": str(exc)},
-        )
+        return JSONResponse(status_code=422, content=_envelope("validation_error", exc))
+
+    @app.exception_handler(NotImplementedYet)
+    async def _not_implemented(_: Request, exc: Exception) -> JSONResponse:
+        return JSONResponse(status_code=501, content=_envelope("not_implemented", exc))

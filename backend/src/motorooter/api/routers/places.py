@@ -9,9 +9,10 @@ and must not be written to the trip document — which is why `PoiDetail` is a
 response-only type with no persistence path.
 """
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, status
 
-from motorooter.api.schemas import ERROR_RESPONSES, PoiDetailResponse
+from motorooter.api.errors import NotImplementedYet
+from motorooter.api.schemas import ERROR_RESPONSES, ErrorResponse, PoiDetailResponse
 
 router = APIRouter(prefix="/api/places", tags=["places"], responses=ERROR_RESPONSES)
 
@@ -21,8 +22,7 @@ router = APIRouter(prefix="/api/places", tags=["places"], responses=ERROR_RESPON
     status_code=status.HTTP_501_NOT_IMPLEMENTED,
     response_model=PoiDetailResponse,
     summary="Fetch POI display data (not yet implemented)",
+    responses={501: {"model": ErrorResponse}},
 )
 async def get_place_detail(place_id: str) -> None:
-    raise HTTPException(
-        status.HTTP_501_NOT_IMPLEMENTED, detail="Places enrichment is not implemented yet"
-    )
+    raise NotImplementedYet("Places enrichment")

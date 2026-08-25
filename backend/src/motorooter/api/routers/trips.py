@@ -11,9 +11,11 @@ shapes before the backend implementation lands.
 from fastapi import APIRouter, status
 
 from motorooter.api.deps import Trips
+from motorooter.api.errors import NotImplementedYet
 from motorooter.api.schemas import (
     ERROR_RESPONSES,
     CreateTripRequest,
+    ErrorResponse,
     ReplanEvent,
     ReplanRequest,
     UpdateTripRequest,
@@ -24,6 +26,10 @@ from motorooter.trips.slug import slugify, validate_slug
 router = APIRouter(prefix="/api/trips", tags=["trips"], responses=ERROR_RESPONSES)
 
 NOT_IMPLEMENTED = status.HTTP_501_NOT_IMPLEMENTED
+
+
+STREAMING_MEDIA_TYPE = "application/x-ndjson"
+"""Wire format for the replan stream. Applied to the document by `api.streaming`."""
 
 
 @router.get("", response_model=list[TripSummary])
@@ -85,20 +91,34 @@ async def delete_trip(slug: str, store: Trips) -> None:
 @router.post(
     "/{slug}/replan",
     status_code=NOT_IMPLEMENTED,
-    response_model=ReplanEvent,
     summary="Start a replan (not yet implemented)",
     description=(
-        "Runs LLM route search, POI discovery, and Places enrichment, streaming "
-        "Server-Sent Events whose data is a ReplanEvent. Explicitly user-triggered — never "
-        "fired automatically by a route edit."
+        "Runs LLM route search, POI discovery, and Places enrichment.\n\n"
+        "**Streams newline-delimited JSON** (`application/x-ndjson`): one `ReplanEvent` "
+        "object per line, terminated by `\\n`. Not Server-Sent Events — this is a POST with "
+        "a request body, so `EventSource` cannot consume it, and hand-parsing SSE framing "
+        "over `fetch` would cost the framing overhead for none of the benefit. Clients must "
+        "tolerate a chunk boundary landing mid-line.\n\n"
+        "Explicitly user-triggered — never fired automatically by a route edit."
     ),
+    responses={
+        # `model` rather than a raw $ref: FastAPI only emits a schema into components when
+        # a model is referenced this way. A bare $ref would leave ReplanEvent out of the
+        # document entirely and silently delete the frontend's generated type.
+        200: {
+            # Declared as an ordinary model; api.streaming rewrites the media-type key to
+            # STREAMING_MEDIA_TYPE after generation. See that module for why.
+            "description": "Stream of ReplanEvent objects, one per line.",
+            "model": ReplanEvent,
+        },
+        501: {"model": ErrorResponse, "description": "Not implemented yet."},
+    },
 )
 async def replan(slug: str, request: ReplanRequest, store: Trips) -> None:
     """Reserved. Owned by the backend engineer; schema is frozen so the frontend can build."""
-    from fastapi import HTTPException
-
-    await store.get(validate_slug(slug))  # 404 before 501, so the frontend can tell them apart
-    raise HTTPException(NOT_IMPLEMENTED, detail="replan is not implemented yet")
+    # 404 before 501, so the frontend can distinguish "no such trip" from "not built yet".
+    await store.get(validate_slug(slug))
+    raise NotImplementedYet("replan")
 
 
 @router.get(
@@ -109,11 +129,12 @@ async def replan(slug: str, request: ReplanRequest, store: Trips) -> None:
         "Returns a GPX file containing a track plus ordered waypoints, targeted at "
         "motorcycle GPS units."
     ),
-    responses={200: {"content": {"application/gpx+xml": {}}}},
+    responses={
+        200: {"description": "GPX file.", "content": {"application/gpx+xml": {}}},
+        501: {"model": ErrorResponse},
+    },
 )
 async def export_gpx(slug: str, store: Trips) -> None:
     """Reserved. Owned by the backend engineer."""
-    from fastapi import HTTPException
-
     await store.get(validate_slug(slug))
-    raise HTTPException(NOT_IMPLEMENTED, detail="GPX export is not implemented yet")
+    raise NotImplementedYet("GPX export")

@@ -273,6 +273,16 @@ class TestCorruptDocuments:
             await store.get("oregon-backcountry")
         assert "99" in str(caught.value)
 
+    async def test_a_newer_schema_version_written_as_a_string_is_also_refused(
+        self, store, objects
+    ):
+        """Pydantic coerces `"99"` to `99`, so a raw pre-check alone would wave it through."""
+        document = make_trip().model_dump_json()
+        future = document.replace('"schema_version":1', '"schema_version":"99"')
+        await objects.write("trips/oregon-backcountry/trip.json", future.encode())
+        with pytest.raises(TripDocumentInvalid):
+            await store.get("oregon-backcountry")
+
     async def test_a_corrupt_document_fails_the_listing_loudly(self, store, objects):
         """Quietly omitting it would look identical to the trip having been deleted."""
         await store.create(make_trip("fine"))

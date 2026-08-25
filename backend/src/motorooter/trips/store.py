@@ -219,22 +219,39 @@ class GcsTripStore:
         except ValueError as exc:
             raise TripDocumentInvalid(slug, f"not valid JSON ({exc})") from exc
 
-        version = payload.get("schema_version") if isinstance(payload, dict) else None
-        if isinstance(version, int) and version > CURRENT_SCHEMA_VERSION:
-            # Refuse rather than parse what we can. Dropping fields this build cannot model
-            # and then writing the result back would quietly destroy the user's trip.
+        # Checked before validating, because a future document may well have fields this
+        # build cannot parse, and "written by a newer version" is the more useful of the
+        # two errors.
+        if isinstance(payload, dict):
+            GcsTripStore._check_schema_version(payload.get("schema_version"), slug)
+
+        try:
+            trip = Trip.model_validate(payload)
+        except ValidationError as exc:
+            # Translated, not propagated: a pydantic error escaping the store would make
+            # the Cloud Storage implementation behave differently from the in-memory one.
+            raise TripDocumentInvalid(slug, f"does not match the trip schema ({exc})") from exc
+
+        # And again on the parsed value: pydantic coerces `"99"` to `99`, so a raw check
+        # alone would wave a future document through as if it were current.
+        GcsTripStore._check_schema_version(trip.schema_version, slug)
+        return trip
+
+    @staticmethod
+    def _check_schema_version(version: object, slug: str) -> None:
+        """Refuse a document from the future rather than parse what we can of it.
+
+        Dropping fields this build cannot model and then writing the result back would
+        quietly destroy the user's trip, and they would have no way to tell it happened.
+        """
+        if not isinstance(version, int) or isinstance(version, bool):
+            return
+        if version > CURRENT_SCHEMA_VERSION:
             reason = (
                 f"written at schema_version {version}, but this build understands at most "
                 f"{CURRENT_SCHEMA_VERSION}"
             )
             raise TripDocumentInvalid(slug, reason)
-
-        try:
-            return Trip.model_validate(payload)
-        except ValidationError as exc:
-            # Translated, not propagated: a pydantic error escaping the store would make
-            # the Cloud Storage implementation behave differently from the in-memory one.
-            raise TripDocumentInvalid(slug, f"does not match the trip schema ({exc})") from exc
 
     async def _read_for_listing(self, path: str, slug: str) -> Trip | None:
         """Load one trip for the index, tolerating it disappearing underneath us.

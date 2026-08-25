@@ -1,15 +1,17 @@
-# Runs the same `make check` the engineers run locally, on every branch push.
+# Runs the same `make check` the engineers run locally.
 #
-# The point is that a handoff arrives already verified, so review can be about design
-# rather than "did you run the tests". `make handoff` gates on this locally too — CI is the
-# backstop for the case where someone pushes directly.
+# Deliberately NOT on every branch push. `make handoff` already gates every handoff locally
+# and a pre-push hook gates `main`, so branch-push CI was almost pure duplication — and it
+# actively misfired on `make handoff-blocked` branches, which are pushed *known* to fail by
+# design and generated a failure email every time. Guarding `main` is where CI earns its keep.
 
 name: check
 
 on:
   push:
-    branches: ['**']
+    branches: [main]
   pull_request:
+  workflow_dispatch:   # run against a branch on demand when it is actually wanted
 
 concurrency:
   # Supersede in-flight runs for the same branch; only the tip matters.
@@ -20,16 +22,20 @@ jobs:
   check:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v5
+        uses: astral-sh/setup-uv@v6
         with:
           enable-cache: true
           cache-dependency-glob: backend/uv.lock
+          # Pinned so CI and every worktree resolve the same interpreter. Without it uv
+          # picks whatever the runner ships, and a version-dependent failure appears only
+          # in CI, which is the hardest place to reproduce one.
+          python-version: "3.13"
 
       - name: Install Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version: '22'
           cache: npm

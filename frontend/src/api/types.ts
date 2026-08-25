@@ -12,6 +12,9 @@ import type { components } from './schema'
 
 type Schemas = components['schemas']
 
+// Service
+export type HealthResponse = Schemas['HealthResponse']
+
 // Geography and routing
 export type Coordinate = Schemas['Coordinate']
 export type RouteLeg = Schemas['RouteLeg']
@@ -39,9 +42,34 @@ export type CreateTripRequest = Schemas['CreateTripRequest']
 export type UpdateTripRequest = Schemas['UpdateTripRequest']
 export type ReplanRequest = Schemas['ReplanRequest']
 export type ReplanEvent = Schemas['ReplanEvent']
+export type PoiDetailResponse = Schemas['PoiDetailResponse']
 export type RoutingCapabilitiesResponse = Schemas['RoutingCapabilitiesResponse']
 export type IntentRouting = Schemas['IntentRouting']
 export type ErrorResponse = Schemas['ErrorResponse']
+
+/**
+ * Makes the request fields `K` optional, for fields the backend gives a default.
+ *
+ * `openapi-typescript` marks any schema field with a default as *required*. That is right
+ * for a response — the server always fills it in — and wrong for a request body, where
+ * omitting the field is precisely how you ask for the default. Without this, every call
+ * site would have to restate `avoid_tolls: false`, freezing the backend's current defaults
+ * into the frontend.
+ *
+ * Only optionality is adjusted; the field types still come from the generated schema. If
+ * the backend drops one of these defaults, the `Pick` stops compiling rather than drifting
+ * quietly — which is the whole point of not hand-writing the shape.
+ */
+type DefaultsOptional<T, K extends keyof T> = Omit<T, K> & Partial<Pick<T, K>>
+
+/** `RouteLegRequest` with the backend-defaulted routing flags made optional. */
+export type RouteLegInput = DefaultsOptional<
+  RouteLegRequest,
+  'avoid_tolls' | 'avoid_highways' | 'avoid_ferries' | 'want_elevation'
+>
+
+/** `ReplanRequest` with the backend-defaulted `preserve_pinned` made optional. */
+export type ReplanInput = DefaultsOptional<ReplanRequest, 'preserve_pinned'>
 
 /**
  * Stable error codes from `ErrorResponse.code`. Switch on these rather than on the

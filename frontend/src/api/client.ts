@@ -1,0 +1,347 @@
+/**
+ * The typed API client. Every network call the frontend makes goes through here.
+ *
+ * Three properties are load-bearing:
+ *
+ * 1. **No hand-written shapes.** Requests and responses are the types generated from the
+ *    backend's OpenAPI document (via `./types`). A shape that disagrees with the backend
+ *    is a build failure, not a runtime surprise.
+ * 2. **Every call takes an `AbortSignal`.** The fast path supersedes its own requests
+ *    while the user drags; `DragScheduler` can only abort what the client threads through.
+ *    Aborts propagate unwrapped so the scheduler still recognises them.
+ * 3. **Failures are typed by cause.** `ApiNotImplementedError` for the endpoints that are
+ *    still stubs, `ApiNetworkError` for a request that never landed, `ApiError` with a
+ *    stable `code` for everything the server refused.
+ *
+ * The app is served from the same origin as the API in production, so the default base URL
+ * is empty and paths are root-relative. Vite proxies `/api` to the backend in dev.
+ */
+import { ApiError, ApiNetworkError, ApiNotImplementedError, isAbortError, type ErrorCode } from './errors'
+import type {
+  CreateTripRequest,
+  HealthResponse,
+  PoiDetailResponse,
+  ReplanEvent,
+  ReplanInput,
+  RouteLegInput,
+  RouteLegResponse,
+  RoutingCapabilitiesResponse,
+  Trip,
+  TripSummary,
+  UpdateTripRequest,
+} from './types'
+
+/** The slice of `fetch` this client uses. Injected in tests; never stubbed globally. */
+export type FetchLike = (url: string, init: RequestInit) => Promise<Response>
+
+export interface RequestOptions {
+  /**
+   * Cancels the request. Mandatory in practice on the fast path: a superseded drag
+   * request must be abandoned, both to keep stale geometry off the map and to stop it
+   * spending provider quota.
+   */
+  readonly signal?: AbortSignal | undefined
+}
+
+export interface ApiClientOptions {
+  /** Prefix for every path. Empty (same origin) by default; a trailing slash is fine. */
+  readonly baseUrl?: string
+  readonly fetch?: FetchLike
+}
+
+export interface ApiClient {
+  /** Liveness plus the routing providers this deployment actually registered. */
+  health(options?: RequestOptions): Promise<HealthResponse>
+  /**
+   * Provider and per-intent routing capabilities.
+   *
+   * The only legitimate source of `live_update_interval_ms` — the drag throttle must never
+   * be a constant in the frontend, or it silently diverges from the engine serving the leg.
+   */
+  routingCapabilities(options?: RequestOptions): Promise<RoutingCapabilitiesResponse>
+  /** Fast path: route one leg. No LLM, no persistence, sub-second. */
+  routeLeg(request: RouteLegInput, options?: RequestOptions): Promise<RouteLegResponse>
+
+  listTrips(options?: RequestOptions): Promise<TripSummary[]>
+  createTrip(request: CreateTripRequest, options?: RequestOptions): Promise<Trip>
+  getTrip(slug: string, options?: RequestOptions): Promise<Trip>
+  /** Full replacement, not a patch — the frontend holds the authoritative trip state. */
+  updateTrip(slug: string, request: UpdateTripRequest, options?: RequestOptions): Promise<Trip>
+  deleteTrip(slug: string, options?: RequestOptions): Promise<void>
+
+  /**
+   * Slow path: discovery and enrichment, streamed as progress events.
+   *
+   * Stubbed today — the first `next()` rejects with `ApiNotImplementedError`. Iterating it
+   * is already the right call shape, so nothing here changes when the backend lands.
+   */
+  replan(
+    slug: string,
+    request: ReplanInput,
+    options?: RequestOptions,
+  ): AsyncGenerator<ReplanEvent, void, undefined>
+  /** GPX track plus ordered waypoints. Stubbed today (`ApiNotImplementedError`). */
+  exportGpx(slug: string, options?: RequestOptions): Promise<Blob>
+  /**
+   * Places-backed display data for the POI dialog. Stubbed today
+   * (`ApiNotImplementedError`). Response-only: Google's terms forbid persisting it.
+   */
+  placeDetail(placeId: string, options?: RequestOptions): Promise<PoiDetailResponse>
+}
+
+interface SendInit {
+  readonly method: 'GET' | 'POST' | 'PUT' | 'DELETE'
+  /** JSON request body. Omitted entirely rather than sent as `null` when absent. */
+  readonly json?: unknown
+  readonly accept?: string
+}
+
+const JSON_TYPE = 'application/json'
+
+/** Percent-encodes one path segment, so a slug can never widen the URL it appears in. */
+function segment(value: string): string {
+  return encodeURIComponent(value)
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null
+}
+
+function parseJson(text: string): unknown {
+  return JSON.parse(text) as unknown
+}
+
+/** Reads an error body without ever throwing: a failure response may be anything at all. */
+async function readErrorBody(response: Response): Promise<unknown> {
+  let text: string
+  try {
+    text = await response.text()
+  } catch (error) {
+    if (isAbortError(error)) throw error
+    return undefined
+  }
+  if (text === '') return undefined
+  try {
+    return parseJson(text)
+  } catch {
+    return text // HTML from a proxy, a plain-text gateway message, a truncated body
+  }
+}
+
+function codeFrom(body: unknown, status: number): ErrorCode {
+  const code = isRecord(body) ? body['code'] : undefined
+  if (typeof code === 'string' && code !== '') return code
+
+  // No `code` in the body, so derive the most specific one the status justifies.
+  if (status === 501) return 'not_implemented'
+  // FastAPI's own request-validation handler answers with a list of issues under `detail`
+  // and no `code`, which is not the declared `ErrorResponse` shape. On this API a 422
+  // without a code is always a rejected request body, so name it as one.
+  if (status === 422) return 'validation_error'
+  return 'unknown_error'
+}
+
+function detailFrom(body: unknown, status: number): string {
+  const detail = isRecord(body) ? body['detail'] : undefined
+  if (typeof detail === 'string' && detail !== '') return detail
+  if (status === 422) return 'The request was rejected as invalid.'
+  return `The server returned HTTP ${status}.`
+}
+
+async function errorFor(response: Response): Promise<ApiError> {
+  const body = await readErrorBody(response)
+  const detail = detailFrom(body, response.status)
+  if (response.status === 501) return new ApiNotImplementedError({ detail, body })
+  return new ApiError({
+    status: response.status,
+    code: codeFrom(body, response.status),
+    detail,
+    body,
+  })
+}
+
+/**
+ * Decodes a success body.
+ *
+ * The contract says this is JSON of shape `T`, and the generated types are trusted rather
+ * than re-validated at runtime. What is *not* trusted is that the response came from the
+ * app at all: a proxy answering 200 with an HTML page would otherwise surface as a bare
+ * `SyntaxError`, which no component can sensibly handle.
+ */
+async function readJson<T>(response: Response): Promise<T> {
+  let text: string
+  try {
+    text = await response.text()
+  } catch (error) {
+    if (isAbortError(error)) throw error
+    throw new ApiNetworkError({ detail: 'The response body could not be read.', cause: error })
+  }
+  try {
+    return parseJson(text) as T
+  } catch (error) {
+    throw new ApiError({
+      status: response.status,
+      code: 'unknown_error',
+      detail: 'The server sent a response that was not valid JSON.',
+      body: text,
+      cause: error,
+    })
+  }
+}
+
+/**
+ * Yields one value per newline-delimited JSON object in the response body.
+ *
+ * A chunk boundary lands mid-line often enough that buffering is not optional. Breaking
+ * out of the loop early cancels the body, so abandoning a replan stops the download.
+ */
+async function* streamNdjson<T>(response: Response): AsyncGenerator<T, void, undefined> {
+  const body = response.body
+  if (body === null) return
+
+  const reader = body.getReader()
+  const decoder = new TextDecoder()
+  let buffer = ''
+  try {
+    for (;;) {
+      const { done, value } = await reader.read()
+      if (done) break
+      buffer += decoder.decode(value, { stream: true })
+      for (let newline = buffer.indexOf('\n'); newline !== -1; newline = buffer.indexOf('\n')) {
+        const line = buffer.slice(0, newline)
+        buffer = buffer.slice(newline + 1)
+        if (line.trim() !== '') yield parseJson(line) as T
+      }
+    }
+    buffer += decoder.decode()
+    if (buffer.trim() !== '') yield parseJson(buffer) as T // final line, unterminated
+  } finally {
+    await reader.cancel().catch(() => undefined)
+  }
+}
+
+export function createApiClient(options: ApiClientOptions = {}): ApiClient {
+  const baseUrl = (options.baseUrl ?? '').replace(/\/+$/, '')
+  const doFetch: FetchLike = options.fetch ?? ((url, init) => globalThis.fetch(url, init))
+
+  async function send(path: string, init: SendInit, request?: RequestOptions): Promise<Response> {
+    const headers: Record<string, string> = { accept: init.accept ?? JSON_TYPE }
+    let body: string | undefined
+    if (init.json !== undefined) {
+      headers['content-type'] = JSON_TYPE
+      body = JSON.stringify(init.json)
+    }
+
+    let response: Response
+    try {
+      response = await doFetch(`${baseUrl}${path}`, {
+        method: init.method,
+        headers,
+        // `null` rather than `undefined`: exactOptionalPropertyTypes forbids assigning
+        // undefined to an optional property, and fetch treats both the same way.
+        signal: request?.signal ?? null,
+        ...(body === undefined ? {} : { body }),
+      })
+    } catch (error) {
+      // An abort is not a failure — the caller asked for it. Rethrow it unchanged so
+      // DragScheduler's abort check still matches.
+      if (isAbortError(error)) throw error
+      throw new ApiNetworkError({
+        detail: error instanceof Error ? error.message : 'The server could not be reached.',
+        cause: error,
+      })
+    }
+
+    if (!response.ok) throw await errorFor(response)
+    return response
+  }
+
+  return {
+    async health(requestOptions?: RequestOptions): Promise<HealthResponse> {
+      return readJson<HealthResponse>(await send('/api/health', { method: 'GET' }, requestOptions))
+    },
+
+    async routingCapabilities(
+      requestOptions?: RequestOptions,
+    ): Promise<RoutingCapabilitiesResponse> {
+      return readJson<RoutingCapabilitiesResponse>(
+        await send('/api/routing/capabilities', { method: 'GET' }, requestOptions),
+      )
+    },
+
+    async routeLeg(
+      request: RouteLegInput,
+      requestOptions?: RequestOptions,
+    ): Promise<RouteLegResponse> {
+      return readJson<RouteLegResponse>(
+        await send('/api/routing/leg', { method: 'POST', json: request }, requestOptions),
+      )
+    },
+
+    async listTrips(requestOptions?: RequestOptions): Promise<TripSummary[]> {
+      return readJson<TripSummary[]>(await send('/api/trips', { method: 'GET' }, requestOptions))
+    },
+
+    async createTrip(request: CreateTripRequest, requestOptions?: RequestOptions): Promise<Trip> {
+      return readJson<Trip>(
+        await send('/api/trips', { method: 'POST', json: request }, requestOptions),
+      )
+    },
+
+    async getTrip(slug: string, requestOptions?: RequestOptions): Promise<Trip> {
+      return readJson<Trip>(
+        await send(`/api/trips/${segment(slug)}`, { method: 'GET' }, requestOptions),
+      )
+    },
+
+    async updateTrip(
+      slug: string,
+      request: UpdateTripRequest,
+      requestOptions?: RequestOptions,
+    ): Promise<Trip> {
+      return readJson<Trip>(
+        await send(
+          `/api/trips/${segment(slug)}`,
+          { method: 'PUT', json: request },
+          requestOptions,
+        ),
+      )
+    },
+
+    async deleteTrip(slug: string, requestOptions?: RequestOptions): Promise<void> {
+      // 204, so there is no body to parse — calling .json() on it would reject.
+      await send(`/api/trips/${segment(slug)}`, { method: 'DELETE' }, requestOptions)
+    },
+
+    async *replan(
+      slug: string,
+      request: ReplanInput,
+      requestOptions?: RequestOptions,
+    ): AsyncGenerator<ReplanEvent, void, undefined> {
+      const response = await send(
+        `/api/trips/${segment(slug)}/replan`,
+        { method: 'POST', json: request, accept: `application/x-ndjson, ${JSON_TYPE}` },
+        requestOptions,
+      )
+      yield* streamNdjson<ReplanEvent>(response)
+    },
+
+    async exportGpx(slug: string, requestOptions?: RequestOptions): Promise<Blob> {
+      const response = await send(
+        `/api/trips/${segment(slug)}/gpx`,
+        { method: 'GET', accept: `application/gpx+xml, ${JSON_TYPE}` },
+        requestOptions,
+      )
+      return response.blob()
+    },
+
+    async placeDetail(
+      placeId: string,
+      requestOptions?: RequestOptions,
+    ): Promise<PoiDetailResponse> {
+      return readJson<PoiDetailResponse>(
+        await send(`/api/places/${segment(placeId)}`, { method: 'GET' }, requestOptions),
+      )
+    },
+  }
+}

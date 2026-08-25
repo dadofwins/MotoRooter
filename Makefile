@@ -25,7 +25,8 @@ dev-backend: ## API on :8000. Uses real providers if backend/.env has keys, else
 	@cd backend && if grep -qs '^ORS_API_KEY=.\+' .env; then \
 		echo "dev-backend: REAL providers (ORS + Google) — routes follow actual roads"; \
 		set -a && . ./.env && set +a && \
-		MOTOROOTER_OFFLINE=0 uv run uvicorn motorooter.app:create_app \
+		MOTOROOTER_OFFLINE=0 MOTOROOTER_TRIPS_EPHEMERAL=1 \
+		uv run uvicorn motorooter.app:create_app \
 			--factory --reload --port 8000; \
 	else \
 		echo "dev-backend: OFFLINE (FakeProvider) — routes will be STRAIGHT LINES, no keys found"; \
@@ -74,7 +75,7 @@ preview: ## Run an unmerged branch for hands-on testing. make preview BRANCH=fe/
 	@test -f backend/.env && cp backend/.env $(PREVIEW_DIR)/backend/ || true
 	@echo "=== $(BRANCH) checked out at $(PREVIEW_DIR) ==="
 	@cd $(PREVIEW_DIR) && $(MAKE) --no-print-directory install >/dev/null
-	@echo "=== starting: API on :8000 (offline, no keys needed), UI on :5173 ==="
+	@echo "=== starting: API on :8000, UI on :5173 (mode printed below) ==="
 	@cd $(PREVIEW_DIR) && $(MAKE) --no-print-directory dev
 
 preview-clean: ## Remove the preview worktree

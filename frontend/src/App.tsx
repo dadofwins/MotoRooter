@@ -25,7 +25,15 @@ export interface AppProps {
   readonly client?: LegRouter
 }
 
-/** Distance as a rider reads it, not as the API sends it. */
+/**
+ * Distance as a rider reads it, not as the API sends it.
+ *
+ * Distance is the only routed figure shown, deliberately. `RouteLeg.duration_s` comes from
+ * a bicycle profile on the dirt provider and reads about 2x long — eight hours for a
+ * four-hour day — and trip planning is duration-driven, so a wrong number is worse than
+ * none. `ascent_m` is similarly unexplained against its reference. Neither goes on screen
+ * until the backend derives a figure it trusts.
+ */
 function formatDistance(metres: number): string {
   return `${(metres / 1000).toFixed(metres < 10_000 ? 1 : 0)} km`
 }

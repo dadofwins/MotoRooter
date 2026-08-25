@@ -1,7 +1,7 @@
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
 import { App } from './App'
-import { ApiError } from './api/errors'
+import { ApiError, ApiNotImplementedError } from './api/errors'
 import type { RequestOptions } from './api/client'
 import type { GoogleMaps } from './map/loadGoogleMaps'
 import type {
@@ -220,6 +220,9 @@ function fakeRouter(response: RouteLegResponse = ROUTE_RESPONSE) {
   return {
     routeLeg: vi.fn((_request: RouteLegInput, _options?: RequestOptions) => Promise.resolve(response)),
     routingCapabilities: vi.fn((_options?: RequestOptions) => Promise.resolve(CAPABILITIES)),
+    placeDetail: vi.fn((_placeId: string, _options?: RequestOptions) =>
+      Promise.reject(new ApiNotImplementedError({ detail: 'Places enrichment is not implemented yet' })),
+    ),
   }
 }
 
@@ -304,6 +307,9 @@ describe('App routing the placed points', () => {
         Promise.reject(new ApiError({ status: 422, code: 'no_route_found', detail: 'nope' })),
       ),
       routingCapabilities: vi.fn((_options?: RequestOptions) => Promise.resolve(CAPABILITIES)),
+      placeDetail: vi.fn((_placeId: string, _options?: RequestOptions) =>
+        Promise.reject(new ApiNotImplementedError({ detail: 'not implemented yet' })),
+      ),
     }
     render(<App mapLoader={fake.loader} mapId="motorooter-test-vector" client={router} />)
     await mapReady(fake)
@@ -330,6 +336,9 @@ describe('App routing the placed points', () => {
         ),
       ),
       routingCapabilities: vi.fn((_options?: RequestOptions) => Promise.resolve(CAPABILITIES)),
+      placeDetail: vi.fn((_placeId: string, _options?: RequestOptions) =>
+        Promise.reject(new ApiNotImplementedError({ detail: 'not implemented yet' })),
+      ),
     }
     render(<App mapLoader={fake.loader} mapId="motorooter-test-vector" client={router} />)
     await mapReady(fake)
@@ -349,6 +358,9 @@ describe('App routing the placed points', () => {
         Promise.reject(new ApiError({ status: 422, code: 'no_route_found', detail: 'no route found' })),
       ),
       routingCapabilities: vi.fn((_options?: RequestOptions) => Promise.resolve(CAPABILITIES)),
+      placeDetail: vi.fn((_placeId: string, _options?: RequestOptions) =>
+        Promise.reject(new ApiNotImplementedError({ detail: 'not implemented yet' })),
+      ),
     }
     render(<App mapLoader={fake.loader} mapId="motorooter-test-vector" client={router} />)
     await mapReady(fake)
@@ -381,8 +393,9 @@ describe('App dragging the route', () => {
           live_update_interval_ms: 0,
         }),
       ),
-      routingCapabilities: vi.fn((_options?: RequestOptions) =>
-        Promise.resolve(CAPABILITIES),
+      routingCapabilities: vi.fn((_options?: RequestOptions) => Promise.resolve(CAPABILITIES)),
+      placeDetail: vi.fn((_placeId: string, _options?: RequestOptions) =>
+        Promise.reject(new ApiNotImplementedError({ detail: 'not implemented yet' })),
       ),
     }
 

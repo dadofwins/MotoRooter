@@ -26,6 +26,15 @@ const BY_CODE: Partial<Record<ErrorCode, string>> = {
 const UNREACHABLE = 'Could not reach the server. Check your connection and try again.'
 const UNBUILT = 'That is not built yet.'
 const UNKNOWN = 'Something went wrong while routing. Try again.'
+const PLACE_UNKNOWN = 'Details for this place could not be loaded.'
+
+/** The same mapping, for a place lookup rather than a route. */
+export function placeErrorMessage(error: unknown): string {
+  if (error instanceof ApiNetworkError) return UNREACHABLE
+  if (isNotImplemented(error)) return UNBUILT
+  if (isApiError(error)) return BY_CODE[error.code] ?? PLACE_UNKNOWN
+  return PLACE_UNKNOWN
+}
 
 export function routeErrorMessage(error: unknown): string {
   // A request that never arrived is a different problem from one that was refused, and the

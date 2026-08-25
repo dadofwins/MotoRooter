@@ -417,3 +417,61 @@ class TestLegDurationIsDerived:
             return float(estimate)
 
         assert duration(46.0) < duration(48.0)
+
+
+class TestALegCarriesTheRequestItCameFrom:
+    """The wiring, not the type.
+
+    `routed_from` existed, was contract-approved, had forty passing tests, and was `null` on
+    every live response — because only the trip path attached it and the drag uses this one.
+    Every test was a model test; nothing asserted that anything ever called it, and the
+    field being optional is exactly what let it stay empty without complaint.
+
+    The client treats a missing fingerprint as stale, correctly. So a drag routed on release,
+    handed the leg back, and the hook immediately requested the same route again.
+    """
+
+    @pytest.fixture
+    def body(self):
+        return {
+            "waypoints": [
+                {"lat": 45.5152, "lon": -122.6784},
+                {"lat": 45.3311, "lon": -121.7113},
+            ],
+            "intent": "unpaved",
+        }
+
+    def test_the_fast_path_returns_a_fingerprint(self, client, body):
+        leg = client.post("/api/routing/leg", json=body).json()["leg"]
+        assert leg["routed_from"] is not None
+
+    def test_the_fingerprint_holds_the_requested_waypoints(self, client, body):
+        leg = client.post("/api/routing/leg", json=body).json()["leg"]
+        sent = [(point["lat"], point["lon"]) for point in body["waypoints"]]
+        got = [(point["lat"], point["lon"]) for point in leg["routed_from"]["waypoints"]]
+        assert got == pytest.approx(sent)
+
+    def test_the_fingerprint_holds_the_requested_intent(self, client, body):
+        leg = client.post("/api/routing/leg", json=body).json()["leg"]
+        assert leg["routed_from"]["intent"] == "unpaved"
+
+    def test_a_pinned_provider_is_recorded(self, client, body):
+        """Repinning a leg changes what it should be routed by, so it changes freshness."""
+        leg = client.post("/api/routing/leg", json={**body, "provider_override": "fake"}).json()
+        assert leg["leg"]["routed_from"]["provider_override"] == "fake"
+
+    def test_no_override_is_recorded_as_none(self, client, body):
+        leg = client.post("/api/routing/leg", json=body).json()["leg"]
+        assert leg["routed_from"]["provider_override"] is None
+
+    def test_routing_the_same_request_twice_gives_the_same_fingerprint(self, client, body):
+        """Which is what makes it usable as a staleness check at all."""
+        first = client.post("/api/routing/leg", json=body).json()["leg"]["routed_from"]
+        second = client.post("/api/routing/leg", json=body).json()["leg"]["routed_from"]
+        assert first == second
+
+    def test_a_moved_waypoint_gives_a_different_fingerprint(self, client, body):
+        first = client.post("/api/routing/leg", json=body).json()["leg"]["routed_from"]
+        moved = {**body, "waypoints": [body["waypoints"][0], {"lat": 46.0, "lon": -121.0}]}
+        second = client.post("/api/routing/leg", json=moved).json()["leg"]["routed_from"]
+        assert first != second

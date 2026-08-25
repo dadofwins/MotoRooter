@@ -257,3 +257,20 @@ class ProviderCapabilities(BaseModel):
     @property
     def supports_live_updates(self) -> bool:
         return self.live_update_interval_ms is not None
+
+
+def stamped(
+    leg: "RouteLeg", request: "RouteRequest", *, provider_override: str | None
+) -> "RouteLeg":
+    """A leg carrying the fingerprint of the request that produced it.
+
+    One helper rather than two call sites. `routed_from` shipped attached on the trip path
+    and absent on the single-leg one, so every drag response had a null fingerprint, the
+    client correctly read that as stale, and each drag routed twice. The field being optional
+    is what let it go unnoticed — nothing complains about a null that is allowed.
+
+    Anything that turns a `RouteRequest` into a `RouteLeg` should call this.
+    """
+    return leg.model_copy(
+        update={"routed_from": RouteFingerprint.of(request, provider_override=provider_override)}
+    )

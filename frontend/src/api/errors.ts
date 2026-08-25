@@ -17,10 +17,14 @@
 import type { ApiErrorCode } from './types'
 
 /**
- * Codes the client synthesizes when the response carries no usable `code` of its own —
- * a 501 stub, a proxy failure with an HTML body, or an unreachable server.
+ * Codes that only ever originate here, because no server response can carry them: a body
+ * that did not come from the app, and a request that never arrived at one.
+ *
+ * `not_implemented` deliberately is *not* in this list. The backend declares it in
+ * `ErrorCode`, so it arrives generated — restating it here would recreate the
+ * hand-maintained duplicate that generating the union was meant to remove.
  */
-export type ClientErrorCode = 'not_implemented' | 'unknown_error' | 'network_error'
+export type ClientErrorCode = 'unknown_error' | 'network_error'
 
 /**
  * Any error code that can reach a caller.

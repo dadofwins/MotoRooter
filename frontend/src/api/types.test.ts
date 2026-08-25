@@ -1,5 +1,5 @@
-import { describe, expectTypeOf, it } from 'vitest'
-import type { Coordinate, LegIntent, Poi, RouteLegResponse, Trip } from './types'
+import { describe, expect, expectTypeOf, it } from 'vitest'
+import type { ApiErrorCode, Coordinate, LegIntent, Poi, RouteLegResponse, Trip } from './types'
 
 /**
  * Compile-time assertions that the generated types match what the frontend assumes.
@@ -12,6 +12,24 @@ import type { Coordinate, LegIntent, Poi, RouteLegResponse, Trip } from './types
 describe('generated API contract', () => {
   it('coordinates are lat/lon numbers', () => {
     expectTypeOf<Coordinate>().toMatchObjectType<{ lat: number; lon: number }>()
+  })
+
+  it('every error code the UI branches on still exists in the generated union', () => {
+    // `ApiErrorCode` is generated from the backend's ErrorCode enum, so removing or
+    // renaming a member is a build failure. Listing the ones the UI actually acts on makes
+    // that failure land here, named, instead of at whichever call site happened to use it.
+    const branchedOn: ApiErrorCode[] = [
+      'not_implemented', // "coming soon" rather than "something broke"
+      'quota_exceeded', // the routing free tier is a real, reachable limit
+      'provider_unavailable',
+      'no_route_found',
+      'trip_not_found',
+      'trip_already_exists', // trip names collide by design; the UI has to offer a fix
+      'invalid_slug',
+      'validation_error',
+    ]
+
+    expect(new Set(branchedOn).size).toBe(branchedOn.length)
   })
 
   it('leg intent covers every routing mode the UI offers', () => {

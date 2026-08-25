@@ -100,9 +100,7 @@ class ObjectStore(Protocol):
         """Presence without transferring the body."""
         ...
 
-    async def write(
-        self, path: str, data: bytes, *, if_generation_match: int | None = None
-    ) -> int:
+    async def write(self, path: str, data: bytes, *, if_generation_match: int | None = None) -> int:
         """Create or replace, returning the new generation.
 
         Args:
@@ -149,9 +147,7 @@ class InMemoryObjectStore:
     async def exists(self, path: str) -> bool:
         return path in self._objects
 
-    async def write(
-        self, path: str, data: bytes, *, if_generation_match: int | None = None
-    ) -> int:
+    async def write(self, path: str, data: bytes, *, if_generation_match: int | None = None) -> int:
         self._check_precondition(path, if_generation_match)
         generation = self._next_generation
         self._next_generation += 1

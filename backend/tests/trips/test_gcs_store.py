@@ -144,9 +144,7 @@ class InterleavingObjectStore(InMemoryObjectStore):
         await asyncio.sleep(0)
         return await super().exists(path)
 
-    async def write(
-        self, path: str, data: bytes, *, if_generation_match: int | None = None
-    ) -> int:
+    async def write(self, path: str, data: bytes, *, if_generation_match: int | None = None) -> int:
         await asyncio.sleep(0)
         return await super().write(path, data, if_generation_match=if_generation_match)
 
@@ -283,9 +281,7 @@ class TestCorruptDocuments:
         with pytest.raises(TripDocumentInvalid):
             await store.get("broken")
 
-    async def test_a_newer_schema_version_is_refused_rather_than_guessed_at(
-        self, store, objects
-    ):
+    async def test_a_newer_schema_version_is_refused_rather_than_guessed_at(self, store, objects):
         """Silently dropping fields the running code cannot model would lose a user's trip."""
         document = make_trip().model_dump_json()
         future = document.replace('"schema_version":1', '"schema_version":99')
@@ -294,9 +290,7 @@ class TestCorruptDocuments:
             await store.get("oregon-backcountry")
         assert "99" in str(caught.value)
 
-    async def test_a_newer_schema_version_written_as_a_string_is_also_refused(
-        self, store, objects
-    ):
+    async def test_a_newer_schema_version_written_as_a_string_is_also_refused(self, store, objects):
         """Pydantic coerces `"99"` to `99`, so a raw pre-check alone would wave it through."""
         document = make_trip().model_dump_json()
         future = document.replace('"schema_version":1', '"schema_version":"99"')
@@ -318,8 +312,10 @@ class TestCorruptDocuments:
             await store.list()
 
     async def test_a_document_claiming_a_traversal_slug_is_refused_on_read(self, store, objects):
-        forged = make_trip().model_dump_json().replace(
-            '"slug":"oregon-backcountry"', '"slug":"../../admin"'
+        forged = (
+            make_trip()
+            .model_dump_json()
+            .replace('"slug":"oregon-backcountry"', '"slug":"../../admin"')
         )
         await objects.write("trips/oregon-backcountry/trip.json", forged.encode())
         with pytest.raises(TripDocumentInvalid):

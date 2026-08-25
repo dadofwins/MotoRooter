@@ -89,9 +89,7 @@ class FakeGcs:
             data, generation = self.objects[name]
             # Real GCS reports the generation of a media download in this header; without
             # it the adapter has no version to hand back for a conditional write.
-            return httpx.Response(
-                200, content=data, headers={"x-goog-generation": str(generation)}
-            )
+            return httpx.Response(200, content=data, headers={"x-goog-generation": str(generation)})
         return httpx.Response(200, json=self._metadata(name))
 
     def _delete(self, name: str) -> httpx.Response:

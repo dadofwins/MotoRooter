@@ -93,9 +93,7 @@ at startup so a misconfigured deploy fails rather than serving, and neither can 
 request handler.
 """
 
-STARTUP_ONLY: frozenset[type[Exception]] = frozenset(
-    {RoutingConfigError, TripStorageConfigError}
-)
+STARTUP_ONLY: frozenset[type[Exception]] = frozenset({RoutingConfigError, TripStorageConfigError})
 """Exceptions that fail the deploy instead of a request. Asserted by the drift test."""
 
 

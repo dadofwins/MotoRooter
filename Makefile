@@ -34,6 +34,9 @@ test-frontend:
 
 lint: ## Lint both sides
 	cd backend && uv run ruff check .
+	@# `ruff check` does not enforce formatting, so without this, format drift merges
+	@# unnoticed and then reappears as noise in the next person's diff.
+	cd backend && uv run ruff format --check .
 	cd frontend && npm run lint
 
 fmt: ## Auto-format

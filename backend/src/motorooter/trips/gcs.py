@@ -210,9 +210,7 @@ class GcsObjectStore:
         self._raise_for_status(response, path)
         return True
 
-    async def write(
-        self, path: str, data: bytes, *, if_generation_match: int | None = None
-    ) -> int:
+    async def write(self, path: str, data: bytes, *, if_generation_match: int | None = None) -> int:
         params = {"uploadType": "media", "name": path}
         if if_generation_match is not None:
             # Evaluated by GCS, so two racing writers cannot both pass it.

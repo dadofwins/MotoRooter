@@ -210,9 +210,7 @@ class GcsTripStore:
     async def create(self, trip: Trip) -> Trip:
         path = self._path(trip.slug)
         with self._translating(trip.slug):
-            await self._objects.write(
-                path, self._encode(trip), if_generation_match=MUST_NOT_EXIST
-            )
+            await self._objects.write(path, self._encode(trip), if_generation_match=MUST_NOT_EXIST)
         return trip
 
     async def put(self, trip: Trip, *, if_version: int | None = None) -> Trip:

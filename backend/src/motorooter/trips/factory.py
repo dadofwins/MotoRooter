@@ -3,12 +3,22 @@
 The mirror of `routing.factory`: the single place that names a concrete backing store, so
 everything downstream depends only on the `TripStore` protocol.
 
-Durability is required unless explicitly waived. A deploy with neither
-`MOTOROOTER_TRIPS_BUCKET` nor `MOTOROOTER_OFFLINE=1` fails to start rather than coming up
-healthy: Cloud Run's filesystem is ephemeral and per-instance, so the in-memory store there
-would show sibling instances different data and lose all of it on the next revision. That is
-a failure nobody notices until they look for a trip that is gone, which makes it exactly the
-kind of misconfiguration that should fail the deploy instead.
+Durability is required unless explicitly waived. A deploy with a bucket and no opt-out fails
+to start rather than coming up healthy: Cloud Run's filesystem is ephemeral and per-instance,
+so the in-memory store there would show sibling instances different data and lose all of it
+on the next revision. That is a failure nobody notices until they look for a trip that is
+gone, which makes it exactly the kind of misconfiguration that should fail the deploy.
+
+There are two ways to waive it, because they are two different decisions:
+
+- `MOTOROOTER_OFFLINE=1` — no external services at all. No credentials, no network, fake
+  routing, in-memory trips. For CI and for working without keys.
+- `MOTOROOTER_TRIPS_EPHEMERAL=1` — throwaway trips, everything else real. For local
+  development against real roads, where fake straight-line geometry tells you nothing about
+  whether a route looks right, and there is no bucket to write to.
+
+One flag meaning both made "I accept fake routing" and "I accept losing my trips"
+inseparable, which blocked exactly the case local development needs most.
 """
 
 import dataclasses
@@ -48,8 +58,12 @@ class TripStorageSettings:
     access_token: str | None = None
     """Explicit bearer token, bypassing the metadata server. Local development only."""
 
-    offline: bool = False
-    """Run with no durable storage and no credentials. The explicit opt-out of persistence."""
+    ephemeral: bool = False
+    """Hold trips in memory and lose them on restart. The explicit opt-out of durability.
+
+    Independent of whether *routing* is offline: real engines with throwaway storage is the
+    normal shape of local development.
+    """
 
     @property
     def normalized_base_url(self) -> str:
@@ -65,11 +79,16 @@ class TripStorageSettings:
 def settings_from_env() -> TripStorageSettings:
     """Read storage config from the environment.
 
-    `MOTOROOTER_OFFLINE=1` forces the in-memory store, matching what it already does to
-    routing: the whole app runs with no credentials and touches no external service.
+    Either `MOTOROOTER_OFFLINE=1` or `MOTOROOTER_TRIPS_EPHEMERAL=1` selects the in-memory
+    store. The first also makes routing fake; the second leaves it alone.
     """
     return TripStorageSettings(
-        offline=os.environ.get("MOTOROOTER_OFFLINE") == "1",
+        # Offline implies ephemeral — it means no external services, and a bucket is one —
+        # but not the reverse.
+        ephemeral=(
+            os.environ.get("MOTOROOTER_OFFLINE") == "1"
+            or os.environ.get("MOTOROOTER_TRIPS_EPHEMERAL") == "1"
+        ),
         bucket=os.environ.get("MOTOROOTER_TRIPS_BUCKET") or None,
         prefix=os.environ.get("MOTOROOTER_TRIPS_PREFIX", DEFAULT_TRIP_PREFIX),
         base_url=os.environ.get("MOTOROOTER_GCS_BASE_URL", GCS_BASE_URL),
@@ -81,19 +100,20 @@ def build_trip_store(settings: TripStorageSettings) -> TripStore:
     """Build the trip store.
 
     Raises:
-        TripStorageConfigError: no bucket and not offline, or the bucket or prefix cannot be
+        TripStorageConfigError: no bucket and no opt-out, or the bucket or prefix cannot be
             addressed. Raised at startup so a typo fails the deploy rather than the first
             save of the day.
     """
-    if settings.offline:
+    if settings.ephemeral:
         return InMemoryTripStore()
 
     if settings.bucket is None:
         msg = (
             "MOTOROOTER_TRIPS_BUCKET is required: without it trips would be held in memory, "
             "which on Cloud Run means each instance serving different data and all of it "
-            "lost on the next revision. Set MOTOROOTER_OFFLINE=1 to run without durability "
-            "on purpose."
+            "lost on the next revision. To run without durability on purpose, set "
+            "MOTOROOTER_TRIPS_EPHEMERAL=1 for throwaway trips with real routing, or "
+            "MOTOROOTER_OFFLINE=1 for no external services at all."
         )
         raise TripStorageConfigError(msg)
 

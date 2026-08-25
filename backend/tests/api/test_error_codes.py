@@ -12,6 +12,8 @@ from fastapi.testclient import TestClient
 
 from motorooter.api.error_codes import ERROR_TABLE, STARTUP_ONLY, ErrorCode, resolve
 from motorooter.app import create_app
+from motorooter.llm import errors as llm_errors
+from motorooter.llm.errors import LlmError
 from motorooter.routing import errors as routing_errors
 from motorooter.routing.errors import NoRouteFound, ProviderUnavailable, RoutingError
 from motorooter.routing.factory import RoutingSettings
@@ -25,7 +27,7 @@ def client():
 
 
 def _concrete_subclasses(base: type[Exception]) -> set[type[Exception]]:
-    module = routing_errors if base is RoutingError else trip_errors
+    module = {RoutingError: routing_errors, TripError: trip_errors, LlmError: llm_errors}[base]
     return {
         obj
         for _, obj in inspect.getmembers(module, inspect.isclass)
@@ -34,7 +36,7 @@ def _concrete_subclasses(base: type[Exception]) -> set[type[Exception]]:
 
 
 class TestNoDrift:
-    @pytest.mark.parametrize("base", [RoutingError, TripError])
+    @pytest.mark.parametrize("base", [RoutingError, TripError, LlmError])
     def test_every_domain_exception_is_mapped(self, base):
         """A new exception with no entry would answer 500 with `internal_error`."""
         unmapped = _concrete_subclasses(base) - set(ERROR_TABLE) - STARTUP_ONLY

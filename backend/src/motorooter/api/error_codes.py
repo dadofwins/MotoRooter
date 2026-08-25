@@ -14,6 +14,7 @@ exception the API can raise is missing, so the two cannot drift apart.
 
 from motorooter.api.errors import NotImplementedYet
 from motorooter.error_codes import ErrorCode as ErrorCode
+from motorooter.llm.errors import LlmQuotaExceeded, LlmRefused, LlmUnavailable, ToolCallFailed
 from motorooter.routing.errors import (
     InvalidRequest,
     NoRouteFound,
@@ -44,6 +45,10 @@ ERROR_TABLE: dict[type[Exception], tuple[int, ErrorCode]] = {
     RouteIncomplete: (422, ErrorCode.ROUTE_INCOMPLETE),
     QuotaExceeded: (429, ErrorCode.QUOTA_EXCEEDED),
     ProviderUnavailable: (502, ErrorCode.PROVIDER_UNAVAILABLE),
+    LlmUnavailable: (502, ErrorCode.LLM_UNAVAILABLE),
+    LlmQuotaExceeded: (429, ErrorCode.LLM_QUOTA_EXCEEDED),
+    LlmRefused: (502, ErrorCode.LLM_REFUSED),
+    ToolCallFailed: (500, ErrorCode.TOOL_CALL_FAILED),
     # Trips
     InvalidSlug: (400, ErrorCode.INVALID_SLUG),
     TripNotFound: (404, ErrorCode.TRIP_NOT_FOUND),

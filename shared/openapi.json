@@ -394,6 +394,11 @@
             "default": false,
             "title": "Prefers Unpaved",
             "type": "boolean"
+          },
+          "reports_surface": {
+            "default": false,
+            "title": "Reports Surface",
+            "type": "boolean"
           }
         },
         "required": [

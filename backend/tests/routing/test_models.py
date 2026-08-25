@@ -144,3 +144,43 @@ class TestProviderCapabilities:
     def test_max_waypoints_must_be_at_least_two(self):
         with pytest.raises(ValidationError):
             ProviderCapabilities(name="bad", max_waypoints=1)
+
+
+class TestReportsSurface:
+    """Whether an engine can tell you what the road is made of.
+
+    Distinct from `prefers_unpaved`, which says what an engine will route *onto*. Google
+    wants false for both and means quite different things by each: it will happily route you
+    down a gravel road, it simply will not say that it did.
+
+    The flag exists because grey on the map currently conflates two different facts — "the
+    road has no OSM surface tag" and "the provider cannot report surface" — and a rider
+    deserves to know which. Without it a client has to hardcode a provider name, which is
+    the one thing the capability system exists to prevent.
+    """
+
+    def test_it_defaults_to_not_reporting(self):
+        """An engine has to claim this. Assuming it would make silence look like data."""
+        assert ProviderCapabilities(name="new-engine").reports_surface is False
+
+    def test_ors_reports_surface(self):
+        from motorooter.routing.providers.ors import CAPABILITIES
+
+        assert CAPABILITIES.reports_surface is True
+
+    def test_google_does_not(self):
+        from motorooter.routing.providers.google import CAPABILITIES
+
+        assert CAPABILITIES.reports_surface is False
+
+    def test_the_fake_reports_surface(self):
+        """It can carry spans, so offline development sees the same shape as production."""
+        from motorooter.routing.providers.fake import DEFAULT_CAPABILITIES
+
+        assert DEFAULT_CAPABILITIES.reports_surface is True
+
+    def test_it_is_independent_of_prefers_unpaved(self):
+        """Google is the case that matters: routes onto dirt, cannot say that it did."""
+        capabilities = ProviderCapabilities(name="x", prefers_unpaved=True, reports_surface=False)
+        assert capabilities.prefers_unpaved is True
+        assert capabilities.reports_surface is False

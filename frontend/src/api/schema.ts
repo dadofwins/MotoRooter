@@ -377,6 +377,11 @@ export interface components {
              * @default false
              */
             prefers_unpaved: boolean;
+            /**
+             * Reports Surface
+             * @default false
+             */
+            reports_surface: boolean;
         };
         /**
          * ReplanEvent

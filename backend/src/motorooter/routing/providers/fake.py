@@ -21,6 +21,7 @@ from motorooter.routing.models import (
 DEFAULT_CAPABILITIES = ProviderCapabilities(
     name="fake",
     prefers_unpaved=True,
+    reports_surface=True,
     map_matching=True,
     alternatives=True,
     elevation=True,

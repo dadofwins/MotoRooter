@@ -44,7 +44,11 @@ from motorooter.planning.stitching import (
     stitch,
 )
 from motorooter.routing.errors import RouteIncomplete, RoutingError
-from motorooter.routing.models import RouteFingerprint, RouteLeg, RouteRequest
+from motorooter.routing.models import (
+    RouteFingerprint,
+    RouteLeg,
+    RouteRequest,
+)
 from motorooter.routing.policy import PolicyResolver
 from motorooter.trips.models import Trip, TripLeg
 

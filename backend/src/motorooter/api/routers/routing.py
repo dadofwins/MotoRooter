@@ -15,7 +15,7 @@ from motorooter.api.schemas import (
     RouteLegResponse,
     RoutingCapabilitiesResponse,
 )
-from motorooter.routing.models import RouteRequest
+from motorooter.routing.models import RouteRequest, stamped
 from motorooter.speeds import estimate_leg_duration_s
 
 router = APIRouter(prefix="/api/routing", tags=["routing"], responses=ERROR_RESPONSES)
@@ -48,15 +48,20 @@ async def route_leg(request: RouteLegRequest, resolver: Resolver) -> RouteLegRes
     Routing errors are translated to HTTP by the registered exception handlers.
     """
     provider = resolver.resolve(request.intent, override=request.provider_override)
-    leg = await provider.route(
-        RouteRequest(
-            waypoints=tuple(request.waypoints),
-            intent=request.intent,
-            avoid_highways=request.avoid_highways,
-            avoid_tolls=request.avoid_tolls,
-            avoid_ferries=request.avoid_ferries,
-            want_elevation=request.want_elevation,
-        )
+    route_request = RouteRequest(
+        waypoints=tuple(request.waypoints),
+        intent=request.intent,
+        avoid_highways=request.avoid_highways,
+        avoid_tolls=request.avoid_tolls,
+        avoid_ferries=request.avoid_ferries,
+        want_elevation=request.want_elevation,
+    )
+    # Stamped with the request it came from, so the client can tell a stale leg from a
+    # current one. Without it every response looks stale and every drag routes twice.
+    leg = stamped(
+        await provider.route(route_request),
+        route_request,
+        provider_override=request.provider_override,
     )
     return RouteLegResponse(
         leg=leg,

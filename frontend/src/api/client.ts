@@ -98,6 +98,13 @@ interface SendInit {
 
 const JSON_TYPE = 'application/json'
 
+/**
+ * Cap on one unframed streamed line. Generous next to any real `ReplanEvent` — a discovery
+ * stage carrying dozens of POIs is kilobytes — and small enough that an unframed body
+ * fails fast instead of consuming the tab.
+ */
+const MAX_STREAM_LINE_BYTES = 1024 * 1024
+
 /** Percent-encodes one path segment, so a slug can never widen the URL it appears in. */
 function segment(value: string): string {
   return encodeURIComponent(value)
@@ -132,11 +139,12 @@ function codeFrom(body: unknown, status: number): ErrorCode {
   const code = isRecord(body) ? body['code'] : undefined
   if (typeof code === 'string' && code !== '') return code
 
-  // No `code` in the body, so derive the most specific one the status justifies.
+  // No `code` in the body, so derive the most specific one the status justifies. The
+  // backend now sends a `code` with every error, including 501s and rejected request
+  // bodies, so reaching here means the response did not come from the app — an
+  // intermediary, or a proxy error page. Keep the mapping anyway: a legible code costs
+  // nothing and the alternative is a component with no branch to take.
   if (status === 501) return 'not_implemented'
-  // FastAPI's own request-validation handler answers with a list of issues under `detail`
-  // and no `code`, which is not the declared `ErrorResponse` shape. On this API a 422
-  // without a code is always a rejected request body, so name it as one.
   if (status === 422) return 'validation_error'
   return 'unknown_error'
 }
@@ -168,24 +176,46 @@ async function errorFor(response: Response): Promise<ApiError> {
  * app at all: a proxy answering 200 with an HTML page would otherwise surface as a bare
  * `SyntaxError`, which no component can sensibly handle.
  */
+/**
+ * A body that could not be read to completion — a stream that errored mid-download.
+ *
+ * Aborts pass through untouched; everything else becomes an `ApiNetworkError`, because the
+ * request did reach the server but the response never arrived in full.
+ */
+function bodyReadFailure(error: unknown): never {
+  if (isAbortError(error)) throw error
+  throw new ApiNetworkError({ detail: 'The response body could not be read.', cause: error })
+}
+
+/**
+ * A body that arrived intact but was not the JSON it claimed to be.
+ *
+ * Every JSON decode in this module goes through here. A bare `SyntaxError` reaching a
+ * component is unclassifiable — `isApiError` returns false and the "coming soon" and
+ * "quota exceeded" branches alike are skipped — so there must be no exceptions, including
+ * on the streaming path.
+ */
+function malformedJson(status: number, text: string, error: unknown): never {
+  throw new ApiError({
+    status,
+    code: 'unknown_error',
+    detail: 'The server sent a response that was not valid JSON.',
+    body: text,
+    cause: error,
+  })
+}
+
 async function readJson<T>(response: Response): Promise<T> {
   let text: string
   try {
     text = await response.text()
   } catch (error) {
-    if (isAbortError(error)) throw error
-    throw new ApiNetworkError({ detail: 'The response body could not be read.', cause: error })
+    bodyReadFailure(error)
   }
   try {
     return parseJson(text) as T
   } catch (error) {
-    throw new ApiError({
-      status: response.status,
-      code: 'unknown_error',
-      detail: 'The server sent a response that was not valid JSON.',
-      body: text,
-      cause: error,
-    })
+    malformedJson(response.status, text, error)
   }
 }
 
@@ -202,19 +232,49 @@ async function* streamNdjson<T>(response: Response): AsyncGenerator<T, void, und
   const reader = body.getReader()
   const decoder = new TextDecoder()
   let buffer = ''
+
+  /** Same envelope as `readJson`: no decode failure escapes as a raw `SyntaxError`. */
+  const parseLine = (line: string): T => {
+    try {
+      return parseJson(line) as T
+    } catch (error) {
+      malformedJson(response.status, line, error)
+    }
+  }
+
   try {
     for (;;) {
-      const { done, value } = await reader.read()
-      if (done) break
-      buffer += decoder.decode(value, { stream: true })
+      let chunk: ReadableStreamReadResult<Uint8Array>
+      try {
+        chunk = await reader.read()
+      } catch (error) {
+        bodyReadFailure(error)
+      }
+      if (chunk.done) break
+
+      buffer += decoder.decode(chunk.value, { stream: true })
       for (let newline = buffer.indexOf('\n'); newline !== -1; newline = buffer.indexOf('\n')) {
         const line = buffer.slice(0, newline)
         buffer = buffer.slice(newline + 1)
-        if (line.trim() !== '') yield parseJson(line) as T
+        if (line.trim() !== '') yield parseLine(line)
+      }
+
+      // An unframed body — a proxy answering 200 with a page, or a stream that never
+      // emits a newline — must not be accumulated until the tab dies.
+      if (buffer.length > MAX_STREAM_LINE_BYTES) {
+        throw new ApiError({
+          status: response.status,
+          code: 'unknown_error',
+          detail: `A single streamed line exceeded ${String(MAX_STREAM_LINE_BYTES)} bytes, so the response is too large to be an event stream.`,
+          body: buffer.slice(0, 512),
+        })
       }
     }
+
     buffer += decoder.decode()
-    if (buffer.trim() !== '') yield parseJson(buffer) as T // final line, unterminated
+    // The last line of a well-formed stream may be unterminated; a truncated one looks
+    // exactly the same here, and parseLine is what tells them apart.
+    if (buffer.trim() !== '') yield parseLine(buffer)
   } finally {
     await reader.cancel().catch(() => undefined)
   }
@@ -332,7 +392,13 @@ export function createApiClient(options: ApiClientOptions = {}): ApiClient {
         { method: 'GET', accept: `application/gpx+xml, ${JSON_TYPE}` },
         requestOptions,
       )
-      return response.blob()
+      try {
+        return await response.blob()
+      } catch (error) {
+        // Not JSON, but a body read can fail here exactly as it can anywhere else, and a
+        // caller branching on isApiError would otherwise drop it.
+        bodyReadFailure(error)
+      }
     },
 
     async placeDetail(

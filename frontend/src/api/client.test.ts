@@ -47,6 +47,31 @@ function sentJson(fetchMock: ReturnType<typeof vi.fn<FetchLike>>): Record<string
 
 type Api = ReturnType<typeof createApiClient>
 
+/** A 200 NDJSON response whose body arrives as the given chunks. */
+function ndjsonResponse(chunks: readonly string[]): Response {
+  const encoder = new TextEncoder()
+  const body = new ReadableStream<Uint8Array>({
+    start(controller) {
+      for (const chunk of chunks) controller.enqueue(encoder.encode(chunk))
+      controller.close()
+    },
+  })
+  return new Response(body, {
+    status: 200,
+    headers: { 'content-type': 'application/x-ndjson' },
+  })
+}
+
+/** A 200 response whose body fails partway through being read. */
+function brokenBodyResponse(): Response {
+  const body = new ReadableStream<Uint8Array>({
+    start(controller) {
+      controller.error(new TypeError('network error while reading the body'))
+    },
+  })
+  return new Response(body, { status: 200 })
+}
+
 const TRIP: Trip = {
   schema_version: 1,
   slug: 'wabdr-north',
@@ -313,6 +338,61 @@ describe('endpoints that are still stubs', () => {
     await expect(api.placeDetail('ChIJ123')).resolves.toEqual(detail)
   })
 
+  it('reports a malformed stream line as an ApiError, not a bare SyntaxError', async () => {
+    // The stream was the one path where a JSON.parse failure could still escape. A single
+    // bad line must not surface as an error no component can classify.
+    const fetchMock = stubFetch(ndjsonResponse(['{"stage":"route_search","message":"ok"}\n', 'not json\n']))
+    const api = createApiClient({ fetch: fetchMock })
+
+    const events = api.replan('wabdr-north', {})
+    expect((await events.next()).value?.stage).toBe('route_search')
+
+    const error = await events.next().then(
+      () => undefined,
+      (caught: unknown) => caught,
+    )
+    expect(error).toBeInstanceOf(ApiError)
+    expect(error).not.toBeInstanceOf(SyntaxError)
+    expect((error as ApiError).code).toBe('unknown_error')
+  })
+
+  it('reports a truncated final line as an ApiError too', async () => {
+    // A connection dropped mid-event leaves an unterminated partial object behind.
+    const fetchMock = stubFetch(ndjsonResponse(['{"stage":"discovery","mess']))
+    const api = createApiClient({ fetch: fetchMock })
+
+    await expect(api.replan('x', {}).next()).rejects.toBeInstanceOf(ApiError)
+  })
+
+  it('reports an HTML body on the stream endpoint like every other endpoint does', async () => {
+    const fetchMock = stubFetch(ndjsonResponse(['<html><body>502</body></html>\n']))
+    const api = createApiClient({ fetch: fetchMock })
+
+    const error = (await api
+      .replan('x', {})
+      .next()
+      .catch((caught: unknown) => caught)) as ApiError
+
+    expect(error).toBeInstanceOf(ApiError)
+    expect(error.body).toContain('<html>')
+  })
+
+  it('refuses to buffer an unbounded line rather than growing until the tab dies', async () => {
+    // A 200 body with no newline in it — a misbehaving proxy, or a stream that never
+    // frames — would otherwise be accumulated in full.
+    const megabyte = 'x'.repeat(1024 * 1024)
+    const fetchMock = stubFetch(ndjsonResponse([megabyte, megabyte, megabyte]))
+    const api = createApiClient({ fetch: fetchMock })
+
+    const error = (await api
+      .replan('x', {})
+      .next()
+      .catch((caught: unknown) => caught)) as ApiError
+
+    expect(error).toBeInstanceOf(ApiError)
+    expect(error.detail).toMatch(/too large|too long/i)
+  })
+
   it('streams replan events line by line, including across chunk boundaries', async () => {
     // Events arrive as newline-delimited JSON, so a chunk can split a line in half.
     const chunks = [
@@ -354,8 +434,10 @@ describe('error mapping', () => {
   })
 
   it('survives an error body that does not follow the contract', async () => {
-    // FastAPI's own request-validation handler answers with a *list* of issues under
-    // `detail` and no `code` at all, which is not the declared ErrorResponse shape.
+    // The body below is what FastAPI's built-in request-validation handler used to send: a
+    // *list* under `detail` and no `code` at all, contradicting the declared ErrorResponse.
+    // The backend normalises it now, so this stands as the general defence against a body
+    // that did not come from the app at all — a proxy error page, or an intermediary.
     const raw = {
       detail: [
         { type: 'too_short', loc: ['body', 'waypoints'], msg: 'List should have at least 2 items' },
@@ -406,6 +488,18 @@ describe('error mapping', () => {
     expect(error).not.toBeInstanceOf(SyntaxError)
     expect(error.code).toBe('unknown_error')
     expect(error.body).toBe('<html>hello</html>')
+  })
+
+  it('classifies a body that fails mid-download on the GPX path', async () => {
+    // exportGpx returns a Blob rather than JSON, so it did not share readJson's guard.
+    // A caller doing `if (isApiError(error))` would otherwise drop this on the floor.
+    const fetchMock = stubFetch(brokenBodyResponse())
+    const api = createApiClient({ fetch: fetchMock })
+
+    const error = await api.exportGpx('wabdr-north').catch((caught: unknown) => caught)
+
+    expect(error).toBeInstanceOf(ApiError)
+    expect(error).not.toBeInstanceOf(TypeError)
   })
 
   it('reports a failed fetch as a network error, not as a server response', async () => {

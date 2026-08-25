@@ -303,12 +303,16 @@ class Trip(BaseModel):
         measured = sum(leg.geometry_length_m for leg in self.routed_legs)
         if measured <= 0:
             return 0.0
-        covered = {
-            Surface.PAVED: sum(leg.paved_distance_m for leg in self.routed_legs),
-            Surface.UNPAVED: sum(leg.unpaved_distance_m for leg in self.routed_legs),
-            Surface.UNKNOWN: sum(leg.unknown_distance_m for leg in self.routed_legs),
-        }[surface]
-        return covered / measured
+        return self._surface_distance_m(surface) / measured
+
+    def _surface_distance_m(self, surface: Surface) -> float:
+        match surface:
+            case Surface.PAVED:
+                return sum(leg.paved_distance_m for leg in self.routed_legs)
+            case Surface.UNPAVED:
+                return sum(leg.unpaved_distance_m for leg in self.routed_legs)
+            case Surface.UNKNOWN:
+                return sum(leg.unknown_distance_m for leg in self.routed_legs)
 
 
 TripName = Annotated[str, Field(min_length=1, max_length=200)]

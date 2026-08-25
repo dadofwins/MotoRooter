@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { routeErrorMessage } from './routeErrorMessage'
+import { replanErrorMessage, routeErrorMessage } from './routeErrorMessage'
 import { ApiError, ApiNetworkError, ApiNotImplementedError } from '../api/errors'
 
 /**
@@ -68,5 +68,34 @@ describe('routeErrorMessage', () => {
 
     expect(message).not.toContain('is not a function')
     expect(message.length).toBeGreaterThan(0)
+  })
+})
+
+describe('replanErrorMessage', () => {
+  /**
+   * Discovery answers 501 when the instance has no search, model or Places credentials —
+   * which is exactly how the offline backend runs. "Not built yet" would be wrong: it is
+   * built, and this instance cannot reach what it needs.
+   */
+  it('explains a 501 as missing configuration, not as an unfinished feature', () => {
+    const message = replanErrorMessage(
+      new ApiNotImplementedError({
+        detail: 'discovery (no search, model or Places credentials configured) is not implemented yet',
+      }),
+    )
+
+    expect(message).toMatch(/credential|configur/i)
+    expect(message).not.toMatch(/not built/i)
+  })
+
+  it('falls back to the shared mapping for everything else', () => {
+    expect(replanErrorMessage(new ApiNetworkError({ detail: 'Failed to fetch' }))).toMatch(
+      /connection|reach/i,
+    )
+    expect(
+      replanErrorMessage(
+        new ApiError({ status: 429, code: 'quota_exceeded', detail: 'daily quota spent' }),
+      ),
+    ).toMatch(/limit|today/i)
   })
 })

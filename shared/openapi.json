@@ -52,12 +52,32 @@
         "title": "CreateTripRequest",
         "type": "object"
       },
+      "ErrorCode": {
+        "description": "Stable, machine-readable error identifiers.\n\nClients switch on these. `detail` is for humans and is not part of the contract.\nRenaming a member is a breaking change; adding one is not.",
+        "enum": [
+          "invalid_request",
+          "unsupported_intent",
+          "provider_not_found",
+          "no_route_found",
+          "quota_exceeded",
+          "provider_unavailable",
+          "invalid_slug",
+          "trip_not_found",
+          "trip_already_exists",
+          "trip_storage_unavailable",
+          "validation_error",
+          "not_implemented",
+          "internal_error"
+        ],
+        "title": "ErrorCode",
+        "type": "string"
+      },
       "ErrorResponse": {
         "description": "Uniform error body. `code` is stable and machine-readable; `detail` is for humans.",
         "properties": {
           "code": {
-            "title": "Code",
-            "type": "string"
+            "$ref": "#/components/schemas/ErrorCode",
+            "description": "Stable, machine-readable error identifier. Switch on this, never on `detail`. Typed as an enum so the frontend generates the union instead of hand-maintaining it."
           },
           "detail": {
             "title": "Detail",

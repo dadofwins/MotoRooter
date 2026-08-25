@@ -11,6 +11,7 @@ model does not, such as the drag-throttle budget on a routed leg.
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from motorooter.api.error_codes import ErrorCode
 from motorooter.routing.models import Coordinate, LegIntent, ProviderCapabilities, RouteLeg
 from motorooter.trips.models import Poi, PoiCategory, PoiDetail, TripLeg, Waypoint
 
@@ -18,7 +19,13 @@ from motorooter.trips.models import Poi, PoiCategory, PoiDetail, TripLeg, Waypoi
 class ErrorResponse(BaseModel):
     """Uniform error body. `code` is stable and machine-readable; `detail` is for humans."""
 
-    code: str
+    code: ErrorCode = Field(
+        description=(
+            "Stable, machine-readable error identifier. Switch on this, never on `detail`. "
+            "Typed as an enum so the frontend generates the union instead of "
+            "hand-maintaining it."
+        )
+    )
     detail: str
 
 
@@ -124,14 +131,6 @@ class ReplanRequest(BaseModel):
             "discarding the whole plan."
         ),
     )
-
-
-class ReplanEventKind(BaseModel):
-    """Documentation-only marker for the SSE event vocabulary.
-
-    Replan streams Server-Sent Events so the map fills in incrementally instead of
-    freezing behind a spinner. Event `data` is a JSON `ReplanEvent`.
-    """
 
 
 class ReplanEvent(BaseModel):

@@ -46,16 +46,11 @@ export type ErrorResponse = Schemas['ErrorResponse']
 /**
  * Stable error codes from `ErrorResponse.code`. Switch on these rather than on the
  * human-readable `detail`, which is not part of the contract.
+ *
+ * Generated, not hand-maintained. It used to be a literal union restated here, which was a
+ * silent drift channel: the backend derived codes from Python exception class names, so a
+ * rename changed the wire contract with no build failure on either side. Codes are now
+ * declared explicitly on the backend and published as an OpenAPI enum, so a change to the
+ * set breaks the build here instead.
  */
-export type ApiErrorCode =
-  | 'invalid_slug'
-  | 'trip_not_found'
-  | 'trip_already_exists'
-  | 'trip_storage_unavailable'
-  | 'validation_error'
-  | 'invalid_request'
-  | 'unsupported_intent'
-  | 'provider_not_found'
-  | 'no_route_found'
-  | 'quota_exceeded'
-  | 'provider_unavailable'
+export type ApiErrorCode = Schemas['ErrorCode']

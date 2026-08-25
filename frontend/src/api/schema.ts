@@ -207,12 +207,21 @@ export interface components {
             slug?: string | null;
         };
         /**
+         * ErrorCode
+         * @description Stable, machine-readable error identifiers.
+         *
+         *     Clients switch on these. `detail` is for humans and is not part of the contract.
+         *     Renaming a member is a breaking change; adding one is not.
+         * @enum {string}
+         */
+        ErrorCode: "invalid_request" | "unsupported_intent" | "provider_not_found" | "no_route_found" | "quota_exceeded" | "provider_unavailable" | "invalid_slug" | "trip_not_found" | "trip_already_exists" | "trip_storage_unavailable" | "validation_error" | "not_implemented" | "internal_error";
+        /**
          * ErrorResponse
          * @description Uniform error body. `code` is stable and machine-readable; `detail` is for humans.
          */
         ErrorResponse: {
-            /** Code */
-            code: string;
+            /** @description Stable, machine-readable error identifier. Switch on this, never on `detail`. Typed as an enum so the frontend generates the union instead of hand-maintaining it. */
+            code: components["schemas"]["ErrorCode"];
             /** Detail */
             detail: string;
         };

@@ -30,7 +30,11 @@ steps:
       - --region=${_REGION}
       - --platform=managed
       - --allow-unauthenticated
-      - --set-env-vars=TRIPS_BUCKET=${PROJECT_ID}-motorooter-trips
+      # Must match the name the app actually reads (motorooter.trips.factory). Getting this
+      # wrong does not fail the deploy — it leaves the bucket unset, which silently falls
+      # back to in-memory storage: healthy service, different trips per instance, everything
+      # lost on the next revision. The app now refuses to start without it for that reason.
+      - --set-env-vars=MOTOROOTER_TRIPS_BUCKET=${PROJECT_ID}-motorooter-trips
       - --set-secrets=ORS_API_KEY=ors-api-key:latest,GOOGLE_MAPS_SERVER_KEY=google-maps-server-key:latest,OPENAI_API_KEY=openai-api-key:latest
 
 options:

@@ -71,6 +71,19 @@ removing an existing shape does.
 
 Never edit anything under `frontend/`.
 
+## Git rules
+
+- **Commit and push freely on your own branch.** That part is yours.
+- **Never merge to `main`, and never push to `main`.** The integrator merges, after review,
+  and only after telling Tim. If you think something must land immediately, say so by mail.
+- **Rebase on `origin/main`, never merge `main` into your branch.** Linear history keeps
+  review diffs legible. `make handoff` refuses to run if your branch is behind, so fetch and
+  rebase when it tells you to.
+- **One queue item per branch.** Finish it, hand off, start the next on a fresh branch while
+  the review runs. A branch with three features in it is a branch nobody can review well.
+- Do not rewrite history on a branch you have already handed off — the reviewer is looking
+  at those commits.
+
 ## House rules
 
 - **TDD, no exceptions.** Test first, watch it fail, then implement. Every one of the 418

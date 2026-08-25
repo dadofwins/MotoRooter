@@ -5,7 +5,10 @@
     "module": "ESNext",
     "moduleResolution": "bundler",
     "jsx": "react-jsx",
-    "types": ["vitest/globals", "@testing-library/jest-dom"],
+    // Explicit list, so an @types package only lands in scope when it is wanted.
+    // google.maps declares the `google` global the map layer is written against;
+    // vite/client declares import.meta.env.
+    "types": ["vitest/globals", "@testing-library/jest-dom", "google.maps", "vite/client"],
 
     "strict": true,
     "noUncheckedIndexedAccess": true,

@@ -258,3 +258,174 @@ describe('useReplan', () => {
     expect(client.replan.mock.calls[0]?.[1].preserve_pinned).toBe(true)
   })
 })
+
+describe('the progress log', () => {
+  /**
+   * A rider watching a multi-minute operation needs to see it accumulate. Tim's words were "I
+   * have no idea what it's doing and it's already been like a few minutes", so the log answers
+   * what, and the elapsed count answers how long.
+   *
+   * Events will arrive fast and out of order once discovery is parallelised, so nothing here
+   * may assume ordered stages or monotonic progress.
+   */
+  it('accumulates what it has done, newest first', async () => {
+    const client = fakeClient([
+      event({ stage: 'discovery', message: 'Searching near Rainy Pass' }),
+      event({ stage: 'discovery', message: 'Found 5 leads' }),
+      event({ stage: 'done', message: 'Finished' }),
+    ])
+    const { result } = renderHook(() => useReplan(client))
+
+    await act(async () => {
+      result.current.start('wabdr-north')
+      await Promise.resolve()
+    })
+    await waitFor(() => expect(result.current.isRunning).toBe(false))
+
+    expect(result.current.log.map((entry) => entry.message)).toEqual([
+      'Finished',
+      'Found 5 leads',
+      'Searching near Rainy Pass',
+    ])
+  })
+
+  it('collapses a message repeated back to back, which parallel emission will do', async () => {
+    const client = fakeClient([
+      event({ message: 'Judging candidates' }),
+      event({ message: 'Judging candidates' }),
+      event({ message: 'Judging candidates' }),
+      event({ stage: 'done', message: 'Finished' }),
+    ])
+    const { result } = renderHook(() => useReplan(client))
+
+    await act(async () => {
+      result.current.start('wabdr-north')
+      await Promise.resolve()
+    })
+    await waitFor(() => expect(result.current.isRunning).toBe(false))
+
+    expect(result.current.log).toHaveLength(2)
+  })
+
+  it('keeps the log bounded, because a few hundred events would scroll away', async () => {
+    const many = Array.from({ length: 60 }, (_, index) =>
+      event({ message: `Step ${String(index)}` }),
+    )
+    const client = fakeClient([...many, event({ stage: 'done', message: 'Finished' })])
+    const { result } = renderHook(() => useReplan(client))
+
+    await act(async () => {
+      result.current.start('wabdr-north')
+      await Promise.resolve()
+    })
+    await waitFor(() => expect(result.current.isRunning).toBe(false))
+
+    expect(result.current.log.length).toBeLessThanOrEqual(12)
+    // The newest is kept; the oldest is what falls off.
+    expect(result.current.log[0]?.message).toBe('Finished')
+  })
+
+  it('never lets the meter go backwards, whatever order events arrive in', async () => {
+    // Parallel emission means a 40% event can land after a 60% one. A meter that retreats
+    // reads as broken, so the highest seen wins: "at least this far" is stable and true.
+    const client = fakeClient([
+      event({ progress: 0.6 }),
+      event({ progress: 0.3 }),
+      event({ stage: 'done', progress: 0.9 }),
+    ])
+    const { result } = renderHook(() => useReplan(client))
+
+    await act(async () => {
+      result.current.start('wabdr-north')
+      await Promise.resolve()
+    })
+    await waitFor(() => expect(result.current.isRunning).toBe(false))
+
+    expect(result.current.progress).toBeCloseTo(0.9, 6)
+  })
+
+  it('starts a new run with a clean log, rather than continuing the last one', async () => {
+    // Two runs emitting different steps, so "the old ones are gone" is distinguishable from
+    // "the same events happened again".
+    let call = 0
+    const client = {
+      // eslint-disable-next-line @typescript-eslint/require-await
+      replan: vi.fn(async function* (
+        _slug: string,
+        _request: ReplanRequest,
+        _options?: RequestOptions,
+      ) {
+        call += 1
+        yield event({ message: call === 1 ? 'First run' : 'Second run' })
+        yield event({ stage: 'done', message: 'Finished' })
+      }),
+    }
+    const { result } = renderHook(() => useReplan(client))
+    await act(async () => {
+      result.current.start('wabdr-north')
+      await Promise.resolve()
+    })
+    await waitFor(() => expect(result.current.isRunning).toBe(false))
+
+    await act(async () => {
+      result.current.start('wabdr-north')
+      await Promise.resolve()
+    })
+    await waitFor(() => expect(result.current.isRunning).toBe(false))
+
+    const messages = result.current.log.map((entry) => entry.message)
+    expect(messages).toContain('Second run')
+    expect(messages).not.toContain('First run')
+  })
+
+  it('counts the seconds, because "a few minutes" is the complaint it answers', async () => {
+    vi.useFakeTimers()
+    try {
+      const client = {
+        replan: vi.fn(
+          // eslint-disable-next-line require-yield
+          async function* (_slug: string, _request: ReplanRequest, _options?: RequestOptions) {
+            await new Promise(() => undefined)
+          },
+        ),
+      }
+      const { result } = renderHook(() => useReplan(client))
+
+      await act(async () => {
+        result.current.start('wabdr-north')
+        await Promise.resolve()
+      })
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(5000)
+      })
+
+      expect(result.current.elapsedS).toBeGreaterThanOrEqual(5)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('stops counting when the run stops', async () => {
+    vi.useFakeTimers()
+    try {
+      const client = fakeClient([event({ stage: 'done' })])
+      const { result } = renderHook(() => useReplan(client))
+      await act(async () => {
+        result.current.start('wabdr-north')
+        await Promise.resolve()
+      })
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(3000)
+      })
+      const settled = result.current.elapsedS
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(5000)
+      })
+
+      expect(result.current.elapsedS).toBe(settled)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+})

@@ -33,6 +33,7 @@ import { DragSession } from './routing/dragSession'
 import { addPoiToRoute, type RouteEdit } from './routing/tripEdits'
 import { replanErrorMessage, routeErrorMessage } from './trip/routeErrorMessage'
 import { SurfaceSummary } from './trip/SurfaceSummary'
+import { ReplanProgress } from './trip/ReplanProgress'
 import { needsReplan, useReplan } from './trip/useReplan'
 import { useRouteLeg } from './trip/useRouteLeg'
 import { useRoutingCapabilities } from './trip/useRoutingCapabilities'
@@ -338,14 +339,14 @@ export function App({
             >
               {replan.isRunning ? 'Finding places…' : 'Find places along the route'}
             </button>
-            {replan.isRunning && (
-              // Which stage, not a spinner: "working" for thirty seconds is indistinguishable
-              // from a hang, and this run genuinely takes that long.
-              <p className="replan__progress" aria-live="polite">
-                {replan.message === '' ? (replan.stage ?? 'Starting…') : replan.message}
-                {replan.progress !== null && ` · ${String(Math.round(replan.progress * 100))}%`}
-              </p>
-            )}
+            {/* An accumulating log rather than one replaced line: this run takes minutes, and
+                a rider watching it needs to see it progress. Kept after it ends as a record. */}
+            <ReplanProgress
+              isRunning={replan.isRunning}
+              log={replan.log}
+              progress={replan.progress}
+              elapsedS={replan.elapsedS}
+            />
             {!replan.isRunning && stale && placed.length > 0 && (
               // The route moved after these were found, so they describe a different trip.
               <p className="replan__stale">

@@ -67,6 +67,7 @@ def place(
         "id": place_id,
         "displayName": {"text": "Halfway Flat Campground"},
         "location": {"latitude": lat, "longitude": lon},
+        "types": ["campground", "point_of_interest"],
     } | extra
 
 
@@ -178,6 +179,37 @@ class TestWhatResolutionProduces:
     async def test_the_result_can_be_pinned(self, mock_places):
         resolved = await resolver().resolve([candidate()], route=ROUTE)
         assert resolved[0].to_poi(poi_id="p1", on_route=True).is_verified is True
+
+    async def test_the_category_comes_from_places_not_the_query(self):
+        """`Crystal Mountain Resort` arrived tagged `wild_camp` because it turned up in a
+        dispersed-camping search. It is a ski resort with lodging."""
+        with respx.mock(assert_all_called=False) as mock:
+            mock.post(PLACES_SEARCH_URL).mock(
+                return_value=httpx.Response(200, json=body(place(types=["ski_resort", "lodging"])))
+            )
+            resolved = await resolver().resolve([candidate()], route=ROUTE)
+        assert candidate().category is PoiCategory.WILD_CAMP
+        assert resolved[0].category is PoiCategory.HOTEL
+
+    async def test_places_types_are_kept_as_evidence(self, mock_places):
+        """The model needs them when it has to decide what Places could not."""
+        resolved = await resolver().resolve([candidate()], route=ROUTE)
+        assert "campground" in resolved[0].places_types
+
+    async def test_an_untypeable_place_has_no_category_rather_than_the_querys(self):
+        """Dispersed camping has no Google type. Falling back to the query is the bug."""
+        with respx.mock(assert_all_called=False) as mock:
+            mock.post(PLACES_SEARCH_URL).mock(
+                return_value=httpx.Response(
+                    200, json=body(place(types=["point_of_interest", "establishment"]))
+                )
+            )
+            resolved = await resolver().resolve([candidate()], route=ROUTE)
+        assert resolved[0].category is None
+
+    async def test_the_field_mask_requests_types(self, mock_places):
+        await resolver().resolve([candidate()], route=ROUTE)
+        assert "places.types" in mock_places.calls.last.request.headers["x-goog-fieldmask"]
 
 
 class TestUnresolvableCandidatesAreDropped:

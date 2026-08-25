@@ -70,6 +70,18 @@ class ResolvedCandidate(BaseModel):
     coordinate: Coordinate
     """From Places. Not the claim — a source naming the wrong valley must not move the pin."""
 
+    category: PoiCategory | None = None
+    """What this place actually is, decided after resolution rather than inherited.
+
+    `None` means neither Places nor the model could say. Deliberately not defaulted to the
+    query's category: a ski resort found by a dispersed-camping search would then be tagged
+    `wild_camp`, which is how this field came to exist. A plausible-looking wrong category is
+    worse than an absent one — it puts the wrong icon on the map and nothing looks broken.
+    """
+
+    places_types: tuple[str, ...] = ()
+    """Raw Places types, kept as evidence for the model when it has to decide."""
+
     rating: float | None = Field(default=None, ge=0.0, le=5.0)
     user_rating_count: int | None = Field(default=None, ge=0)
     """Places' own rating, carried in memory for the judge and **never persisted**.
@@ -98,11 +110,22 @@ class ResolvedCandidate(BaseModel):
         `PoiSource.PLACES` rather than the discovering source: Places is what vouched for the
         location, and that is what `Poi.is_verified` is asking about. Recording `brave` here
         would claim a verification that a web search cannot give.
+
+        Raises:
+            ValueError: nothing could categorise this place. It is not pinnable — the map
+                needs an icon and the filters need a kind, and guessing either from the query
+                that found it is the bug this replaced.
         """
+        if self.category is None:
+            msg = (
+                f"{self.candidate.name!r} has no category: neither Places nor the model "
+                "could say what it is, and the query's category is not a fallback"
+            )
+            raise ValueError(msg)
         return Poi(
             id=poi_id,
             name=self.candidate.name,
-            category=self.candidate.category,
+            category=self.category,
             coordinate=self.coordinate,
             source=PoiSource.PLACES,
             place_id=self.place_id,
@@ -132,6 +155,18 @@ class Evidence(BaseModel):
 
     distance_to_fuel_m: float | None = Field(default=None, ge=0.0)
     """Remoteness. Matters more on a motorcycle than the numbers suggest."""
+
+    category: PoiCategory | None = None
+    """What this place actually is, decided after resolution rather than inherited.
+
+    `None` means neither Places nor the model could say. Deliberately not defaulted to the
+    query's category: a ski resort found by a dispersed-camping search would then be tagged
+    `wild_camp`, which is how this field came to exist. A plausible-looking wrong category is
+    worse than an absent one — it puts the wrong icon on the map and nothing looks broken.
+    """
+
+    places_types: tuple[str, ...] = ()
+    """Raw Places types, kept as evidence for the model when it has to decide."""
 
     rating: float | None = Field(default=None, ge=0.0, le=5.0)
     user_rating_count: int | None = Field(default=None, ge=0)

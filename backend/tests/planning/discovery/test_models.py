@@ -38,6 +38,7 @@ def resolved(**overrides) -> ResolvedCandidate:
         "candidate": candidate(),
         "place_id": "ChIJ_example",
         "coordinate": Coordinate(lat=47.01, lon=-121.02),
+        "category": PoiCategory.CAMPGROUND,
     }
     return ResolvedCandidate(**(defaults | overrides))
 
@@ -104,6 +105,24 @@ class TestResolutionIsWhatMakesItReal:
 
     def test_it_keeps_the_original_claim_for_provenance(self):
         assert resolved().candidate.source == "brave"
+
+    def test_the_poi_takes_the_resolved_category_not_the_queried_one(self):
+        """A ski resort found by a dispersed-camping search is a ski resort.
+
+        The category used to be inherited from the query, which mislabelled everything a
+        query surfaced that was not what it asked for.
+        """
+        result = resolved(
+            candidate=candidate(category=PoiCategory.WILD_CAMP),
+            category=PoiCategory.HOTEL,
+        )
+        assert result.to_poi(poi_id="p1").category is PoiCategory.HOTEL
+
+    def test_an_uncategorised_place_cannot_be_pinned(self):
+        """The map needs an icon and the filters need a kind. Guessing either from the query
+        is the bug this replaced, so refusing is the honest answer."""
+        with pytest.raises(ValueError, match="category"):
+            resolved(category=None).to_poi(poi_id="p1")
 
 
 class TestEvidenceIsMeasuredNotAsserted:

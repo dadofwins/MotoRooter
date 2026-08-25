@@ -11,12 +11,17 @@ Before doing anything else, point the `Monitor` tool at `make mail-watch` with
 `persistent: true`. Incoming messages then arrive as notifications while you work. Then run
 `make mail-read` once to pick up anything waiting.
 
-When a branch is ready, hand off in one command — it runs `make check`, pushes, and mails
-the integrator, and refuses to proceed if checks fail:
+When a branch is ready: self-review your diff against `docs/self-review.md` first, then
+hand off in one command. It runs `make check`, pushes, and mails the integrator, and refuses
+to proceed if checks fail, your tree is dirty, or you are behind `origin/main`:
 
 ```sh
 make handoff MSG="what changed and what the reviewer should focus on"
 ```
+
+Do **not** try to invoke the `/code-review` skill — it is user-invocable only and will fail
+with `disable-model-invocation`. Self-review means reading your own diff against the
+checklist. The integrator runs the real review.
 
 Reply to a review with `scripts/mail send integrator "<subject>"`, body on stdin. Your role
 (backend) is inferred from your branch prefix; nothing to configure. Full protocol is in

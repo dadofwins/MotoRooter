@@ -97,8 +97,13 @@ replaces PR comments.
 
 **Author:**
 
-1. Run `/code-review` on your own diff and fix what it finds. Do not send the reviewer
-   things you could have caught yourself.
+1. Self-review your own diff against `docs/self-review.md`. Do not send the reviewer things
+   you could have caught yourself.
+
+   Note: the `/code-review` skill is **user-invocable only** — an agent cannot call it, and
+   attempting to will fail with `disable-model-invocation`. Self-review here means reading
+   `git diff origin/main...HEAD` deliberately against the checklist. If Tim wants a
+   tool-driven pass, he can type `/code-review` in your window himself.
 2. Hand off in one command:
 
    ```sh

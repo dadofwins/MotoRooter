@@ -56,6 +56,10 @@ Design notes that matter here:
 
 **When it is done:**
 
+Self-review your diff against `docs/self-review.md` first — read `git diff origin/main...HEAD`
+deliberately, do not skim it. Do not try to invoke the `/code-review` skill; it is
+user-invocable only and will fail with `disable-model-invocation`.
+
 ```sh
 make handoff MSG="Typed API client. Focus on the abort-signal path and 501 handling."
 ```

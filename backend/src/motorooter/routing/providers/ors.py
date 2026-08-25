@@ -21,6 +21,7 @@ from motorooter.routing.errors import (
     NoRouteFound,
     ProviderUnavailable,
     QuotaExceeded,
+    RateLimited,
 )
 from motorooter.routing.models import (
     Coordinate,
@@ -98,6 +99,7 @@ CAPABILITIES = ProviderCapabilities(
     max_waypoints=50,
     live_update_interval_ms=3000,
     daily_quota=2000,
+    per_minute_quota=40,
 )
 
 
@@ -212,9 +214,13 @@ class OrsProvider:
         if status >= 500:
             msg = f"upstream returned {status}"
             raise ProviderUnavailable(msg, provider=name)
-        # ORS signals both rate limiting (429) and quota exhaustion (403) this way.
-        if status in (403, 429):
-            msg = f"quota or rate limit reached (HTTP {status})"
+        if status == 429:
+            # The per-minute ceiling. Clears in under a minute, so this is retryable and
+            # must not be reported as the daily budget being gone.
+            msg = "per-minute rate limit reached (HTTP 429)"
+            raise RateLimited(msg, provider=name)
+        if status == 403:
+            msg = "daily quota exhausted (HTTP 403)"
             raise QuotaExceeded(msg, provider=name)
 
         error = self._error_body(response)

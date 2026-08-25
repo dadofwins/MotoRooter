@@ -22,7 +22,19 @@ class ProviderUnavailable(RoutingError):
 
 
 class QuotaExceeded(RoutingError):
-    """Rate limit or daily cap. Not retryable — retrying spends the remaining budget."""
+    """The budget for the period is spent. Not retryable — waiting for tomorrow is not a
+    retry strategy, and trying again only delays the same answer."""
+
+
+class RateLimited(RoutingError):
+    """Too many requests too quickly. Retryable, because the window clears in seconds.
+
+    Deliberately not a subclass of `QuotaExceeded`: they arrive from the same provider and
+    often the same status code, but a caller should back off on one and give up on the
+    other. Folding them together makes one of those two behaviours wrong.
+    """
+
+    retryable = True
 
 
 class NoRouteFound(RoutingError):

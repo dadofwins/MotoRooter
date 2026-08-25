@@ -45,7 +45,7 @@ class TestRetrySatisfiesContract(RoutingProviderContract):
 class TestQuotaSatisfiesContract(RoutingProviderContract):
     @pytest.fixture
     def provider(self):
-        return QuotaGuardProvider(FakeProvider(), daily_limit=1000, clock=FakeClock())
+        return QuotaGuardProvider(FakeProvider(), limit=1000, clock=FakeClock())
 
 
 class TestCaching:
@@ -196,14 +196,14 @@ class TestRetry:
 
 class TestQuotaGuard:
     async def test_allows_requests_under_the_limit(self):
-        guarded = QuotaGuardProvider(FakeProvider(), daily_limit=2, clock=FakeClock())
+        guarded = QuotaGuardProvider(FakeProvider(), limit=2, clock=FakeClock())
         await guarded.route(req(lat=45.0))
         await guarded.route(req(lat=46.0))
         assert guarded.used == 2
 
     async def test_blocks_once_the_limit_is_reached(self):
         inner = FakeProvider()
-        guarded = QuotaGuardProvider(inner, daily_limit=1, clock=FakeClock())
+        guarded = QuotaGuardProvider(inner, limit=1, clock=FakeClock())
         await guarded.route(req(lat=45.0))
         with pytest.raises(QuotaExceeded):
             await guarded.route(req(lat=46.0))
@@ -212,14 +212,14 @@ class TestQuotaGuard:
     async def test_failed_upstream_calls_still_consume_quota(self):
         """The provider charged us for that request whether or not it succeeded."""
         inner = FakeProvider(error=ProviderUnavailable("502"))
-        guarded = QuotaGuardProvider(inner, daily_limit=5, clock=FakeClock())
+        guarded = QuotaGuardProvider(inner, limit=5, clock=FakeClock())
         with pytest.raises(ProviderUnavailable):
             await guarded.route(req())
         assert guarded.used == 1
 
     async def test_window_resets_after_a_day(self):
         clock = FakeClock()
-        guarded = QuotaGuardProvider(FakeProvider(), daily_limit=1, clock=clock)
+        guarded = QuotaGuardProvider(FakeProvider(), limit=1, clock=clock)
         await guarded.route(req(lat=45.0))
         clock.advance(86_401)
         await guarded.route(req(lat=46.0))
@@ -227,14 +227,14 @@ class TestQuotaGuard:
 
     async def test_window_does_not_reset_early(self):
         clock = FakeClock()
-        guarded = QuotaGuardProvider(FakeProvider(), daily_limit=1, clock=clock)
+        guarded = QuotaGuardProvider(FakeProvider(), limit=1, clock=clock)
         await guarded.route(req(lat=45.0))
         clock.advance(86_399)
         with pytest.raises(QuotaExceeded):
             await guarded.route(req(lat=46.0))
 
     async def test_reports_remaining_budget(self):
-        guarded = QuotaGuardProvider(FakeProvider(), daily_limit=3, clock=FakeClock())
+        guarded = QuotaGuardProvider(FakeProvider(), limit=3, clock=FakeClock())
         await guarded.route(req())
         assert guarded.remaining == 2
 
@@ -260,7 +260,7 @@ class TestComposition:
         stack = CachingProvider(
             QuotaGuardProvider(
                 RetryingProvider(FakeProvider(), clock=FakeClock()),
-                daily_limit=10,
+                limit=10,
                 clock=FakeClock(),
             ),
             clock=FakeClock(),
@@ -269,7 +269,7 @@ class TestComposition:
 
     async def test_cache_hits_do_not_consume_quota(self):
         """The reason caching wraps quota rather than the other way round."""
-        guard = QuotaGuardProvider(FakeProvider(), daily_limit=1, clock=FakeClock())
+        guard = QuotaGuardProvider(FakeProvider(), limit=1, clock=FakeClock())
         stack = CachingProvider(guard, clock=FakeClock())
         await stack.route(req())
         await stack.route(req())

@@ -21,6 +21,7 @@ from motorooter.routing.errors import (
     ProviderNotFound,
     ProviderUnavailable,
     QuotaExceeded,
+    RateLimited,
     RouteIncomplete,
     RoutingConfigError,
     UnsupportedIntent,
@@ -44,6 +45,9 @@ ERROR_TABLE: dict[type[Exception], tuple[int, ErrorCode]] = {
     # The trip exists but is not fully or freshly routed. Client-actionable: press Replan.
     RouteIncomplete: (422, ErrorCode.ROUTE_INCOMPLETE),
     QuotaExceeded: (429, ErrorCode.QUOTA_EXCEEDED),
+    # Also 429, but a distinct code: the client should retry this one shortly and must not
+    # retry the other. Same status, opposite advice.
+    RateLimited: (429, ErrorCode.RATE_LIMITED),
     ProviderUnavailable: (502, ErrorCode.PROVIDER_UNAVAILABLE),
     LlmUnavailable: (502, ErrorCode.LLM_UNAVAILABLE),
     LlmQuotaExceeded: (429, ErrorCode.LLM_QUOTA_EXCEEDED),

@@ -61,6 +61,7 @@
           "no_route_found",
           "route_incomplete",
           "quota_exceeded",
+          "rate_limited",
           "provider_unavailable",
           "llm_unavailable",
           "llm_quota_exceeded",
@@ -389,6 +390,18 @@
           "name": {
             "title": "Name",
             "type": "string"
+          },
+          "per_minute_quota": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Per Minute Quota"
           },
           "prefers_unpaved": {
             "default": false,

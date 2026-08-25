@@ -11,6 +11,7 @@ from motorooter.routing.errors import (
     NoRouteFound,
     ProviderUnavailable,
     QuotaExceeded,
+    RateLimited,
 )
 from motorooter.routing.models import Coordinate, LegIntent, RouteRequest, Surface
 from motorooter.routing.providers.ors import (
@@ -270,7 +271,9 @@ class TestErrorMapping:
             (404, 2009, NoRouteFound),
             (400, 2010, InvalidRequest),
             (400, 2004, InvalidRequest),
-            (429, None, QuotaExceeded),
+            # 429 is the per-minute ceiling and clears in seconds; 403 is the daily
+            # budget being gone. Same family, opposite advice to the caller.
+            (429, None, RateLimited),
             (403, None, QuotaExceeded),
             (500, None, ProviderUnavailable),
             (503, None, ProviderUnavailable),

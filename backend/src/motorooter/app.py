@@ -17,6 +17,8 @@ from motorooter.api.exception_handlers import register_exception_handlers
 from motorooter.api.routers import places, routing, trips
 from motorooter.api.schemas import HealthResponse
 from motorooter.api.streaming import apply_streaming_media_types
+from motorooter.planning.discovery.factory import build_discovery
+from motorooter.planning.discovery.factory import settings_from_env as discovery_from_env
 from motorooter.routing.factory import RoutingSettings, build_routing
 from motorooter.trips.factory import TripStorageSettings, build_trip_store
 from motorooter.trips.factory import settings_from_env as storage_settings_from_env
@@ -64,6 +66,11 @@ def create_app(
     app.state.trip_store = trip_store or build_trip_store(
         storage_settings or _storage_settings_for(routing_config)
     )
+
+    # `None` when the credentials are absent. Replan answers 501 and everything else works:
+    # discovery needs four keys, and refusing to boot without them would take the whole
+    # backend down for a feature most requests never touch.
+    app.state.discovery = None if routing_config.offline else build_discovery(discovery_from_env())
 
     register_exception_handlers(app)
 

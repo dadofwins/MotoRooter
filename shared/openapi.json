@@ -1991,7 +1991,7 @@
     },
     "/api/trips/{slug}/replan": {
       "post": {
-        "description": "Runs LLM route search, POI discovery, and Places enrichment.\n\n**Streams newline-delimited JSON** (`application/x-ndjson`): one `ReplanEvent` object per line, terminated by `\\n`. Not Server-Sent Events \u2014 this is a POST with a request body, so `EventSource` cannot consume it, and hand-parsing SSE framing over `fetch` would cost the framing overhead for none of the benefit. Clients must tolerate a chunk boundary landing mid-line.\n\nExplicitly user-triggered \u2014 never fired automatically by a route edit.",
+        "description": "Runs web search, place extraction, Places resolution and scoring over the trip's corridor. Streams application/x-ndjson: one ReplanEvent per line, POIs accumulating as they resolve so the map fills in rather than waiting. Not Server-Sent Events \u2014 there is no `data:` prefix and no blank-line framing. Explicitly user-triggered; never fired automatically by a route edit. Answers 501 when the discovery credentials are not configured.",
         "operationId": "replan_api_trips__slug__replan_post",
         "parameters": [
           {
@@ -2023,7 +2023,7 @@
                 }
               }
             },
-            "description": "Stream of ReplanEvent objects, one per line."
+            "description": "Successful Response"
           },
           "400": {
             "content": {
@@ -2083,7 +2083,7 @@
                 }
               }
             },
-            "description": "Not implemented yet."
+            "description": "Not Implemented"
           },
           "502": {
             "content": {
@@ -2106,7 +2106,7 @@
             "description": "Service Unavailable"
           }
         },
-        "summary": "Start a replan (not yet implemented)",
+        "summary": "Discover points of interest along the route",
         "tags": [
           "trips"
         ]

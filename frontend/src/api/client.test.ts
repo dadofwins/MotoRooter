@@ -72,6 +72,20 @@ function brokenBodyResponse(): Response {
   return new Response(body, { status: 200 })
 }
 
+/**
+ * Figures the backend derives and always sends. They are required rather than optional
+ * because a response never omits them — telling the client a number "might be absent" would
+ * invite it to recompute, and a second implementation of "unknown surface does not count as
+ * paved" is exactly the drift the generated contract exists to prevent.
+ */
+const DERIVED_METRICS = {
+  total_distance_m: 0,
+  total_paved_fraction: 0,
+  total_unpaved_fraction: 0,
+  total_unknown_fraction: 0,
+  estimated_duration_s: 0,
+} as const
+
 const TRIP: Trip = {
   schema_version: 1,
   slug: 'wabdr-north',
@@ -82,6 +96,7 @@ const TRIP: Trip = {
   waypoints: [],
   legs: [],
   pois: [],
+  ...DERIVED_METRICS,
 }
 
 const TRIP_SUMMARY: TripSummary = {
@@ -89,8 +104,8 @@ const TRIP_SUMMARY: TripSummary = {
   name: 'WABDR North',
   created_at: '2026-08-25T18:00:00Z',
   edited_at: '2026-08-25T18:00:00Z',
-  total_distance_m: 0,
   needs_replan: false,
+  ...DERIVED_METRICS,
 }
 
 const LEG_RESPONSE: RouteLegResponse = {

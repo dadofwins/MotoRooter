@@ -1,6 +1,6 @@
 import { act, renderHook, waitFor } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
-import { useRouteLeg } from './useRouteLeg'
+import { SURFACE_REPORTING_INTENTS, useRouteLeg } from './useRouteLeg'
 import type { RequestOptions } from '../api/client'
 import type { Coordinate, RouteLeg, RouteLegInput, RouteLegResponse, Waypoint } from '../api/types'
 
@@ -42,6 +42,23 @@ function fakeClient(response: RouteLegResponse = RESPONSE) {
     routeLeg: vi.fn((_request: RouteLegInput, _options?: RequestOptions) => Promise.resolve(response)),
   }
 }
+
+describe('the default routing intent', () => {
+  it('is one that routes through an engine able to report surface', async () => {
+    // The bug this guards: `twisty_paved` resolves to Google, which exposes no surface data
+    // at all, so a 270 km route came back with zero spans and rendered as one uniform grey
+    // line. Correct — unknown is not paved — and completely useless, because the paved
+    // versus dirt distinction is the entire reason this app exists. Invisible in every unit
+    // test, obvious in one second of use.
+    const client = fakeClient()
+
+    const { result } = renderHook(() => useRouteLeg(client, [waypoint(47), waypoint(48)]))
+    await waitFor(() => expect(result.current.legs).toHaveLength(1))
+
+    const intent = client.routeLeg.mock.calls[0]?.[0].intent
+    expect(SURFACE_REPORTING_INTENTS).toContain(intent)
+  })
+})
 
 describe('useRouteLeg', () => {
   it('routes nothing until there are two points to route between', () => {

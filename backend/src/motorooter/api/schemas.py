@@ -9,6 +9,8 @@ the right shape. Wrapper types exist only where the API needs to say something t
 model does not, such as the drag-throttle budget on a routed leg.
 """
 
+from typing import Literal
+
 from pydantic import BaseModel, ConfigDict, Field
 
 from motorooter.api.error_codes import ErrorCode
@@ -154,6 +156,65 @@ class ReplanEvent(BaseModel):
     legs: list[TripLeg] = Field(
         default_factory=list,
         description="Legs re-routed by this stage, if any.",
+    )
+
+
+class ChatRequest(BaseModel):
+    """One turn of conversation about a trip.
+
+    The trip is addressed by slug rather than sent, so the assistant reads and edits the
+    same document the mouse does. There is no conversation id: the client sends the history
+    it wants considered, which keeps the server stateless and makes "what did the assistant
+    see" answerable from the request alone.
+    """
+
+    message: str = Field(min_length=1, max_length=4000)
+    history: list["ChatTurn"] = Field(
+        default_factory=list,
+        description="Prior turns, oldest first. The client owns the transcript.",
+    )
+
+
+class ChatTurn(BaseModel):
+    """A previous exchange, as the client recorded it."""
+
+    role: Literal["user", "assistant"]
+    content: str
+
+
+class ChatEvent(BaseModel):
+    """One streamed step of an assistant turn.
+
+    Mirrors what the agent loop already emits, so the transport adds no vocabulary of its
+    own. Streamed as newline-delimited JSON, one event per line — same framing as replan,
+    which the client already parses.
+    """
+
+    kind: Literal["message", "tool_started", "tool_finished", "tool_failed", "done"] = Field(
+        description="What happened. `done` is always last."
+    )
+    message: str = Field(
+        default="",
+        description="Assistant text for `message`, or a human-readable note for tool events.",
+    )
+    tool: str | None = Field(
+        default=None, description="Which tool, on tool events. Null otherwise."
+    )
+    truncated: bool = Field(
+        default=False,
+        description=(
+            "Set on the terminal `done` event when a limit stopped the run. On the terminal "
+            "event specifically, because a client reading only the last event must be able "
+            "to tell 'finished' from 'cut off mid-task'."
+        ),
+    )
+    trip_changed: bool = Field(
+        default=False,
+        description=(
+            "The assistant edited the trip. The client should re-read it rather than "
+            "reconstruct the change from the event stream — the mouse path and the chat "
+            "path must converge on one document, not two models of it."
+        ),
     )
 
 

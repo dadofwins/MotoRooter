@@ -1,6 +1,105 @@
 {
   "components": {
     "schemas": {
+      "ChatEvent": {
+        "description": "One streamed step of an assistant turn.\n\nMirrors what the agent loop already emits, so the transport adds no vocabulary of its\nown. Streamed as newline-delimited JSON, one event per line \u2014 same framing as replan,\nwhich the client already parses.",
+        "properties": {
+          "kind": {
+            "description": "What happened. `done` is always last.",
+            "enum": [
+              "message",
+              "tool_started",
+              "tool_finished",
+              "tool_failed",
+              "done"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "message": {
+            "default": "",
+            "description": "Assistant text for `message`, or a human-readable note for tool events.",
+            "title": "Message",
+            "type": "string"
+          },
+          "tool": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Which tool, on tool events. Null otherwise.",
+            "title": "Tool"
+          },
+          "trip_changed": {
+            "default": false,
+            "description": "The assistant edited the trip. The client should re-read it rather than reconstruct the change from the event stream \u2014 the mouse path and the chat path must converge on one document, not two models of it.",
+            "title": "Trip Changed",
+            "type": "boolean"
+          },
+          "truncated": {
+            "default": false,
+            "description": "Set on the terminal `done` event when a limit stopped the run. On the terminal event specifically, because a client reading only the last event must be able to tell 'finished' from 'cut off mid-task'.",
+            "title": "Truncated",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "kind"
+        ],
+        "title": "ChatEvent",
+        "type": "object"
+      },
+      "ChatRequest": {
+        "description": "One turn of conversation about a trip.\n\nThe trip is addressed by slug rather than sent, so the assistant reads and edits the\nsame document the mouse does. There is no conversation id: the client sends the history\nit wants considered, which keeps the server stateless and makes \"what did the assistant\nsee\" answerable from the request alone.",
+        "properties": {
+          "history": {
+            "description": "Prior turns, oldest first. The client owns the transcript.",
+            "items": {
+              "$ref": "#/components/schemas/ChatTurn"
+            },
+            "title": "History",
+            "type": "array"
+          },
+          "message": {
+            "maxLength": 4000,
+            "minLength": 1,
+            "title": "Message",
+            "type": "string"
+          }
+        },
+        "required": [
+          "message"
+        ],
+        "title": "ChatRequest",
+        "type": "object"
+      },
+      "ChatTurn": {
+        "description": "A previous exchange, as the client recorded it.",
+        "properties": {
+          "content": {
+            "title": "Content",
+            "type": "string"
+          },
+          "role": {
+            "enum": [
+              "user",
+              "assistant"
+            ],
+            "title": "Role",
+            "type": "string"
+          }
+        },
+        "required": [
+          "role",
+          "content"
+        ],
+        "title": "ChatTurn",
+        "type": "object"
+      },
       "Coordinate": {
         "description": "A WGS84 point.\n\nFrozen and hashable so requests built from coordinates can be used as cache keys.",
         "properties": {
@@ -1910,6 +2009,129 @@
           }
         },
         "summary": "Update Trip",
+        "tags": [
+          "trips"
+        ]
+      }
+    },
+    "/api/trips/{slug}/chat": {
+      "post": {
+        "description": "One conversational turn. The assistant may call tools, and those tools are the same service functions the mouse path calls \u2014 item 5 of the MVP is reachable both ways and must not become two implementations that drift.\n\n**Streams newline-delimited JSON** (`application/x-ndjson`): one `ChatEvent` per line, `done` last. Same framing as replan, which the client already parses.\n\nThe trip is addressed by slug rather than sent, so the assistant edits the same document the map does; when `trip_changed` is set the client re-reads it.",
+        "operationId": "chat_api_trips__slug__chat_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "slug",
+            "required": true,
+            "schema": {
+              "title": "Slug",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ChatRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/x-ndjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChatEvent"
+                }
+              }
+            },
+            "description": "Stream of ChatEvent objects, one per line."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          },
+          "501": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not implemented yet."
+          },
+          "502": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Bad Gateway"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "summary": "Talk to the assistant about a trip (not yet implemented)",
         "tags": [
           "trips"
         ]

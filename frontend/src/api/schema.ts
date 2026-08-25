@@ -144,6 +144,30 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/trips/{slug}/chat": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Talk to the assistant about a trip (not yet implemented)
+         * @description One conversational turn. The assistant may call tools, and those tools are the same service functions the mouse path calls — item 5 of the MVP is reachable both ways and must not become two implementations that drift.
+         *
+         *     **Streams newline-delimited JSON** (`application/x-ndjson`): one `ChatEvent` per line, `done` last. Same framing as replan, which the client already parses.
+         *
+         *     The trip is addressed by slug rather than sent, so the assistant edits the same document the map does; when `trip_changed` is set the client re-reads it.
+         */
+        post: operations["chat_api_trips__slug__chat_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/trips/{slug}/gpx": {
         parameters: {
             query?: never;
@@ -188,6 +212,76 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /**
+         * ChatEvent
+         * @description One streamed step of an assistant turn.
+         *
+         *     Mirrors what the agent loop already emits, so the transport adds no vocabulary of its
+         *     own. Streamed as newline-delimited JSON, one event per line — same framing as replan,
+         *     which the client already parses.
+         */
+        ChatEvent: {
+            /**
+             * Kind
+             * @description What happened. `done` is always last.
+             * @enum {string}
+             */
+            kind: "message" | "tool_started" | "tool_finished" | "tool_failed" | "done";
+            /**
+             * Message
+             * @description Assistant text for `message`, or a human-readable note for tool events.
+             * @default
+             */
+            message: string;
+            /**
+             * Tool
+             * @description Which tool, on tool events. Null otherwise.
+             */
+            tool?: string | null;
+            /**
+             * Trip Changed
+             * @description The assistant edited the trip. The client should re-read it rather than reconstruct the change from the event stream — the mouse path and the chat path must converge on one document, not two models of it.
+             * @default false
+             */
+            trip_changed: boolean;
+            /**
+             * Truncated
+             * @description Set on the terminal `done` event when a limit stopped the run. On the terminal event specifically, because a client reading only the last event must be able to tell 'finished' from 'cut off mid-task'.
+             * @default false
+             */
+            truncated: boolean;
+        };
+        /**
+         * ChatRequest
+         * @description One turn of conversation about a trip.
+         *
+         *     The trip is addressed by slug rather than sent, so the assistant reads and edits the
+         *     same document the mouse does. There is no conversation id: the client sends the history
+         *     it wants considered, which keeps the server stateless and makes "what did the assistant
+         *     see" answerable from the request alone.
+         */
+        ChatRequest: {
+            /**
+             * History
+             * @description Prior turns, oldest first. The client owns the transcript.
+             */
+            history?: components["schemas"]["ChatTurn"][];
+            /** Message */
+            message: string;
+        };
+        /**
+         * ChatTurn
+         * @description A previous exchange, as the client recorded it.
+         */
+        ChatTurn: {
+            /** Content */
+            content: string;
+            /**
+             * Role
+             * @enum {string}
+             */
+            role: "user" | "assistant";
+        };
         /**
          * Coordinate
          * @description A WGS84 point.
@@ -1420,6 +1514,104 @@ export interface operations {
             };
             /** @description Too Many Requests */
             429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Bad Gateway */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    chat_api_trips__slug__chat_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                slug: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ChatRequest"];
+            };
+        };
+        responses: {
+            /** @description Stream of ChatEvent objects, one per line. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/x-ndjson": components["schemas"]["ChatEvent"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Unprocessable Content */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Too Many Requests */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not implemented yet. */
+            501: {
                 headers: {
                     [name: string]: unknown;
                 };

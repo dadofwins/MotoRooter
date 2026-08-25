@@ -18,6 +18,8 @@ from motorooter.api.deps import Discovery, Trips
 from motorooter.api.errors import NotImplementedYet
 from motorooter.api.schemas import (
     ERROR_RESPONSES,
+    ChatEvent,
+    ChatRequest,
     CreateTripRequest,
     ErrorResponse,
     ReplanEvent,
@@ -206,6 +208,33 @@ async def _stream(
             progress=1.0,
         )
         yield failed.model_dump_json().encode() + b"\n"
+
+
+@router.post(
+    "/{slug}/chat",
+    status_code=NOT_IMPLEMENTED,
+    summary="Talk to the assistant about a trip (not yet implemented)",
+    description=(
+        "One conversational turn. The assistant may call tools, and those tools are the "
+        "same service functions the mouse path calls — item 5 of the MVP is reachable both "
+        "ways and must not become two implementations that drift.\n\n"
+        "**Streams newline-delimited JSON** (`application/x-ndjson`): one `ChatEvent` per "
+        "line, `done` last. Same framing as replan, which the client already parses.\n\n"
+        "The trip is addressed by slug rather than sent, so the assistant edits the same "
+        "document the map does; when `trip_changed` is set the client re-reads it."
+    ),
+    responses={
+        200: {
+            "description": "Stream of ChatEvent objects, one per line.",
+            "model": ChatEvent,
+        },
+        501: {"model": ErrorResponse, "description": "Not implemented yet."},
+    },
+)
+async def chat(slug: str, request: ChatRequest, store: Trips) -> None:
+    """Reserved. Schema frozen so the chat rail can be built before the endpoint exists."""
+    await store.get(validate_slug(slug))
+    raise NotImplementedYet("chat")
 
 
 @router.get(

@@ -17,6 +17,7 @@ from typing import Any
 
 STREAMING_RESPONSES: dict[tuple[str, str], str] = {
     ("/api/trips/{slug}/replan", "post"): "application/x-ndjson",
+    ("/api/trips/{slug}/chat", "post"): "application/x-ndjson",
 }
 """(path, method) -> media type of the 2xx body. Errors on these routes stay JSON."""
 

@@ -31,6 +31,7 @@ from motorooter.planning.discovery.corridor import anchors, spacing_of  # noqa: 
 from motorooter.llm.providers.openai import OpenAiClient  # noqa: E402
 from motorooter.planning.discovery.errors import DiscoveryError  # noqa: E402
 from motorooter.planning.discovery.extract import PlaceExtractor  # noqa: E402
+from motorooter.planning.discovery.category import CategoryClassifier  # noqa: E402
 from motorooter.planning.discovery.judge import CandidateJudge, _describe  # noqa: E402
 from motorooter.planning.discovery.resolve import PlacesResolver  # noqa: E402
 from motorooter.planning.discovery.queries import queries_for, total_queries  # noqa: E402
@@ -94,6 +95,7 @@ async def main() -> int:
     source = BraveSearchSource(api_key=brave_key)
     extractor = PlaceExtractor(llm)
     resolver = PlacesResolver(api_key=places_key)
+    classifier = CategoryClassifier(llm)
     scorer = CandidateJudge(llm)
 
     searched = 0
@@ -116,6 +118,14 @@ async def main() -> int:
         print(f"resolve failed: {exc}", file=sys.stderr)
         return 1
 
+    resolved = await classifier.classify(resolved)
+    uncategorised = [r for r in resolved if r.category is None]
+    if uncategorised:
+        print(f"{len(uncategorised)} could not be categorised and cannot be pinned:")
+        for item in uncategorised:
+            print(f"   {item.candidate.name}  (google: {', '.join(item.places_types) or 'none'})")
+        print()
+
     dropped = len(named) - len(resolved)
     rate = dropped / len(named) if named else 0.0
     print(f"{searched} search results -> {len(named)} named -> {len(resolved)} resolved")
@@ -134,7 +144,8 @@ async def main() -> int:
     print(f"{len(scored)} places, best first:\n")
     for rank, item in enumerate(scored, start=1):
         candidate = item.resolved.candidate
-        print(f"{rank:2}. {item.score:.2f}  {candidate.name}  [{candidate.category.value}]")
+        kind = item.resolved.category.value if item.resolved.category else "UNCATEGORISED"
+        print(f"{rank:2}. {item.score:.2f}  {candidate.name}  [{kind}]")
         print(f"      why:      {item.reason}")
         print(f"      measured: {_describe(item.evidence)}")
     return 0

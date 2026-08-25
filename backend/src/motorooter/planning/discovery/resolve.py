@@ -27,6 +27,7 @@ from typing import Any
 
 import httpx
 
+from motorooter.planning.discovery.category import from_places_types
 from motorooter.planning.discovery.errors import (
     DiscoveryQuotaExceeded,
     DiscoveryRateLimited,
@@ -46,19 +47,26 @@ class _Place:
 
     place_id: str
     coordinate: Coordinate
+    types: tuple[str, ...] = ()
     rating: float | None = None
     user_rating_count: int | None = None
 
 
 PLACES_SEARCH_URL = "https://places.googleapis.com/v1/places:searchText"
 
-FIELD_MASK = "places.id,places.displayName,places.location,places.rating,places.userRatingCount"
+FIELD_MASK = (
+    "places.id,places.displayName,places.location,places.types,places.rating,places.userRatingCount"
+)
 """Exactly what is used, and nothing more.
 
 Mandatory on this API, and it selects the billing tier. `rating` and `userRatingCount` move
 the request to a higher SKU than id-and-location alone, which is a deliberate trade: a rating
 is a *fact* about whether a place is worth stopping at, and handing the judge a fact beats
 asking a model to guess one. Cost is explicitly not a constraint on this prototype.
+
+`types` is what a place actually *is*, and it is the reason a ski resort no longer arrives
+tagged as a wild camp. Deterministic and free next to the alternative, which is asking a
+model.
 
 Photos, reviews and opening hours stay out. They cannot be stored under Google's terms and
 nothing displays them yet, so requesting them would raise the tier again to fetch data that
@@ -130,6 +138,9 @@ class PlacesResolver:
                     candidate=candidate,
                     place_id=found.place_id,
                     coordinate=found.coordinate,
+                    # From what Places says it is, never from the query that found it.
+                    category=from_places_types(found.types),
+                    places_types=found.types,
                     rating=found.rating,
                     user_rating_count=found.user_rating_count,
                     distance_off_route_m=distance,
@@ -245,9 +256,13 @@ class PlacesResolver:
             # domain's own validation is not one to put on a map.
             return None
 
+        raw_types = first.get("types")
         return _Place(
             place_id=place_id,
             coordinate=coordinate,
+            types=tuple(entry for entry in raw_types if isinstance(entry, str))
+            if isinstance(raw_types, list)
+            else (),
             rating=_number(first.get("rating"), 0.0, 5.0),
             user_rating_count=_count(first.get("userRatingCount")),
         )

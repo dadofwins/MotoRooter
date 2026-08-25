@@ -29,6 +29,62 @@ const NO_WAYPOINTS: readonly Waypoint[] = []
 const DEFAULT_CENTER: Coordinate = { lat: 44.5, lon: -116.5 }
 const DEFAULT_ZOOM = 5
 
+const NO_MAP_ID_NOTICE =
+  'Waypoints are shown as plain markers: set VITE_GOOGLE_MAPS_MAP_ID in frontend/.env.local ' +
+  'to a vector Map ID for styled pins and vector rendering.'
+
+/** A marker of either generation, reduced to the one operation the canvas needs. */
+interface AttachedMarker {
+  detach(): void
+}
+
+interface MarkerInput {
+  readonly map: google.maps.Map
+  readonly position: google.maps.LatLngLiteral
+  readonly pin: HTMLElement
+  /** Advanced markers are richer but need a Map ID; plain ones work anywhere. */
+  readonly advanced: boolean
+}
+
+/**
+ * Builds a waypoint marker, preferring the advanced one.
+ *
+ * The library check is not defensive padding: `alreadyLoaded()` can pick up a `google.maps`
+ * that some other script loaded without the `marker` library, and dereferencing
+ * `maps.marker.AdvancedMarkerElement` then throws inside an effect. With no error boundary
+ * above it, React unmounts the whole tree — the map, the chat rail, everything — to a blank
+ * page, because a pin could not be drawn.
+ */
+function createMarker(maps: GoogleMaps, input: MarkerInput): AttachedMarker {
+  const Advanced = maps.marker?.AdvancedMarkerElement
+  if (input.advanced && Advanced !== undefined) {
+    const marker = new Advanced({
+      map: input.map,
+      position: input.position,
+      content: input.pin,
+      title: input.pin.title,
+    })
+    return {
+      detach: () => {
+        marker.map = null
+      },
+    }
+  }
+
+  // Deprecated, but it renders without a Map ID, which is the whole point here.
+  const marker = new maps.Marker({
+    map: input.map,
+    position: input.position,
+    title: input.pin.title,
+    label: input.pin.textContent ?? undefined,
+  })
+  return {
+    detach: () => {
+      marker.setMap(null)
+    },
+  }
+}
+
 export interface MapCanvasProps {
   /**
    * Resolves the Maps API. Must be a stable reference — create it once at module scope,
@@ -64,6 +120,19 @@ export function MapCanvas({
   const [maps, setMaps] = useState<GoogleMaps | null>(null)
   const [error, setError] = useState<Error | null>(null)
   const [attempt, setAttempt] = useState(0)
+
+  /**
+   * Whether a vector Map ID is configured.
+   *
+   * Both vector rendering and `AdvancedMarkerElement` require one. Without it the basemap
+   * still draws, so the app *looks* fine — and then a click reports "1 point placed" while
+   * no pin ever appears, with only a console warning to explain it.
+   *
+   * The map is not blocked over it: a working map with plain markers beats an error box,
+   * and this is the configuration the app ships in today. But the degradation is stated on
+   * screen rather than left to the console.
+   */
+  const hasMapId = (mapId ?? '') !== ''
 
   // Read at click time rather than captured, so a new handler does not mean a new listener.
   useEffect(() => {
@@ -122,44 +191,83 @@ export function MapCanvas({
     }
   }, [maps, initialOptions])
 
+  /**
+   * Polylines held per leg, so only a leg that actually changed is rebuilt.
+   *
+   * Drag drives `legs` at the provider's throttle interval. Recreating every polyline on
+   * each tick means tearing down and rebuilding the whole route's geometry several times a
+   * second in order to move one leg. A `TripLeg` keeps its object identity while untouched
+   * — `insertVia` and `spliceRoutedLeg` both guarantee that — so identity is an exact,
+   * cheap signal for what needs redrawing.
+   */
+  const legOverlays = useRef(new Map<number, { leg: TripLeg; lines: google.maps.Polyline[] }>())
+
   useEffect(() => {
     const map = mapRef.current
-    if (maps === null || map === null) return undefined
+    if (maps === null || map === null) return
 
-    const polylines = segments.map(
-      (segment) =>
-        new maps.Polyline({
-          ...polylineStyle(segment.surface),
-          path: segment.path.map(toLatLng),
-          map,
-        }),
-    )
-    return () => {
-      for (const polyline of polylines) polyline.setMap(null)
+    const overlays = legOverlays.current
+    const byLeg = new Map<number, typeof segments>()
+    for (const segment of segments) {
+      byLeg.set(segment.legIndex, [...(byLeg.get(segment.legIndex) ?? []), segment])
     }
-  }, [maps, segments])
+
+    legs.forEach((leg, legIndex) => {
+      const cached = overlays.get(legIndex)
+      if (cached?.leg === leg) return // untouched: leave its overlays exactly as they are
+
+      for (const line of cached?.lines ?? []) line.setMap(null)
+      const lines = (byLeg.get(legIndex) ?? []).map(
+        (segment) =>
+          new maps.Polyline({
+            ...polylineStyle(segment.surface),
+            path: segment.path.map(toLatLng),
+            map,
+          }),
+      )
+      overlays.set(legIndex, { leg, lines })
+    })
+
+    // Legs that no longer exist take their overlays with them.
+    for (const [legIndex, entry] of overlays) {
+      if (legIndex < legs.length) continue
+      for (const line of entry.lines) line.setMap(null)
+      overlays.delete(legIndex)
+    }
+  }, [maps, legs, segments])
+
+  // Unmount only: the per-leg cache above outlives individual syncs, so its teardown cannot
+  // live in that effect's cleanup.
+  useEffect(() => {
+    const overlays = legOverlays.current
+    return () => {
+      for (const entry of overlays.values()) {
+        for (const line of entry.lines) line.setMap(null)
+      }
+      overlays.clear()
+    }
+  }, [])
 
   useEffect(() => {
     const map = mapRef.current
     if (maps === null || map === null) return undefined
 
-    const markers = waypoints.map((waypoint, index) => {
-      const name = waypoint.name
-      return new maps.marker.AdvancedMarkerElement({
+    const markers = waypoints.map((waypoint, index) =>
+      createMarker(maps, {
         map,
         position: toLatLng(waypoint.coordinate),
-        content: createWaypointPin({
+        pin: createWaypointPin({
           kind: waypointKind(index, waypoints.length),
           label: String(index + 1),
-          ...(name === null || name === undefined ? {} : { name }),
+          ...(waypoint.name === null ? {} : { name: waypoint.name }),
         }),
-        ...(name === null || name === undefined ? {} : { title: name }),
-      })
-    })
+        advanced: hasMapId,
+      }),
+    )
     return () => {
-      for (const marker of markers) marker.map = null
+      for (const marker of markers) marker.detach()
     }
-  }, [maps, waypoints])
+  }, [maps, waypoints, hasMapId])
 
   useEffect(() => {
     const map = mapRef.current
@@ -197,6 +305,13 @@ export function MapCanvas({
       {maps === null && error === null && (
         <p className="map-canvas__overlay" role="status">
           Loading map&hellip;
+        </p>
+      )}
+      {maps !== null && !hasMapId && (
+        // A banner rather than an overlay: the map underneath works, and the rider should
+        // not have to dismiss anything to use it.
+        <p className="map-canvas__notice" role="status">
+          {NO_MAP_ID_NOTICE}
         </p>
       )}
     </div>

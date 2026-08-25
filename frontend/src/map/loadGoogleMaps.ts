@@ -24,7 +24,23 @@ export interface GoogleMapsLoaderOptions {
   readonly libraries?: readonly string[]
   /** Release channel. `weekly` keeps `colorScheme` and vector rendering available. */
   readonly version?: string
+  /**
+   * How long to wait before giving up.
+   *
+   * A captive portal accepts the connection and then holds it open, so the script neither
+   * loads nor errors. Without a deadline the pane reads "Loading map…" indefinitely and the
+   * retry that would fix it never appears.
+   */
+  readonly timeoutMs?: number
 }
+
+const DEFAULT_TIMEOUT_MS = 15_000
+
+/** How often an adopting loader checks whether the shared script has produced the API. */
+const ADOPT_POLL_MS = 50
+
+/** Marks the one bootstrap script, and is how a second loader finds it. */
+const SCRIPT_MARKER = 'data-motorooter-maps'
 
 export type GoogleMapsLoader = () => Promise<GoogleMaps>
 
@@ -58,10 +74,49 @@ export function createGoogleMapsLoader(options: GoogleMapsLoaderOptions): Google
 
     pending = new Promise<GoogleMaps>((resolve, reject) => {
       const callbackName = `__motorooterMapsReady${String(++callbackSequence)}`
-      const script = document.createElement('script')
+      // Google's bootstrap misbehaves if it is included twice, so a script another loader
+      // instance already injected is adopted rather than duplicated.
+      const existing = document.querySelector<HTMLScriptElement>(`script[${SCRIPT_MARKER}]`)
+      const script = existing ?? document.createElement('script')
 
+      let timer: ReturnType<typeof setTimeout> | null = null
       const cleanUp = (): void => {
         Reflect.deleteProperty(window, callbackName)
+        if (timer !== null) clearTimeout(timer)
+        timer = null
+      }
+
+      timer = setTimeout(() => {
+        cleanUp()
+        pending = null // retryable, same as an outright failure
+        reject(
+          new Error(
+            'The Google Maps script took too long to load. The connection may be blocked by a ' +
+              'captive portal or a content blocker.',
+          ),
+        )
+      }, options.timeoutMs ?? DEFAULT_TIMEOUT_MS)
+
+      if (existing !== null) {
+        // Someone else already asked for it. Only the first loader's callback name is in
+        // the script URL, so this one cannot be called back — it watches for the API
+        // appearing on `window` instead, which is the signal that does not depend on whose
+        // callback the bootstrap holds. The shared deadline above still bounds the wait.
+        const poll = setInterval(() => {
+          const maps = alreadyLoaded()
+          if (maps === null) return
+          clearInterval(poll)
+          cleanUp()
+          resolve(maps)
+        }, ADOPT_POLL_MS)
+
+        existing.addEventListener('error', () => {
+          clearInterval(poll)
+          cleanUp()
+          pending = null
+          reject(new Error('The Google Maps script could not be loaded.'))
+        })
+        return
       }
 
       Object.defineProperty(window, callbackName, {
@@ -91,7 +146,7 @@ export function createGoogleMapsLoader(options: GoogleMapsLoaderOptions): Google
 
       script.src = url.toString()
       script.async = true
-      script.dataset['motorooterMaps'] = 'true'
+      script.setAttribute(SCRIPT_MARKER, 'true')
       script.addEventListener('error', () => {
         cleanUp()
         script.remove()

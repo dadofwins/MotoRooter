@@ -120,6 +120,53 @@ describe('createGoogleMapsLoader', () => {
     await expect(retried).resolves.toBeDefined()
   })
 
+  it('shares one script between two loaders racing to start it', async () => {
+    // The data attribute is the guard, not decoration. Two loader instances — a remount
+    // under HMR, or a second component — must not each inject the bootstrap: Google's
+    // script warns and misbehaves when included twice.
+    const first = createGoogleMapsLoader({ apiKey: 'k' })
+    const second = createGoogleMapsLoader({ apiKey: 'k' })
+
+    const a = first()
+    const b = second()
+    expect(document.querySelectorAll('script[data-motorooter-maps]')).toHaveLength(1)
+
+    simulateApiReady()
+    expect(await a).toBe(await b)
+  })
+
+  it('gives up on a script that never loads or fails', async () => {
+    // A captive portal answers the request and then holds it open. Without a deadline the
+    // pane says "Loading map…" forever, and the retry that would fix it never renders.
+    vi.useFakeTimers()
+    try {
+      const load = createGoogleMapsLoader({ apiKey: 'k', timeoutMs: 10_000 })
+      const pending = load()
+      const rejection = expect(pending).rejects.toThrow(/timed out|took too long/i)
+
+      await vi.advanceTimersByTimeAsync(10_000)
+      await rejection
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('does not time out a script that arrived in time', async () => {
+    vi.useFakeTimers()
+    try {
+      const load = createGoogleMapsLoader({ apiKey: 'k', timeoutMs: 10_000 })
+      const pending = load()
+      simulateApiReady()
+      await expect(pending).resolves.toBeDefined()
+
+      // The timer must not fire afterwards and reject an already-settled load.
+      await vi.advanceTimersByTimeAsync(20_000)
+      await expect(pending).resolves.toBeDefined()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('leaves no callback behind on window', async () => {
     const load = createGoogleMapsLoader({ apiKey: 'k' })
 

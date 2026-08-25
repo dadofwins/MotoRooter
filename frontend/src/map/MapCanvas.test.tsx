@@ -20,10 +20,11 @@ interface FakeListener {
   removed: boolean
 }
 
-function createFakeMaps() {
+function createFakeMaps({ withMarkerLibrary = true }: { withMarkerLibrary?: boolean } = {}) {
   const maps: FakeMap[] = []
   const polylines: FakePolyline[] = []
   const markers: FakeMarker[] = []
+  const legacyMarkers: FakeLegacyMarker[] = []
 
   class FakeLatLngBounds {
     readonly extended: google.maps.LatLngLiteral[] = []
@@ -81,11 +82,24 @@ function createFakeMaps() {
     }
   }
 
+  /** The deprecated `google.maps.Marker`, which unlike the advanced one needs no Map ID. */
+  class FakeLegacyMarker {
+    map: unknown
+    constructor(readonly options: Record<string, unknown>) {
+      this.map = options['map'] ?? null
+      legacyMarkers.push(this)
+    }
+    setMap(map: unknown): void {
+      this.map = map
+    }
+  }
+
   const namespace = {
     Map: FakeMap,
     Polyline: FakePolyline,
     LatLngBounds: FakeLatLngBounds,
-    marker: { AdvancedMarkerElement: FakeMarker },
+    Marker: FakeLegacyMarker,
+    ...(withMarkerLibrary ? { marker: { AdvancedMarkerElement: FakeMarker } } : {}),
   }
 
   return {
@@ -93,10 +107,15 @@ function createFakeMaps() {
     maps,
     polylines,
     markers,
+    legacyMarkers,
     /** Overlays still attached to a map — anything left here after unmount is a leak. */
-    attached: () => [...polylines, ...markers].filter((overlay) => overlay.map !== null),
+    attached: () =>
+      [...polylines, ...markers, ...legacyMarkers].filter((overlay) => overlay.map !== null),
   }
 }
+
+/** Any non-empty vector Map ID; the canvas only checks that one is configured. */
+const MAP_ID = 'motorooter-test-vector'
 
 function coords(count: number, lat = 47): Coordinate[] {
   return Array.from({ length: count }, (_, index) => ({ lat: lat + index / 100, lon: -120 }))
@@ -127,7 +146,7 @@ function waypoint(lat: number, name: string | null = null): Waypoint {
 describe('MapCanvas', () => {
   it('says it is loading rather than showing an unexplained empty pane', () => {
     // A never-resolving loader stands in for a slow connection.
-    render(<MapCanvas loader={() => new Promise(() => undefined)} />)
+    render(<MapCanvas mapId={MAP_ID} loader={() => new Promise(() => undefined)} />)
 
     expect(screen.getByRole('status')).toHaveTextContent(/loading/i)
   })
@@ -146,10 +165,62 @@ describe('MapCanvas', () => {
     expect(screen.queryByRole('status')).not.toBeInTheDocument()
   })
 
+  it('still shows pins when no Map ID is configured, and says why they look plain', async () => {
+    // AdvancedMarkerElement needs a Map ID; without one it renders nothing and the only
+    // signal is a console warning — a click reports "1 point placed" and no pin appears.
+    // Falling back keeps the map usable, and the notice keeps the cause visible. This is
+    // the configuration the app is actually in today, so it is not a hypothetical path.
+    const fake = createFakeMaps()
+
+    render(<MapCanvas loader={fake.loader} mapId="" waypoints={[waypoint(47)]} />)
+
+    await waitFor(() => expect(fake.maps).toHaveLength(1))
+    expect(fake.legacyMarkers).toHaveLength(1)
+    expect(fake.markers).toHaveLength(0)
+    expect(await screen.findByRole('status')).toHaveTextContent(/VITE_GOOGLE_MAPS_MAP_ID/)
+  })
+
+  it('asks for vector rendering only when a Map ID can support it', async () => {
+    const withId = createFakeMaps()
+    const withoutId = createFakeMaps()
+
+    render(<MapCanvas loader={withId.loader} mapId={MAP_ID} />)
+    await waitFor(() => expect(withId.maps).toHaveLength(1))
+    render(<MapCanvas loader={withoutId.loader} mapId="" />)
+    await waitFor(() => expect(withoutId.maps).toHaveLength(1))
+
+    expect(withId.maps[0]?.options.renderingType).toBe('VECTOR')
+    // Vector rendering requires a Map ID too, so asking for it without one is a request
+    // Google cannot honour.
+    expect(withoutId.maps[0]?.options.renderingType).toBeUndefined()
+  })
+
+  it('falls back rather than throwing when the marker library is absent', async () => {
+    // If some other script loaded google.maps without the marker library, dereferencing
+    // maps.marker.AdvancedMarkerElement throws inside an effect — and with no error
+    // boundary above it, React unmounts the whole tree to a blank page.
+    const fake = createFakeMaps({ withMarkerLibrary: false })
+
+    render(<MapCanvas loader={fake.loader} mapId={MAP_ID} waypoints={[waypoint(47)]} />)
+
+    await waitFor(() => expect(fake.legacyMarkers).toHaveLength(1))
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+  })
+
+  it('detaches fallback markers on unmount too', async () => {
+    const fake = createFakeMaps()
+    const { unmount } = render(<MapCanvas loader={fake.loader} mapId="" waypoints={[waypoint(47)]} />)
+    await waitFor(() => expect(fake.legacyMarkers).toHaveLength(1))
+
+    unmount()
+
+    expect(fake.attached()).toEqual([])
+  })
+
   it('shows why the map failed instead of a blank grey rectangle', async () => {
     const load = () => Promise.reject(new Error('No Google Maps browser key. Set VITE_...'))
 
-    render(<MapCanvas loader={load} />)
+    render(<MapCanvas mapId={MAP_ID} loader={load} />)
 
     const alert = await screen.findByRole('alert')
     expect(alert).toHaveTextContent(/No Google Maps browser key/)
@@ -158,7 +229,7 @@ describe('MapCanvas', () => {
   it('draws one polyline per surface segment, in Google’s coordinate naming', async () => {
     const fake = createFakeMaps()
 
-    render(<MapCanvas loader={fake.loader} legs={[leg(coords(3))]} />)
+    render(<MapCanvas mapId={MAP_ID} loader={fake.loader} legs={[leg(coords(3))]} />)
 
     await waitFor(() => expect(fake.polylines).toHaveLength(1))
     expect(fake.polylines[0]?.options.path).toEqual([
@@ -172,24 +243,62 @@ describe('MapCanvas', () => {
     // Without this the map accumulates every version of every leg the user has dragged
     // through, and an hour of editing turns it to treacle.
     const fake = createFakeMaps()
-    const { rerender } = render(<MapCanvas loader={fake.loader} legs={[leg(coords(3))]} />)
+    const { rerender } = render(<MapCanvas mapId={MAP_ID} loader={fake.loader} legs={[leg(coords(3))]} />)
     await waitFor(() => expect(fake.polylines).toHaveLength(1))
 
-    rerender(<MapCanvas loader={fake.loader} legs={[leg(coords(4))]} />)
+    rerender(<MapCanvas mapId={MAP_ID} loader={fake.loader} legs={[leg(coords(4))]} />)
 
     await waitFor(() => expect(fake.polylines).toHaveLength(2))
     expect(fake.polylines[0]?.map).toBeNull()
     expect(fake.polylines[1]?.map).not.toBeNull()
   })
 
+  it('rebuilds only the leg that changed, leaving its neighbours’ polylines alone', async () => {
+    // Drag drives `legs` at the throttle interval. Rebuilding every polyline on each tick
+    // means tearing down and recreating the whole route's geometry several times a second
+    // to move one leg. Leg objects keep their identity when untouched — that is what
+    // `insertVia` and `spliceRoutedLeg` guarantee — so identity is the signal.
+    const fake = createFakeMaps()
+    const untouched = leg(coords(3, 47))
+    const { rerender } = render(
+      <MapCanvas mapId={MAP_ID} loader={fake.loader} legs={[untouched, leg(coords(3, 48))]} />,
+    )
+    await waitFor(() => expect(fake.polylines).toHaveLength(2))
+    const firstLegPolyline = fake.polylines[0]
+
+    rerender(<MapCanvas mapId={MAP_ID} loader={fake.loader} legs={[untouched, leg(coords(4, 48))]} />)
+
+    await waitFor(() => expect(fake.polylines).toHaveLength(3))
+    // The untouched leg keeps the very same overlay, still attached.
+    expect(fake.polylines[0]).toBe(firstLegPolyline)
+    expect(firstLegPolyline?.map).not.toBeNull()
+    // The changed leg's old overlay is gone and a new one is up.
+    expect(fake.polylines[1]?.map).toBeNull()
+    expect(fake.polylines[2]?.map).not.toBeNull()
+  })
+
+  it('detaches a leg’s polylines when the leg is removed entirely', async () => {
+    const fake = createFakeMaps()
+    const kept = leg(coords(3, 47))
+    const { rerender } = render(
+      <MapCanvas mapId={MAP_ID} loader={fake.loader} legs={[kept, leg(coords(3, 48))]} />,
+    )
+    await waitFor(() => expect(fake.polylines).toHaveLength(2))
+
+    rerender(<MapCanvas mapId={MAP_ID} loader={fake.loader} legs={[kept]} />)
+
+    await waitFor(() => expect(fake.polylines[1]?.map).toBeNull())
+    expect(fake.polylines[0]?.map).not.toBeNull()
+  })
+
   it('never rebuilds the map when props change', async () => {
     // Recreating it would reset zoom and centre while the user is looking at them.
     const fake = createFakeMaps()
-    const { rerender } = render(<MapCanvas loader={fake.loader} legs={[]} />)
+    const { rerender } = render(<MapCanvas mapId={MAP_ID} loader={fake.loader} legs={[]} />)
     await waitFor(() => expect(fake.maps).toHaveLength(1))
 
-    rerender(<MapCanvas loader={fake.loader} legs={[leg(coords(3))]} />)
-    rerender(<MapCanvas loader={fake.loader} legs={[leg(coords(5))]} zoom={12} />)
+    rerender(<MapCanvas mapId={MAP_ID} loader={fake.loader} legs={[leg(coords(3))]} />)
+    rerender(<MapCanvas mapId={MAP_ID} loader={fake.loader} legs={[leg(coords(5))]} zoom={12} />)
 
     await waitFor(() => expect(fake.polylines.length).toBeGreaterThan(1))
     expect(fake.maps).toHaveLength(1)
@@ -200,16 +309,22 @@ describe('MapCanvas', () => {
 
     render(
       <MapCanvas
+        mapId={MAP_ID}
         loader={fake.loader}
         waypoints={[waypoint(47), waypoint(48), waypoint(49, 'Sun Mountain Lodge')]}
       />,
     )
 
     await waitFor(() => expect(fake.markers).toHaveLength(3))
-    const labels = fake.markers.map((marker) =>
-      (marker.options['content'] as HTMLElement).getAttribute('aria-label'),
+
+    // Resolved by role and computed accessible name rather than by reading aria-label
+    // back: an attribute the browser ignores would satisfy the latter and announce nothing.
+    const pins = fake.markers.map((marker) => marker.options['content'] as HTMLElement)
+    document.body.append(...pins)
+    const byName = ['Start', 'Via point', 'End: Sun Mountain Lodge'].map((name) =>
+      screen.getByRole('img', { name }),
     )
-    expect(labels).toEqual(['Start', 'Via point', 'End: Sun Mountain Lodge'])
+    expect(byName).toEqual(pins) // same elements, in route order
   })
 
   it('reports a map click as a domain coordinate — the mouse path for setting points', async () => {
@@ -218,7 +333,7 @@ describe('MapCanvas', () => {
     const fake = createFakeMaps()
     const onMapClick = vi.fn()
 
-    render(<MapCanvas loader={fake.loader} onMapClick={onMapClick} />)
+    render(<MapCanvas mapId={MAP_ID} loader={fake.loader} onMapClick={onMapClick} />)
     await waitFor(() => expect(fake.maps).toHaveLength(1))
     fake.maps[0]?.click({ lat: 47.5, lon: -120.25 })
 
@@ -229,10 +344,10 @@ describe('MapCanvas', () => {
     const fake = createFakeMaps()
     const first = vi.fn()
     const second = vi.fn()
-    const { rerender } = render(<MapCanvas loader={fake.loader} onMapClick={first} />)
+    const { rerender } = render(<MapCanvas mapId={MAP_ID} loader={fake.loader} onMapClick={first} />)
     await waitFor(() => expect(fake.maps).toHaveLength(1))
 
-    rerender(<MapCanvas loader={fake.loader} onMapClick={second} />)
+    rerender(<MapCanvas mapId={MAP_ID} loader={fake.loader} onMapClick={second} />)
     fake.maps[0]?.click({ lat: 1, lon: 2 })
 
     expect(second).toHaveBeenCalledWith({ lat: 1, lon: 2 })
@@ -243,7 +358,7 @@ describe('MapCanvas', () => {
   it('leaves nothing attached to the map after unmount', async () => {
     const fake = createFakeMaps()
     const { unmount } = render(
-      <MapCanvas loader={fake.loader} legs={[leg(coords(3))]} waypoints={[waypoint(47)]} />,
+      <MapCanvas mapId={MAP_ID} loader={fake.loader} legs={[leg(coords(3))]} waypoints={[waypoint(47)]} />,
     )
     await waitFor(() => expect(fake.attached()).not.toHaveLength(0))
 
@@ -264,7 +379,7 @@ describe('MapCanvas', () => {
       return fake.loader()
     }
 
-    const { unmount } = render(<MapCanvas loader={load} />)
+    const { unmount } = render(<MapCanvas mapId={MAP_ID} loader={load} />)
     unmount()
     release()
 
@@ -284,8 +399,8 @@ describe('MapCanvas', () => {
         }
       })
 
-    const { rerender } = render(<MapCanvas loader={stalled} />)
-    rerender(<MapCanvas loader={fake.loader} />)
+    const { rerender } = render(<MapCanvas mapId={MAP_ID} loader={stalled} />)
+    rerender(<MapCanvas mapId={MAP_ID} loader={fake.loader} />)
     await waitFor(() => expect(fake.maps).toHaveLength(1))
 
     failFirstLoad()
@@ -302,15 +417,15 @@ describe('MapCanvas', () => {
   it('frames the route the first time geometry arrives, and not again afterwards', async () => {
     // Fitting on every update would fight a user who has panned somewhere deliberately.
     const fake = createFakeMaps()
-    const { rerender } = render(<MapCanvas loader={fake.loader} legs={[]} />)
+    const { rerender } = render(<MapCanvas mapId={MAP_ID} loader={fake.loader} legs={[]} />)
     await waitFor(() => expect(fake.maps).toHaveLength(1))
     expect(fake.maps[0]?.fitted).toHaveLength(0)
 
-    rerender(<MapCanvas loader={fake.loader} legs={[leg(coords(3))]} />)
+    rerender(<MapCanvas mapId={MAP_ID} loader={fake.loader} legs={[leg(coords(3))]} />)
     await waitFor(() => expect(fake.maps[0]?.fitted).toHaveLength(1))
     expect(fake.maps[0]?.fitted[0]?.extended).toHaveLength(3)
 
-    rerender(<MapCanvas loader={fake.loader} legs={[leg(coords(6))]} />)
+    rerender(<MapCanvas mapId={MAP_ID} loader={fake.loader} legs={[leg(coords(6))]} />)
     await waitFor(() => expect(fake.polylines.length).toBeGreaterThan(1))
     expect(fake.maps[0]?.fitted).toHaveLength(1)
   })
@@ -323,7 +438,7 @@ describe('MapCanvas', () => {
       return attempt === 1 ? Promise.reject(new Error('offline')) : fake.loader()
     }
 
-    render(<MapCanvas loader={load} />)
+    render(<MapCanvas mapId={MAP_ID} loader={load} />)
     await screen.findByRole('alert')
     fireEvent.click(screen.getByRole('button', { name: /try again/i }))
 

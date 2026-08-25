@@ -87,19 +87,66 @@ class StitchedRoute(BaseModel):
 
     legs: tuple[RouteLeg, ...] = ()
     gaps: tuple[LegGap, ...] = ()
+    """Boundaries that exceeded the report threshold. Sub-threshold bridges are not listed
+    here — they are ordinary snapping disagreement — but they are counted in
+    `bridged_distance_m`."""
+
+    bridged_distance_m: float = Field(default=0.0, ge=0.0)
+    """Straight-line metres across every boundary that did not merge, reported or not.
+
+    Includes the silent sub-threshold ones deliberately. `geometry_length_m` counts them —
+    it measures the joined polyline — so excluding them here would leave the three totals
+    unable to reconcile: twenty boundaries at 20 m would add 400 m to the denominator of
+    `unpaved_fraction` while this reported zero."""
 
     leg_start_indices: tuple[int, ...] = ()
-    """Where each leg begins in `geometry`, so a caller can map a vertex back to its leg."""
+    """Where each leg begins in `geometry`. Maps a vertex back to its leg, and is what the
+    alignment invariant below is checked through."""
 
     @model_validator(mode="after")
     def _spans_within_geometry(self) -> Self:
-        """The reindexing invariant, asserted on every constructed route."""
         limit = len(self.geometry) - 1
         for span in self.surface_spans:
             if span.end_index > limit:
                 msg = (
                     f"stitched surface span end_index {span.end_index} exceeds geometry "
                     f"index {limit}; leg offsets are wrong"
+                )
+                raise ValueError(msg)
+        return self
+
+    @model_validator(mode="after")
+    def _legs_sit_at_their_recorded_offsets(self) -> Self:
+        """The reindexing invariant, checked in both directions.
+
+        Bounds alone are not enough. An offset one too *large* overflows and was caught; an
+        offset one too *small* stays comfortably in range and silently shifts every span in
+        that leg back a vertex — reporting the wrong metres as dirt while the geometry still
+        renders perfectly. Nothing downstream would notice.
+
+        Checking alignment is what catches both. Spans are shifted by exactly the offset
+        recorded here, so if a leg's vertices sit where `leg_start_indices` says they do,
+        its reindexed spans address the same ground they did inside the leg.
+
+        Vertex 0 of each leg is skipped: at a merged boundary it is the previous leg's last
+        vertex, which is the same point but need not be the identical float.
+        """
+        if len(self.leg_start_indices) != len(self.legs):
+            msg = f"{len(self.leg_start_indices)} leg offsets recorded for {len(self.legs)} legs"
+            raise ValueError(msg)
+
+        for index, (offset, leg) in enumerate(zip(self.leg_start_indices, self.legs, strict=True)):
+            end = offset + len(leg.geometry)
+            if end > len(self.geometry):
+                msg = (
+                    f"leg {index} recorded at offset {offset} runs past the joined "
+                    f"geometry ({len(self.geometry)} vertices)"
+                )
+                raise ValueError(msg)
+            if self.geometry[offset + 1 : end] != leg.geometry[1:]:
+                msg = (
+                    f"leg {index} does not sit at its recorded offset {offset}; its "
+                    "surface spans would address the wrong vertices"
                 )
                 raise ValueError(msg)
         return self
@@ -117,11 +164,6 @@ class StitchedRoute(BaseModel):
         trip. `bridged_distance_m` reports the fabricated remainder separately.
         """
         return sum(leg.distance_m for leg in self.legs)
-
-    @property
-    def bridged_distance_m(self) -> float:
-        """Distance spanned by straight-line bridges across reported gaps."""
-        return sum(gap.distance_m for gap in self.gaps)
 
     @property
     def duration_s(self) -> float:
@@ -185,6 +227,7 @@ def stitch(
     spans: list[SurfaceSpan] = []
     gaps: list[LegGap] = []
     starts: list[int] = []
+    bridged = 0.0
 
     for index, leg in enumerate(legs):
         vertices = leg.geometry
@@ -200,6 +243,9 @@ def stitch(
                 vertices = vertices[1:]
             else:
                 offset = len(geometry)
+                # Counted whether or not it is worth reporting: the joined polyline covers
+                # this distance either way, so the totals have to account for it.
+                bridged += separation
                 if separation > gap_threshold_m:
                     gaps.append(
                         LegGap(
@@ -227,5 +273,6 @@ def stitch(
         surface_spans=tuple(spans),
         legs=tuple(legs),
         gaps=tuple(gaps),
+        bridged_distance_m=bridged,
         leg_start_indices=tuple(starts),
     )

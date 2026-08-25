@@ -1,31 +1,31 @@
-"""Domain errors introduced by the planning layer, mapped to HTTP.
+"""`RouteIncomplete` at the HTTP boundary.
 
-An unmapped `RoutingError` falls through to 500 by design, which is right for a wiring bug
-and wrong for a state the client can act on. `RouteIncomplete` is the latter: asking to
-export or stitch a trip whose legs are not all routed is a 422, and the client's next move
-is to press Replan.
+`test_error_codes.py` already forces every domain exception into `ERROR_TABLE`, so this
+covers only what that cannot: the status choice is deliberate rather than incidental, and the
+message carries enough for a client to act on.
 """
 
 from fastapi.testclient import TestClient
 
-from motorooter.api.exception_handlers import _ROUTING_STATUS
+from motorooter.api.error_codes import ErrorCode, resolve
 from motorooter.app import create_app
 from motorooter.routing.errors import RouteIncomplete
 from motorooter.routing.factory import RoutingSettings
 
 
-def test_route_incomplete_is_a_client_actionable_422():
-    assert _ROUTING_STATUS[RouteIncomplete] == 422
+def test_route_incomplete_is_client_actionable_rather_than_a_server_fault():
+    """The trip exists and the request was well formed; the fix is to press Replan."""
+    assert resolve(RouteIncomplete((1,))) == (422, ErrorCode.ROUTE_INCOMPLETE)
 
 
-def test_route_incomplete_names_the_offending_legs():
-    """The client has to know which section to fix, not merely that something is missing."""
-    assert "2" in str(RouteIncomplete((2, 5)))
-    assert "5" in str(RouteIncomplete((2, 5)))
+def test_it_names_the_offending_legs():
+    """A client has to know which section to fix, not merely that something is missing."""
+    message = str(RouteIncomplete((2, 5)))
+    assert "2" in message
+    assert "5" in message
 
 
 def test_it_travels_through_the_standard_error_envelope():
-    """Every error body carries a `code` the frontend can switch on."""
     app = create_app(RoutingSettings(offline=True))
 
     @app.get("/api/test-route-incomplete")
@@ -34,5 +34,5 @@ def test_it_travels_through_the_standard_error_envelope():
 
     response = TestClient(app, raise_server_exceptions=False).get("/api/test-route-incomplete")
     assert response.status_code == 422
-    assert response.json()["code"] == "route_incomplete"
+    assert response.json()["code"] == ErrorCode.ROUTE_INCOMPLETE.value
     assert isinstance(response.json()["detail"], str)

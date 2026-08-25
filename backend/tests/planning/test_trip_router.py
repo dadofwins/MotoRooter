@@ -10,8 +10,11 @@ Three things this has to get right, all of them about *not* being all-or-nothing
   alone; replan can skip legs that are already routed.
 """
 
+import asyncio
+
 import pytest
 
+from motorooter.api.error_codes import ErrorCode
 from motorooter.planning.trip_router import TripRouter
 from motorooter.routing.errors import NoRouteFound, ProviderUnavailable, RouteIncomplete
 from motorooter.routing.models import (
@@ -46,9 +49,7 @@ def trip(*legs: TripLeg, waypoints: int = 0) -> Trip:
 
 
 def leg(start: int, end: int, intent: LegIntent = LegIntent.UNPAVED, **overrides) -> TripLeg:
-    return TripLeg(
-        intent=intent, start_waypoint_index=start, end_waypoint_index=end, **overrides
-    )
+    return TripLeg(intent=intent, start_waypoint_index=start, end_waypoint_index=end, **overrides)
 
 
 def build_resolver(
@@ -78,9 +79,7 @@ def build_resolver(
 
 @pytest.fixture
 def dirt():
-    return FakeProvider(
-        capabilities=ProviderCapabilities(name="dirt-engine", prefers_unpaved=True)
-    )
+    return FakeProvider(capabilities=ProviderCapabilities(name="dirt-engine", prefers_unpaved=True))
 
 
 @pytest.fixture
@@ -205,6 +204,58 @@ class TestPartialFailure:
         assert len(result.failures) == 2
         assert result.trip.legs[0].routed is None
 
+    async def test_an_unexpected_adapter_error_does_not_discard_the_successful_legs(self, road):
+        """An adapter raising something that is not a RoutingError is still a leg failure.
+
+        Raising out of `route_trip` here contradicted the quota rationale the whole contract
+        rests on: leg 0's response was already paid for and got thrown away.
+        """
+        broken = FakeProvider(
+            capabilities=ProviderCapabilities(name="dirt-engine", prefers_unpaved=True),
+            error=TimeoutError("adapter forgot to translate this"),  # type: ignore[arg-type]
+        )
+        router = TripRouter(build_resolver(dirt=broken, road=road))
+        result = await router.route_trip(
+            trip(leg(0, 1, LegIntent.HIGHWAY_CONNECTOR), leg(1, 2, LegIntent.UNPAVED))
+        )
+        assert result.trip.legs[0].routed is not None
+        assert [failure.leg_index for failure in result.failures] == [1]
+
+    async def test_an_unexpected_adapter_error_is_reported_as_an_internal_error(self, road):
+        """It has no ERROR_TABLE entry of its own, so it must not reach the wire unshaped."""
+        broken = FakeProvider(
+            capabilities=ProviderCapabilities(name="dirt-engine", prefers_unpaved=True),
+            error=TimeoutError("adapter forgot to translate this"),  # type: ignore[arg-type]
+        )
+        router = TripRouter(build_resolver(dirt=broken, road=road))
+        result = await router.route_trip(trip(leg(0, 1, LegIntent.UNPAVED)))
+        assert result.failures[0].code == ErrorCode.INTERNAL_ERROR.value
+        assert result.failures[0].retryable is False
+
+    async def test_route_leg_also_reports_an_untranslated_error_rather_than_raising(self):
+        """`route_leg` calls the routing path directly, with no gather to absorb it.
+
+        Catching only RoutingError there let an untranslated adapter error escape the
+        fast path as an unshaped 500 mid-drag.
+        """
+        broken = FakeProvider(
+            capabilities=ProviderCapabilities(name="dirt-engine", prefers_unpaved=True),
+            error=TimeoutError("adapter forgot to translate this"),  # type: ignore[arg-type]
+        )
+        router = TripRouter(build_resolver(dirt=broken))
+        result = await router.route_leg(trip(leg(0, 1, LegIntent.UNPAVED)), 0)
+        assert result.failures[0].code == ErrorCode.INTERNAL_ERROR.value
+
+    async def test_cancellation_is_not_swallowed_as_a_leg_failure(self, road):
+        """Shutdown must actually stop work, not be filed as "this leg did not route"."""
+        cancelling = FakeProvider(
+            capabilities=ProviderCapabilities(name="dirt-engine", prefers_unpaved=True),
+            error=asyncio.CancelledError(),  # type: ignore[arg-type]
+        )
+        router = TripRouter(build_resolver(dirt=cancelling, road=road))
+        with pytest.raises(asyncio.CancelledError):
+            await router.route_trip(trip(leg(0, 1, LegIntent.UNPAVED)))
+
     async def test_a_transient_failure_is_distinguishable_from_a_definitive_one(self, road):
         """The caller needs to know whether retrying is worth anything."""
         flaky = FakeProvider(
@@ -287,6 +338,156 @@ class TestStitchingATrip:
         assert len(route.surface_spans) == 2
         assert route.unpaved_fraction == pytest.approx(1.0, rel=1e-6)
 
+
+class TestStaleGeometryCannotBeStitchedSilently:
+    """The executed failure: a leg whose re-route failed keeps its previous geometry.
+
+    `RouteIncomplete` only ever fired on `routed is None`, so `stitch_trip` succeeded on
+    exactly the trip `is_complete` had just called incomplete. A rider retags a leg as dirt,
+    the dirt engine is down, and the export renders perfectly at 0% unpaved — carrying the
+    paved geometry of the leg they replaced.
+    """
+
+    @pytest.fixture
+    def road(self):
+        return FakeProvider(capabilities=ProviderCapabilities(name="road-engine"))
+
+    @pytest.fixture
+    async def paved_trip(self, road):
+        """Two highway legs, routed and cached."""
+        router = TripRouter(build_resolver(road=road))
+        return (
+            await router.route_trip(
+                trip(
+                    leg(0, 1, LegIntent.HIGHWAY_CONNECTOR),
+                    leg(1, 2, LegIntent.HIGHWAY_CONNECTOR),
+                )
+            )
+        ).trip
+
+    @pytest.fixture
+    def down(self, road):
+        broken = FakeProvider(
+            capabilities=ProviderCapabilities(name="dirt-engine", prefers_unpaved=True),
+            error=ProviderUnavailable("upstream 503", provider="dirt-engine"),
+        )
+        return TripRouter(build_resolver(dirt=broken, road=road))
+
+    async def test_the_retagged_leg_keeps_its_stale_geometry(self, paved_trip, down):
+        """Deliberate — losing a good route to a failed retry is a downgrade. But detectable."""
+        retagged = paved_trip.model_copy(
+            update={
+                "legs": (
+                    paved_trip.legs[0],
+                    paved_trip.legs[1].model_copy(update={"intent": LegIntent.UNPAVED}),
+                )
+            }
+        )
+        result = await down.route_trip(retagged)
+        assert result.is_complete is False
+        assert result.trip.legs[1].routed is not None
+
+    async def test_stitching_that_trip_is_refused(self, paved_trip, down):
+        retagged = paved_trip.model_copy(
+            update={
+                "legs": (
+                    paved_trip.legs[0],
+                    paved_trip.legs[1].model_copy(update={"intent": LegIntent.UNPAVED}),
+                )
+            }
+        )
+        result = await down.route_trip(retagged)
+        with pytest.raises(RouteIncomplete):
+            down.stitch_trip(result.trip)
+
+    async def test_the_refusal_says_the_geometry_is_stale_not_missing(self, paved_trip, down):
+        retagged = paved_trip.model_copy(
+            update={
+                "legs": (
+                    paved_trip.legs[0],
+                    paved_trip.legs[1].model_copy(update={"intent": LegIntent.UNPAVED}),
+                )
+            }
+        )
+        result = await down.route_trip(retagged)
+        with pytest.raises(RouteIncomplete, match="stale"):
+            down.stitch_trip(result.trip)
+
+    async def test_stitching_a_result_refuses_a_failure_the_trip_alone_cannot_show(self):
+        """The case the intent check cannot see, and the reason `stitch_result` exists.
+
+        A leg re-routed for the *same* intent by the *same* engine, where the engine 503s.
+        Its cached geometry still matches its intent and provider, so `stitch_trip` has
+        nothing to detect — but the waypoints may have moved, and the result knows the
+        re-route failed. `is_complete` is the only signal, so it must not be optional.
+        """
+        healthy = FakeProvider(capabilities=ProviderCapabilities(name="road-engine"))
+        routed = (
+            await TripRouter(build_resolver(road=healthy)).route_trip(
+                trip(leg(0, 1, LegIntent.HIGHWAY_CONNECTOR))
+            )
+        ).trip
+
+        flaky = FakeProvider(
+            capabilities=ProviderCapabilities(name="road-engine"),
+            error=ProviderUnavailable("upstream 503", provider="road-engine"),
+        )
+        router = TripRouter(build_resolver(road=flaky))
+        result = await router.route_trip(routed)
+
+        assert result.is_complete is False
+        # Nothing about the trip itself looks wrong — this is the gap being closed.
+        assert router.stitch_trip(result.trip).is_continuous is True
+        with pytest.raises(RouteIncomplete):
+            router.stitch_result(result)
+
+    async def test_stitching_a_complete_result_works(self, road):
+        router = TripRouter(build_resolver(road=road))
+        result = await router.route_trip(
+            trip(leg(0, 1, LegIntent.HIGHWAY_CONNECTOR), leg(1, 2, LegIntent.HIGHWAY_CONNECTOR))
+        )
+        assert len(router.stitch_result(result).geometry) > 0
+
+    async def test_a_freshly_routed_trip_stitches_normally(self, road):
+        """The check must not reject legs that are genuinely current."""
+        router = TripRouter(build_resolver(road=road))
+        routed = (
+            await router.route_trip(
+                trip(
+                    leg(0, 1, LegIntent.HIGHWAY_CONNECTOR),
+                    leg(1, 2, LegIntent.HIGHWAY_CONNECTOR),
+                )
+            )
+        ).trip
+        assert router.stitch_trip(routed).is_continuous is True
+
+    async def test_a_provider_override_change_also_invalidates_the_geometry(self, road):
+        router = TripRouter(build_resolver(road=road))
+        routed = (await router.route_trip(trip(leg(0, 1, LegIntent.HIGHWAY_CONNECTOR)))).trip
+        repinned = routed.model_copy(
+            update={
+                "legs": (routed.legs[0].model_copy(update={"provider_override": "dirt-engine"}),)
+            }
+        )
+        with pytest.raises(RouteIncomplete, match="stale"):
+            router.stitch_trip(repinned)
+
+    async def test_stale_geometry_can_be_stitched_when_the_caller_says_so(self, paved_trip, down):
+        """An escape hatch for showing the user what they currently have. Never the default."""
+        result = await down.route_trip(
+            paved_trip.model_copy(
+                update={
+                    "legs": (
+                        paved_trip.legs[0],
+                        paved_trip.legs[1].model_copy(update={"intent": LegIntent.UNPAVED}),
+                    )
+                }
+            )
+        )
+        assert down.stitch_trip(result.trip, allow_stale=True).geometry != ()
+
+
+class TestStitchingATripContinued:
     async def test_stitching_a_partially_routed_trip_is_refused(self, router):
         """Silently omitting an unrouted leg would produce a shorter route that looks whole."""
         half = trip(leg(0, 1), leg(1, 2))

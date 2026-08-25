@@ -18,6 +18,7 @@ import pytest
 from motorooter.planning.stitching import (
     COINCIDENT_TOLERANCE_M,
     GAP_REPORT_THRESHOLD_M,
+    StitchedRoute,
     stitch,
 )
 from motorooter.routing.geo import EARTH_RADIUS_M, haversine_m, path_length_m
@@ -271,6 +272,34 @@ class TestTotals:
         assert route.bridged_distance_m == pytest.approx(200.0, rel=1e-6)
         assert route.distance_m == pytest.approx(1800.0, rel=1e-6)
 
+    def test_bridged_distance_includes_silent_sub_threshold_bridges(self):
+        """`geometry_length_m` counts every bridge, so `bridged_distance_m` must too.
+
+        Counting only reported gaps left the three totals unable to reconcile: twenty
+        boundaries at 20 m each add 400 m to the denominator of `unpaved_fraction` while
+        `bridged_distance_m` reports 0.0, and nothing says where the difference went.
+        """
+        below = GAP_REPORT_THRESHOLD_M / 2
+        route = stitch([leg(0, 1000), leg(1000 + below, 2000)])
+        assert route.gaps == ()
+        assert route.bridged_distance_m == pytest.approx(below, rel=1e-6)
+
+    def test_the_three_totals_reconcile(self):
+        """Geometry length is the legs' own geometry plus every bridge, reported or not."""
+        legs = [leg(0, 1000), leg(1012, 2000), leg(2200, 3000)]
+        route = stitch(legs)
+        measured = sum(leg_.geometry_length_m for leg_ in legs)
+        assert route.geometry_length_m == pytest.approx(
+            measured + route.bridged_distance_m, rel=1e-9
+        )
+
+    def test_reported_gap_distance_is_still_available_separately(self):
+        route = stitch([leg(0, 1000), leg(1012, 2000), leg(2200, 3000)])
+        assert sum(gap.distance_m for gap in route.gaps) == pytest.approx(200.0, rel=1e-6)
+
+    def test_a_clean_route_bridges_nothing(self):
+        assert stitch([leg(0, 1000), leg(1000, 2000)]).bridged_distance_m == 0.0
+
     def test_duration_sums_the_legs(self):
         route = stitch([leg(0, 1000, duration_s=60.0), leg(1000, 2000, duration_s=90.0)])
         assert route.duration_s == pytest.approx(150.0)
@@ -278,6 +307,61 @@ class TestTotals:
     def test_legs_are_preserved_in_order(self):
         legs = [leg(0, 1000), leg(1000, 2000), leg(2000, 3000)]
         assert stitch(legs).legs == tuple(legs)
+
+
+class TestTheReindexingInvariantIsActuallyEnforced:
+    """The validator has to catch drift in both directions, not just overflow.
+
+    An offset one too large overflows the geometry and was already caught. An offset one too
+    *small* — the exact off-by-one this module exists to prevent — stayed inside bounds and
+    constructed happily, reporting the wrong metres as dirt while the map rendered perfectly.
+    """
+
+    def test_an_offset_one_too_large_is_rejected(self):
+        route = stitch([leg(0, 500, 1000), leg(1000, 1500, 2000)])
+        payload = route.model_dump() | {"leg_start_indices": (0, 3)}
+        with pytest.raises(ValueError, match="offset"):
+            StitchedRoute.model_validate(payload)
+
+    def test_an_offset_one_too_small_is_rejected(self):
+        """Would silently shift every later span back by one vertex."""
+        route = stitch([leg(0, 500, 1000), leg(1200, 1500, 2000)])
+        payload = route.model_dump() | {"leg_start_indices": (0, 2)}
+        with pytest.raises(ValueError, match="offset"):
+            StitchedRoute.model_validate(payload)
+
+    def test_a_span_reaching_past_the_geometry_is_still_rejected(self):
+        route = stitch([leg(0, 500, 1000)])
+        payload = route.model_dump()
+        payload["surface_spans"] = [
+            {"start_index": 0, "end_index": 9, "surface": Surface.UNPAVED.value}
+        ]
+        with pytest.raises(ValueError):
+            StitchedRoute.model_validate(payload)
+
+    def test_leg_start_indices_locate_each_leg_in_the_joined_geometry(self):
+        """Load-bearing rather than decorative: the validator checks alignment through them."""
+        legs = [leg(0, 500, 1000), leg(1200, 1500, 2000), leg(2000, 2500, 3000)]
+        route = stitch(legs)
+        assert route.leg_start_indices == (0, 3, 5)
+
+    def test_every_legs_vertices_appear_at_its_recorded_offset(self):
+        legs = [leg(0, 500, 1000), leg(1000, 1500, 2000)]
+        route = stitch(legs)
+        for offset, original in zip(route.leg_start_indices, legs, strict=True):
+            tail = route.geometry[offset + 1 : offset + len(original.geometry)]
+            assert tail == original.geometry[1:]
+
+    def test_stitched_unpaved_metres_equal_the_sum_of_the_legs(self):
+        """The property a wrong offset breaks, stated directly. Bridges are never in a span."""
+        legs = [
+            leg(0, 500, 1000, spans=(unpaved(0, 2),)),
+            leg(1200, 1500, 2000, spans=(unpaved(1, 2),)),
+        ]
+        route = stitch(legs)
+        assert route.unpaved_distance_m == pytest.approx(
+            sum(leg_.unpaved_distance_m for leg_ in legs), rel=1e-9
+        )
 
 
 class TestTunableThresholds:

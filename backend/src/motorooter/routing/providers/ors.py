@@ -69,6 +69,7 @@ _ROUTE_NOT_FOUND_CODES = frozenset({2009})
 CAPABILITIES = ProviderCapabilities(
     name="ors",
     prefers_unpaved=True,
+    reports_surface=True,  # via extra_info=surface
     map_matching=False,
     alternatives=True,
     elevation=True,

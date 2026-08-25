@@ -217,6 +217,19 @@ class ProviderCapabilities(BaseModel):
     prefers_unpaved: bool = False
     """Can actively weight routing *toward* dirt, not merely tolerate it."""
 
+    reports_surface: bool = False
+    """Whether this engine reports what the road is made of.
+
+    Distinct from `prefers_unpaved`, which is about what it will route *onto*. Google wants
+    false for both and means different things by each: it will route you down a gravel road,
+    it just will not say so.
+
+    Defaults to false so an engine has to claim it — assuming otherwise would make an
+    engine's silence indistinguishable from a genuine "surface unknown", which is the
+    conflation this flag exists to remove. A client can then say "this engine does not report
+    surface" instead of drawing an unexplained grey line.
+    """
+
     map_matching: bool = False
     alternatives: bool = False
     elevation: bool = False

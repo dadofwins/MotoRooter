@@ -15,6 +15,7 @@ import type { ApiClient } from './api/client'
 import type { Coordinate, Poi, TripLeg, Waypoint } from './api/types'
 import { MapCanvas } from './map/MapCanvas'
 import { isVerified } from './map/poiPin'
+import { PoiDetailDialog } from './poi/PoiDetailDialog'
 import { MAP_ID, loadMaps } from './map/googleMaps'
 import type { GoogleMapsLoader } from './map/loadGoogleMaps'
 import { DragSession } from './routing/dragSession'
@@ -24,7 +25,7 @@ import { useRouteLeg } from './trip/useRouteLeg'
 import { useRoutingCapabilities } from './trip/useRoutingCapabilities'
 
 /** Only the two calls the shell makes, so a test double stays small. */
-type AppClient = Pick<ApiClient, 'routeLeg' | 'routingCapabilities'>
+type AppClient = Pick<ApiClient, 'routeLeg' | 'routingCapabilities' | 'placeDetail'>
 
 /** The intent a dragged leg keeps. Matches the one the slice routes with. */
 const DRAG_INTENT = 'unpaved'
@@ -211,20 +212,21 @@ export function App({
           </div>
         )}
         {openPoi !== null && (
-          <div className="poi-detail">
-            <h2>{openPoi.name}</h2>
-            {!isVerified(openPoi) && (
-              // Stated as a fact about the suggestion rather than as an error, and stated at
-              // all: a control that silently does nothing is worse than one that explains.
-              <p className="poi-detail__warning">
-                This place has not been confirmed against a real listing, so it cannot be
-                added to the route yet.
-              </p>
-            )}
-            <button type="button" onClick={() => setOpenPoi(null)}>
-              Close
-            </button>
-          </div>
+          <PoiDetailDialog
+            poi={openPoi}
+            client={client}
+            onClose={() => setOpenPoi(null)}
+            // Absent for an unconfirmed suggestion, so the dialog shows no control that
+            // could not work.
+            {...(isVerified(openPoi)
+              ? {
+                  onAddToRoute: (poi: Poi) => {
+                    onPoiAdd(poi)
+                    setOpenPoi(null)
+                  },
+                }
+              : {})}
+          />
         )}
         {error !== null && (
           <p className="route-error" role="alert">

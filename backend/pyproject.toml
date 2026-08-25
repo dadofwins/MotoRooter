@@ -32,6 +32,12 @@ packages = ["src/motorooter"]
 testpaths = ["tests"]
 asyncio_mode = "auto"
 addopts = "-q --strict-markers"
+filterwarnings = [
+    # A pydantic serializer warning means a field holds something that is not the declared
+    # type — `model_copy(update=...)` skips validation, so a str lands in an enum field and
+    # serializes by luck. It reads as equal and is not the same object. Caught one already.
+    "error::UserWarning:pydantic.*",
+]
 
 [tool.mypy]
 python_version = "3.12"

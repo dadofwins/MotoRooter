@@ -1,22 +1,19 @@
-"""The wire vocabulary of error codes, and the single mapping from exception to response.
+"""The single mapping from exception to HTTP response.
 
-Codes used to be derived from exception class names. That made a Python refactor a silent
-breaking change to the HTTP contract: renaming `NoRouteFound` would have changed the wire
-code from `no_route_found` to something else with no test, no type error, and no build
-failure anywhere — least of all in the frontend, which was hand-maintaining the matching
-union because the schema typed `code` as a bare string.
+The `ErrorCode` vocabulary itself lives in `motorooter.error_codes`, which imports nothing —
+this module imports `trips.errors` and `routing.errors` to build the table, so the enum has
+to sit below both to stay usable from a domain model. It is re-exported here so existing
+imports and `schemas.py` are unaffected.
 
-So codes are declared here as literals, the table below is the only place a status is
-chosen, and `ErrorCode` is exported into the OpenAPI document as an enum. The frontend
-generates its union from that instead of restating it.
+`ErrorCode` is re-exported (explicitly, so type checkers treat it as public) because
+`schemas.py` and every existing caller import it from here.
 
-Adding an error means adding it here. `test_error_codes.py` fails if an exception the API
-can raise is missing from the table, so the two cannot drift apart.
+Adding an error means adding it to the table below. `test_error_codes.py` fails if an
+exception the API can raise is missing, so the two cannot drift apart.
 """
 
-from enum import StrEnum
-
 from motorooter.api.errors import NotImplementedYet
+from motorooter.error_codes import ErrorCode as ErrorCode
 from motorooter.routing.errors import (
     InvalidRequest,
     NoRouteFound,
@@ -36,34 +33,6 @@ from motorooter.trips.errors import (
     TripStorageUnavailable,
 )
 from motorooter.trips.slug import InvalidSlug
-
-
-class ErrorCode(StrEnum):
-    """Stable, machine-readable error identifiers.
-
-    Clients switch on these. `detail` is for humans and is not part of the contract.
-    Renaming a member is a breaking change; adding one is not.
-    """
-
-    INVALID_REQUEST = "invalid_request"
-    UNSUPPORTED_INTENT = "unsupported_intent"
-    PROVIDER_NOT_FOUND = "provider_not_found"
-    NO_ROUTE_FOUND = "no_route_found"
-    ROUTE_INCOMPLETE = "route_incomplete"
-    QUOTA_EXCEEDED = "quota_exceeded"
-    PROVIDER_UNAVAILABLE = "provider_unavailable"
-
-    INVALID_SLUG = "invalid_slug"
-    TRIP_NOT_FOUND = "trip_not_found"
-    TRIP_ALREADY_EXISTS = "trip_already_exists"
-    TRIP_MODIFIED_CONCURRENTLY = "trip_modified_concurrently"
-    TRIP_DOCUMENT_INVALID = "trip_document_invalid"
-    TRIP_STORAGE_UNAVAILABLE = "trip_storage_unavailable"
-
-    VALIDATION_ERROR = "validation_error"
-    NOT_IMPLEMENTED = "not_implemented"
-    INTERNAL_ERROR = "internal_error"
-
 
 ERROR_TABLE: dict[type[Exception], tuple[int, ErrorCode]] = {
     # Routing

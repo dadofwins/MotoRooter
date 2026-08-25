@@ -19,6 +19,7 @@ from typing import Annotated, Self
 
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, model_validator
 
+from motorooter.error_codes import ErrorCode
 from motorooter.routing.models import Coordinate, LegIntent, RouteLeg
 
 CURRENT_SCHEMA_VERSION = 1
@@ -140,6 +141,17 @@ class TripLeg(BaseModel):
     routed: RouteLeg | None = None
     """Cached geometry from the last successful route. `None` until first routed."""
 
+    last_routing_error: ErrorCode | None = None
+    """Why the most recent routing attempt failed, or `None` if none has.
+
+    Without this, a leg with no geometry is byte-identical whether its routing failed or was
+    never attempted — the distinction lived only in `TripRoutingResult`, which is not part of
+    the trip and so does not survive being saved. A rider whose dirt leg timed out can still
+    save and retry later; the trip records that the section is broken rather than unplanned.
+
+    Cleared by a successful route. A stale marker would leave a healthy leg flagged forever.
+    """
+
     @model_validator(mode="after")
     def _must_move_forward(self) -> Self:
         if self.end_waypoint_index <= self.start_waypoint_index:
@@ -192,6 +204,22 @@ class Trip(BaseModel):
                 )
                 raise ValueError(msg)
         return self
+
+    @property
+    def is_fully_routed(self) -> bool:
+        """Whether every leg has geometry.
+
+        A property rather than a field, so it cannot drift and does not change the wire
+        shape. `total_distance_m` sums only the legs that routed, so a partial trip reports a
+        smaller number with nothing to mark it — this is what makes that number
+        interpretable.
+        """
+        return all(leg.routed is not None for leg in self.legs)
+
+    @property
+    def unrouted_leg_indices(self) -> tuple[int, ...]:
+        """Legs with no geometry, in order. Empty when the trip is fully routed."""
+        return tuple(index for index, leg in enumerate(self.legs) if leg.routed is None)
 
     @property
     def needs_replan(self) -> bool:

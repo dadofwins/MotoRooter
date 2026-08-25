@@ -426,6 +426,26 @@ export interface components {
             prompt?: string | null;
         };
         /**
+         * RouteFingerprint
+         * @description The request a leg's geometry was produced from.
+         *
+         *     Recorded so staleness is decidable rather than guessed. Comparing a cached leg's
+         *     endpoints against its waypoints cannot work — engines snap to the nearest routable node,
+         *     sometimes by hundreds of metres, so there is no tolerance that separates snapping from a
+         *     user dragging the point. Comparing the *request* has no such ambiguity.
+         *
+         *     Stores rounded coordinates rather than a hash. A hash would be smaller and sufficient for
+         *     equality, but when a rider reports a route wrongly marked stale, a hash says nothing and
+         *     these values name the field that moved.
+         */
+        RouteFingerprint: {
+            intent: components["schemas"]["LegIntent"];
+            /** Provider Override */
+            provider_override?: string | null;
+            /** Waypoints */
+            waypoints: components["schemas"]["Coordinate"][];
+        };
+        /**
          * RouteLeg
          * @description A routed leg, normalized across providers.
          */
@@ -441,6 +461,7 @@ export interface components {
             intent: components["schemas"]["LegIntent"];
             /** Provider */
             provider: string;
+            routed_from?: components["schemas"]["RouteFingerprint"] | null;
             /**
              * Surface Spans
              * @default []
@@ -571,6 +592,7 @@ export interface components {
             /** End Waypoint Index */
             end_waypoint_index: number;
             intent: components["schemas"]["LegIntent"];
+            last_routing_error?: components["schemas"]["ErrorCode"] | null;
             /** Provider Override */
             provider_override?: string | null;
             routed?: components["schemas"]["RouteLeg"] | null;

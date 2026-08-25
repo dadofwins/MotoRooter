@@ -34,6 +34,28 @@ from motorooter.routing.models import (
 
 ORS_BASE_URL = "https://api.openrouteservice.org"
 
+ORS_DEFAULT_SNAP_RADIUS_M = 5000.0
+"""How far ORS may look for a routable way near a requested point.
+
+ORS defaults to 350 m, which suits dense urban networks and is badly wrong for mountain
+terrain. It is worst on `cycling-mountain`, whose routable network is far sparser than a
+car's: measured against the live API, 44% of plausible map clicks across the Cascades failed
+to snap at the default, every one of them "could not find routable point within 350.0 m".
+A click that returns 400 is a worse answer than a route that starts a little way off.
+
+    350 m    2/5 points snapped
+    1000 m   4/5
+    5000 m   5/5
+
+A guess like the gap threshold and the twistiness segment, so it is a constructor argument
+as well as a constant.
+
+The cost of a wide radius is that snapping becomes surprising: a rider who taps a specific
+trailhead can get a route starting a kilometre away with nothing saying so. Failing outright
+is still worse, but the displacement is worth surfacing — `planning.metrics.nearest_distance_m`
+already computes it.
+"""
+
 DEFAULT_PROFILE_FOR_INTENT: Mapping[LegIntent, str] = {
     LegIntent.HIGHWAY_CONNECTOR: "driving-car",
     LegIntent.TWISTY_PAVED: "driving-car",
@@ -90,6 +112,7 @@ class OrsProvider:
         client: httpx.AsyncClient | None = None,
         profile_for_intent: Mapping[LegIntent, str] | None = None,
         capabilities: ProviderCapabilities = CAPABILITIES,
+        snap_radius_m: float = ORS_DEFAULT_SNAP_RADIUS_M,
         timeout_s: float = 20.0,
     ) -> None:
         """
@@ -101,13 +124,21 @@ class OrsProvider:
                 engine profile serves which road type never touches this module.
             capabilities: override when pointing at a self-hosted instance with different
                 limits (a local instance has no daily quota).
+            snap_radius_m: how far to look for a routable way near each waypoint. See
+                `ORS_DEFAULT_SNAP_RADIUS_M` for why the ORS default is unusable here.
             timeout_s: per-request timeout.
         """
+        if snap_radius_m <= 0:
+            # Zero snaps nothing; ORS reads a negative as "unlimited", which is not a
+            # setting anyone should arrive at by typo.
+            msg = f"snap_radius_m must be positive, got {snap_radius_m}"
+            raise ValueError(msg)
         self._api_key = api_key
         self._base_url = base_url.rstrip("/")
         self._client = client
         self._profiles = dict(profile_for_intent or DEFAULT_PROFILE_FOR_INTENT)
         self._capabilities = capabilities
+        self._snap_radius_m = snap_radius_m
         self._timeout_s = timeout_s
 
     @property
@@ -140,6 +171,9 @@ class OrsProvider:
             "coordinates": [list(wp.to_geojson()) for wp in request.waypoints],
             "extra_info": ["surface", "waytype"],
             "elevation": request.want_elevation,
+            # One radius per coordinate: ORS matches them positionally and rejects a list
+            # of the wrong length.
+            "radiuses": [self._snap_radius_m] * len(request.waypoints),
         }
         avoid = [
             feature

@@ -31,4 +31,14 @@ while read -r _local_ref _local_sha remote_ref _remote_sha; do
     exit 1
   fi
   echo "pre-push: check passed" >&2
+
+  # A push to main almost always follows a merge, and a merge almost always leaves whoever
+  # authored it with nothing queued. Printing this here because the integrator built an idle
+  # detector and then forgot to run it three times; Tim noticed each time. A reminder that
+  # fires on its own beats one that depends on remembering.
+  if [[ -x scripts/queue-status ]]; then
+    echo >&2
+    echo "pre-push: who has work? (assign before you walk away)" >&2
+    scripts/queue-status 2>/dev/null | sed 's/^/  /' >&2
+  fi
 done

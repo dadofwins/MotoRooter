@@ -176,7 +176,11 @@ is event-driven: the mailbox wakes them when work *arrives* and stays silent whe
 to every other mechanism here. That is not hypothetical; one sat idle through three review
 rounds before Tim noticed.
 
-Run it after every merge. A merge notice is not an assignment.
+Run it after every merge. **A merge notice is not an assignment.**
+
+The pre-push hook prints it automatically on every push to `main`, because relying on the
+integrator to remember failed three times in one session — each time caught by Tim rather
+than by any mechanism here.
 
 ## Escalation
 

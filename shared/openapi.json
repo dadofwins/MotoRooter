@@ -1639,7 +1639,7 @@
         ]
       },
       "put": {
-        "description": "Replace a trip's editable content.\n\n`edited_at` advances only when geometry actually changes, since it is what drives the\nreplan staleness flag \u2014 bumping it on a rename would spuriously mark discovery stale.",
+        "description": "Apply a partial update, refusing to clobber a concurrent edit.\n\nTrips are public and world-editable, so two riders editing the same trip from a shared\nlink is ordinary. An unconditional write would not merely lose the slower writer's edit \u2014\nit would roll back fields that writer never touched, and answer 200 as though the data\nhad been saved. So the write carries the version it was read at, and a conflict re-reads\nand re-merges rather than surfacing immediately.\n\nRaises:\n    TripModifiedConcurrently: still contended after `MAX_UPDATE_ATTEMPTS`; maps to 409.\n    TripNotFound: no such trip, including one deleted mid-update \u2014 writing anyway would\n        resurrect something somebody chose to remove.",
         "operationId": "update_trip_api_trips__slug__put",
         "parameters": [
           {

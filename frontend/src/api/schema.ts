@@ -119,10 +119,18 @@ export interface paths {
         get: operations["get_trip_api_trips__slug__get"];
         /**
          * Update Trip
-         * @description Replace a trip's editable content.
+         * @description Apply a partial update, refusing to clobber a concurrent edit.
          *
-         *     `edited_at` advances only when geometry actually changes, since it is what drives the
-         *     replan staleness flag — bumping it on a rename would spuriously mark discovery stale.
+         *     Trips are public and world-editable, so two riders editing the same trip from a shared
+         *     link is ordinary. An unconditional write would not merely lose the slower writer's edit —
+         *     it would roll back fields that writer never touched, and answer 200 as though the data
+         *     had been saved. So the write carries the version it was read at, and a conflict re-reads
+         *     and re-merges rather than surfacing immediately.
+         *
+         *     Raises:
+         *         TripModifiedConcurrently: still contended after `MAX_UPDATE_ATTEMPTS`; maps to 409.
+         *         TripNotFound: no such trip, including one deleted mid-update — writing anyway would
+         *             resurrect something somebody chose to remove.
          */
         put: operations["update_trip_api_trips__slug__put"];
         post?: never;

@@ -176,8 +176,10 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * Export GPX (not yet implemented)
-         * @description Returns a GPX file containing a track plus ordered waypoints, targeted at motorcycle GPS units.
+         * Export GPX
+         * @description A GPX 1.1 file containing one track — one segment per leg — plus ordered waypoints, targeted at motorcycle GPS units. Discovered POIs travel as waypoints carrying their category, which on the device is most of the value.
+         *
+         *     Long routes are **decimated, never truncated**: the whole route is kept and the point budget is spent on the corners, because a truncated track hands a rider the first part of their day with nothing to say the rest is missing.
          */
         get: operations["export_gpx_api_trips__slug__gpx_get"];
         put?: never;
@@ -1731,15 +1733,6 @@ export interface operations {
             };
             /** @description Too Many Requests */
             429: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description Successful Response */
-            501: {
                 headers: {
                     [name: string]: unknown;
                 };

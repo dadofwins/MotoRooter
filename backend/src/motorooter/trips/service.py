@@ -11,6 +11,7 @@ handlers turn them into status codes.
 """
 
 from collections.abc import Sequence
+from itertools import pairwise
 
 from motorooter.routing.models import LegIntent, RouteLeg
 from motorooter.trips.errors import TripModifiedConcurrently
@@ -65,6 +66,39 @@ def legs_for(trip: Trip, waypoints: Sequence[Waypoint]) -> tuple[TripLeg, ...]:
             end_waypoint_index=index + 1,
         )
         for index in range(len(points) - 1)
+    )
+
+
+def changed_legs(trip: Trip, waypoints: Sequence[Waypoint]) -> tuple[TripLeg, ...]:
+    """The legs of `legs_for` whose two ends were not already next to each other.
+
+    What a waypoint edit actually needs a routing engine's opinion on. Validation used to ask
+    about the whole trip on every edit, which cost a seven-point request per waypoint added
+    and — worse — refused edits for failures elsewhere in the route. A live run caught it:
+
+        add_waypoint: those points could not be joined into a route: [google] ZERO_RESULTS
+
+    The waypoint being added was fine. Some other stretch was not, and the rider was told
+    their new stop was the problem.
+
+    Adjacency is compared by coordinate rather than by index, because an insertion shifts
+    every index after it while leaving the roads unchanged. Appending costs one stretch,
+    inserting two, removing one; everything else is already known to join.
+
+    Intents come from `legs_for` rather than being resolved here, so a stretch is routed as
+    the mode it will be saved as. Routing a stretch as one mode and storing it as another is
+    worse than either.
+    """
+    already_joined = {(start.coordinate, end.coordinate) for start, end in pairwise(trip.waypoints)}
+    points = tuple(waypoints)
+    return tuple(
+        leg
+        for leg in legs_for(trip, points)
+        if (
+            points[leg.start_waypoint_index].coordinate,
+            points[leg.end_waypoint_index].coordinate,
+        )
+        not in already_joined
     )
 
 

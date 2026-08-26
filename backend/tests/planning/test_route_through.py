@@ -91,6 +91,30 @@ def trip(*pois: Poi, legs: tuple[TripLeg, ...] | None = None) -> Trip:
     )
 
 
+def long_trip(*pois: Poi) -> Trip:
+    """Six waypoints, so "one stretch" and "the whole trip" are visibly different."""
+    points = tuple(
+        Waypoint(coordinate=north(LENGTH_M * index / 5), name=f"w{index}") for index in range(6)
+    )
+    return Trip(
+        slug="wabdr",
+        name="WABDR",
+        created_at=T0,
+        edited_at=T0,
+        waypoints=points,
+        legs=tuple(
+            TripLeg(
+                intent=LegIntent.TWISTY_PAVED,
+                start_waypoint_index=index,
+                end_waypoint_index=index + 1,
+                routed=routed(),
+            )
+            for index in range(5)
+        ),
+        pois=pois,
+    )
+
+
 class FakeRouter:
     """Records what it was asked to join, and can be told to refuse."""
 
@@ -193,11 +217,25 @@ class TestWhatItRefuses:
         await route_through_best(store=store, slug="wabdr", router=FakeRouter())
         assert (await store.get("wabdr")).edited_at == before.edited_at
 
-    async def test_it_confirms_the_route_before_saving_it(self):
+    async def test_it_confirms_the_stretches_it_creates_before_saving_them(self):
+        """Two, for one insertion: into the place, and out of it.
+
+        Not the whole trip as one span. That cost a request the size of the route on every
+        edit, and refused edits for failures in stretches nobody had touched.
+        """
         router = FakeRouter()
         store = await store_with(trip(poi("Lion Rock", 0.95)))
         await route_through_best(store=store, slug="wabdr", router=router)
-        assert [point.name for point in router.calls[0]] == ["start", "Lion Rock", "end"]
+        assert [[point.name for point in call] for call in router.calls] == [
+            ["start", "Lion Rock"],
+            ["Lion Rock", "end"],
+        ]
+
+    async def test_a_long_trip_is_not_re_routed_end_to_end_to_add_one_place(self):
+        store = await store_with(long_trip(poi("Lion Rock", 0.95, along=0.55)))
+        router = FakeRouter()
+        await route_through_best(store=store, slug="wabdr", router=router)
+        assert [len(call) for call in router.calls] == [2, 2]
 
 
 class TestTheLegItChooses:

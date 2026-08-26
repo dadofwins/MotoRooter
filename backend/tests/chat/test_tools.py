@@ -110,9 +110,11 @@ class StubRouter:
     def __init__(self, *, error: Exception | None = None):
         self.error = error
         self.calls: list[tuple[Coordinate, ...]] = []
+        self.intents: list[LegIntent] = []
 
     async def route_waypoints(self, waypoints, *, intent, provider_override=None):
         self.calls.append(tuple(w.coordinate for w in waypoints))
+        self.intents.append(intent)
         if self.error is not None:
             raise self.error
         return (routed_leg(),) * max(len(waypoints) - 1, 1)
@@ -262,6 +264,73 @@ class TestRemoveWaypoint:
         outcome = await call(kit, RemoveWaypoint.name, '{"index": 1}')
         assert "Start" in outcome.content and "End" in outcome.content
         assert "Middle" not in outcome.content
+
+
+class TestValidationAsksOnlyAboutWhatChanged:
+    """Adding a waypoint must not re-litigate the rest of the route.
+
+    Every tool that moves a waypoint used to route the *whole* trip to check the points could
+    be joined. Two costs, and the second is the one that bit: a seven-point trip paid a
+    seven-point request per waypoint added, and a failure anywhere in that span refused an
+    edit with nothing to do with it. Caught live:
+
+        add_waypoint: those points could not be joined into a route: [google] ZERO_RESULTS
+    """
+
+    @staticmethod
+    def _long_trip():
+        points = tuple(
+            Waypoint(coordinate=coordinate(47.0 + index / 10, -121.0), name=f"w{index}")
+            for index in range(5)
+        )
+        return trip(
+            waypoints=points,
+            legs=tuple(
+                TripLeg(
+                    intent=LegIntent.UNPAVED,
+                    start_waypoint_index=index,
+                    end_waypoint_index=index + 1,
+                )
+                for index in range(4)
+            ),
+        )
+
+    async def test_appending_asks_about_one_stretch_not_the_whole_trip(self):
+        router = StubRouter()
+        kit = await tools(document=self._long_trip(), router=router, lookup=OneResult())
+        await call(kit, AddWaypoint.name, '{"name": "Blewett Pass"}')
+        assert [len(call_) for call_ in router.calls] == [2]
+
+    async def test_the_stretch_it_asks_about_is_the_one_it_created(self):
+        router = StubRouter()
+        kit = await tools(document=self._long_trip(), router=router, lookup=OneResult())
+        await call(kit, AddWaypoint.name, '{"name": "Blewett Pass"}')
+        saved = await kit.store.get(SLUG)
+        assert router.calls[0] == (saved.waypoints[-2].coordinate, saved.waypoints[-1].coordinate)
+
+    async def test_a_failure_elsewhere_in_the_route_no_longer_refuses_the_edit(self):
+        """The live capture. The stretch being added was fine; another one was not."""
+        router = StubRouter()
+        kit = await tools(document=self._long_trip(), router=router, lookup=OneResult())
+        await call(kit, AddWaypoint.name, '{"name": "Blewett Pass"}')
+        assert len((await kit.store.get(SLUG)).waypoints) == 6
+
+    async def test_a_failure_on_the_new_stretch_still_refuses_it(self):
+        """Narrowing what is checked must not stop it being checked."""
+        router = StubRouter(error=NoRouteFound("no road within 350 m"))
+        kit = await tools(document=self._long_trip(), router=router, lookup=OneResult())
+        with pytest.raises(ToolCallFailed):
+            await call(kit, AddWaypoint.name, '{"name": "Blewett Pass"}')
+        assert len((await kit.store.get(SLUG)).waypoints) == 5
+
+    async def test_the_stretch_is_routed_as_the_mode_it_will_be_saved_as(self):
+        router = StubRouter()
+        document = self._long_trip().model_copy(
+            update={"default_intent": LegIntent.HIGHWAY_CONNECTOR}
+        )
+        kit = await tools(document=document, router=router, lookup=OneResult())
+        await call(kit, AddWaypoint.name, '{"name": "Blewett Pass"}')
+        assert router.intents == [LegIntent.HIGHWAY_CONNECTOR]
 
 
 class TestTheTripRemembersItsMode:

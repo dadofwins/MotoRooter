@@ -30,7 +30,7 @@ from motorooter.planning.insertion import insert_in_route_order
 from motorooter.routing.errors import RouteIncomplete
 from motorooter.routing.models import LegIntent, RouteLeg
 from motorooter.trips.models import Poi, Trip, Waypoint
-from motorooter.trips.service import edit_trip, legs_for, longest_routed_leg
+from motorooter.trips.service import changed_legs, edit_trip, legs_for, longest_routed_leg
 from motorooter.trips.store import TripStore
 
 
@@ -109,7 +109,12 @@ async def route_through_best(
         [Waypoint(coordinate=place.coordinate, name=place.name) for place in chosen],
         geometry=leg.geometry,
     )
-    await router.route_waypoints(waypoints, intent=_intent_of(trip))
+    for changed in changed_legs(trip, waypoints):
+        # Only the stretches this insertion creates — two per place, in and out — rather
+        # than the whole route as one span. Asking about the whole route cost a request the
+        # size of the trip and refused edits for failures in stretches nobody had touched.
+        span = (waypoints[changed.start_waypoint_index], waypoints[changed.end_waypoint_index])
+        await router.route_waypoints(span, intent=changed.intent)
 
     saved = await edit_trip(
         store,
@@ -123,10 +128,6 @@ async def route_through_best(
         added=_in_route_order(chosen, waypoints),
         left_out=_left_out(trip.pois, chosen),
     )
-
-
-def _intent_of(trip: Trip) -> LegIntent:
-    return trip.legs[0].intent if trip.legs else LegIntent.TWISTY_PAVED
 
 
 def _marked_on_route(pois: Sequence[Poi], chosen: Sequence[Poi]) -> tuple[Poi, ...]:

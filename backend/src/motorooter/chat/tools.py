@@ -43,7 +43,7 @@ from motorooter.planning.route_through import LegRouter, route_through_best
 from motorooter.routing.errors import RouteIncomplete, RoutingError
 from motorooter.routing.models import LegIntent
 from motorooter.trips.models import Poi, PoiCategory, Trip, TripLeg, Waypoint
-from motorooter.trips.service import edit_trip, legs_for
+from motorooter.trips.service import changed_legs, edit_trip, legs_for
 from motorooter.trips.store import TripStore
 
 MINIMUM_WAYPOINTS = 2
@@ -103,11 +103,17 @@ class _TripTool(Tool):
             msg = f"could not look up {text!r}: {exc}"
             raise ToolCallFailed(msg) from exc
 
-    async def _route_all(self, trip: Trip, waypoints: tuple[Waypoint, ...]) -> None:
-        """Confirm the waypoints can actually be joined, before anything is written.
+    async def _route_changed(self, trip: Trip, waypoints: tuple[Waypoint, ...]) -> None:
+        """Confirm the stretches this edit creates can actually be joined, before writing.
 
         Routing failure is the second check on geography: a verified place with no road near
         it fails here rather than becoming a pin nobody can ride to.
+
+        **Only the stretches that changed.** This routed the whole trip as one span, which
+        cost a seven-point request per waypoint added and, worse, refused edits for failures
+        elsewhere in the route — a live run was told its new stop could not be joined when the
+        problem was a different stretch entirely. Appending asks about one pair, inserting
+        two, removing one.
 
         A single point is not routed because there is nothing to route — but it is no longer
         unchecked, which is the part that was wrong. The old comment claimed the exemption
@@ -117,14 +123,17 @@ class _TripTool(Tool):
         makes a lone waypoint safe now is that its coordinate came from Places rather than
         from a model.
         """
-        if len(waypoints) < MINIMUM_WAYPOINTS:
-            return
-        intent = trip.legs[0].intent if trip.legs else trip.intent_for_new_legs
-        try:
-            await self._router.route_waypoints(waypoints, intent=intent)
-        except RoutingError as exc:
-            msg = f"those points could not be joined into a route: {exc}"
-            raise ToolCallFailed(msg) from exc
+        for leg in changed_legs(trip, waypoints):
+            span = (
+                waypoints[leg.start_waypoint_index],
+                waypoints[leg.end_waypoint_index],
+            )
+            try:
+                await self._router.route_waypoints(span, intent=leg.intent)
+            except RoutingError as exc:
+                between = " and ".join(point.name or "an unnamed point" for point in span)
+                msg = f"the stretch between {between} could not be routed: {exc}"
+                raise ToolCallFailed(msg) from exc
 
 
 class DescribeTripArguments(ToolArguments):
@@ -228,7 +237,7 @@ class AddWaypoint(_TripTool):
         point = Waypoint(coordinate=chosen.coordinate, name=chosen.name)
 
         proposed = (*trip.waypoints, point)
-        await self._route_all(trip, proposed)
+        await self._route_changed(trip, proposed)
         saved = await edit_trip(
             self._store, self._slug, waypoints=proposed, legs=legs_for(trip, proposed)
         )
@@ -425,7 +434,7 @@ class AddPoiToRoute(_TripTool):
 
         point = Waypoint(coordinate=match.coordinate, name=match.name)
         proposed = (*trip.waypoints, point)
-        await self._route_all(trip, proposed)
+        await self._route_changed(trip, proposed)
         saved = await edit_trip(
             self._store, self._slug, waypoints=proposed, legs=legs_for(trip, proposed)
         )

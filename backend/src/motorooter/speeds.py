@@ -88,3 +88,21 @@ def estimate_leg_duration_s(leg: RouteLeg, speeds: RidingSpeeds = DEFAULT_RIDING
         + speeds.seconds_for(leg.unpaved_distance_m, Surface.UNPAVED)
         + speeds.seconds_for(leg.unknown_distance_m, Surface.UNKNOWN)
     )
+
+
+def leg_duration_s(leg: RouteLeg, speeds: RidingSpeeds = DEFAULT_RIDING_SPEEDS) -> float:
+    """How long this leg takes, from whichever source is worth believing.
+
+    **The one place that choice is made.** It was made in two, and the second one — the
+    single-leg endpoint the map calls on every drag — never got the memo: the trip total was
+    corrected to trust Google's car times while the per-leg figure kept inflating 128 minutes
+    to 193. Two copies of a rule is how that happens, and `estimate_leg_duration_s` being
+    public and obvious is how a third would.
+
+    So callers wanting "how long is this leg" call this. `estimate_leg_duration_s` remains
+    the derivation, which is what its name honestly describes, and is the right thing to call
+    only when you specifically want the derived figure regardless of provider.
+    """
+    if leg.duration_is_trustworthy:
+        return leg.duration_s
+    return estimate_leg_duration_s(leg, speeds)

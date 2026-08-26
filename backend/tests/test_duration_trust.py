@@ -20,7 +20,7 @@ from motorooter.routing.models import (
     Surface,
     SurfaceSpan,
 )
-from motorooter.speeds import estimate_leg_duration_s
+from motorooter.speeds import estimate_leg_duration_s, leg_duration_s
 from motorooter.trips.models import Trip, TripLeg, TripSummary, Waypoint, utc_now
 
 
@@ -156,3 +156,59 @@ class TestTellingTheRiderWhichItIs:
         """The trip list shows durations too, and it must not lose the caveat on the way."""
         trip = trip_with(leg())
         assert TripSummary.from_trip(trip).duration_is_estimated is True
+
+
+class TestTheChoiceLivesInOnePlace:
+    """The seventh instance of the same shape, and the one a rider sees most.
+
+    `Trip.estimate_duration_s` read the flag; `POST /routing/leg` called the derivation
+    directly and never got the memo. So the trip total was corrected and the per-leg figure —
+    which the map shows on every drag — kept inflating Google's 128 minutes to 193.
+
+    Fixed by extracting the choice rather than repeating the conditional. Two copies of a
+    rule is how this happened; three would be next, because `estimate_leg_duration_s` is
+    public and reads like the thing to call.
+    """
+
+    def test_a_trusted_leg_reports_its_own_duration(self):
+        trusted = leg(provider="google", duration_s=7_680.0, trustworthy=True, paved=True)
+        assert leg_duration_s(trusted) == pytest.approx(7_680.0)
+
+    def test_an_untrusted_leg_is_derived(self):
+        untrusted = leg(duration_s=8_580.0)
+        assert leg_duration_s(untrusted) == pytest.approx(estimate_leg_duration_s(untrusted))
+
+    def test_the_trip_total_uses_the_same_choice(self):
+        """One rule, both consumers. If these disagree, one of them is showing a rider a
+        number the other would not."""
+        trusted = leg(provider="google", duration_s=7_680.0, trustworthy=True, paved=True)
+        untrusted = leg(duration_s=8_580.0)
+        assert trip_with(trusted, untrusted).estimated_duration_s == pytest.approx(
+            leg_duration_s(trusted) + leg_duration_s(untrusted)
+        )
+
+
+class TestTheLegEndpointReportsTheTrustedFigure:
+    """Where Tim actually sees it: the map, on every drag."""
+
+    @staticmethod
+    def _response(intent: str, provider: str):
+        from fastapi.testclient import TestClient
+
+        from motorooter.app import create_app
+        from motorooter.routing.factory import RoutingSettings
+
+        client = TestClient(create_app(RoutingSettings(offline=True)))
+        return client.post(
+            "/api/routing/leg",
+            json={
+                "waypoints": [{"lat": 46.97, "lon": -121.53}, {"lat": 46.87, "lon": -121.52}],
+                "intent": intent,
+            },
+        ).json()
+
+    def test_an_untrusted_provider_is_still_derived(self):
+        """`fake` declares False, so offline still exercises the derived path — which is why
+        it declares False."""
+        body = self._response("unpaved", "fake")
+        assert body["estimated_duration_s"] > 0

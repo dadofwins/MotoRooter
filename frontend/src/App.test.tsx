@@ -209,8 +209,17 @@ function createFakeMaps() {
       markers.filter(
         (marker) =>
           marker.map !== null &&
-          (marker.options['content'] as HTMLElement | undefined)?.className?.startsWith('poi') ===
+          (marker.options['content'] as HTMLElement | undefined)?.className?.startsWith('poi ') ===
             true,
+      ),
+    /** Markers standing for a group of overlapping places. */
+    clusterMarkers: () =>
+      markers.filter(
+        (marker) =>
+          marker.map !== null &&
+          (marker.options['content'] as HTMLElement | undefined)?.className?.startsWith(
+            'poi-cluster',
+          ) === true,
       ),
     clickMap(lat: number, lon: number): void {
       if (clickHandler === null) throw new Error('the map has no click listener')
@@ -2846,5 +2855,61 @@ describe('App right-click menus', () => {
 
     expect(await screen.findByRole('menuitem', { name: /add to route/i })).toBeInTheDocument()
     expect(screen.getByRole('menuitem', { name: /details/i })).toBeInTheDocument()
+  })
+})
+
+/**
+ * Places that land on top of each other.
+ *
+ * Measured on a live corridor: at the zoom a rider plans at, 29 of 31 pins were covered by
+ * another and the visible one was whichever was drawn last. The map was under-reporting what
+ * discovery found, and the places underneath could not be reached at all.
+ */
+describe('App with crowded places', () => {
+  const CROWD = [
+    poiFixture({ id: 'a', name: 'Lone Fir', category: 'campground', coordinate: { lat: 47.9, lon: -120.35 } }),
+    poiFixture({ id: 'b', name: 'Mineral Springs', category: 'campground', coordinate: { lat: 47.9012, lon: -120.3512 } }),
+  ]
+
+  async function crowded() {
+    const fake = createFakeMaps()
+    render(
+      <App mapLoader={fake.loader} mapId="motorooter-test-vector" client={fakeRouter()} pois={CROWD} />,
+    )
+    await mapReady(fake)
+    await waitFor(() => expect(fake.clusterMarkers()).toHaveLength(1))
+    return fake
+  }
+
+  it('says how many places are stacked up rather than showing one of them', async () => {
+    const fake = await crowded()
+
+    expect(fake.clusterMarkers()[0]?.options['content']).toHaveTextContent('2')
+  })
+
+  it('names what is underneath when the rider clicks the group', async () => {
+    // The count says how many; the rider still has to be able to find out which, or the places
+    // underneath are no more reachable than they were when one pin covered the other.
+    const fake = await crowded()
+
+    act(() => {
+      fake.clusterMarkers()[0]?.click()
+    })
+
+    expect(await screen.findByRole('menuitem', { name: /Lone Fir/ })).toBeInTheDocument()
+    expect(screen.getByRole('menuitem', { name: /Mineral Springs/ })).toBeInTheDocument()
+  })
+
+  it('opens the one the rider picked', async () => {
+    const fake = await crowded()
+    act(() => {
+      fake.clusterMarkers()[0]?.click()
+    })
+
+    fireEvent.click(await screen.findByRole('menuitem', { name: /Mineral Springs/ }))
+
+    expect(
+      await screen.findByRole('complementary', { name: /Mineral Springs/ }),
+    ).toBeInTheDocument()
   })
 })

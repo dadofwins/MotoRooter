@@ -178,6 +178,23 @@ describe('ContextMenu', () => {
     expect(screen.getByRole('menuitem').className).toMatch(/destructive/)
   })
 
+  it('can carry a note beside a label, announced as well as shown', () => {
+    // A group of overlapping places lists names, and a name alone does not say whether it is a
+    // campground or a diner. Its own element so it can be quiet on screen, and inside the
+    // button so it is read out too: choosing between places is exactly when the kind matters.
+    render(
+      <ContextMenu
+        at={AT}
+        items={[{ key: 'a', label: 'Lone Fir', hint: 'Campground', onChoose: vi.fn() }]}
+        onDismiss={vi.fn()}
+      />,
+    )
+
+    const item = screen.getByRole('menuitem', { name: /Lone Fir/ })
+    expect(item).toHaveAccessibleName('Lone Fir Campground')
+    expect(item.querySelector('.context-menu__hint')?.textContent).toBe('Campground')
+  })
+
   it('renders nothing at all when there is nothing to offer', () => {
     // An empty menu is a box that appears and does nothing, which reads as a bug.
     render(<ContextMenu at={AT} items={[]} onDismiss={vi.fn()} />)

@@ -15,6 +15,14 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 export interface ContextMenuItem {
   readonly key: string
   readonly label: string
+  /**
+   * A note beside the label — what kind of place a row is, when the menu is listing places.
+   *
+   * Its own element rather than folded into the label, so it can be quiet on screen — but still
+   * inside the button, so it is announced too. Choosing between two campgrounds and a diner is
+   * exactly the moment the kind matters.
+   */
+  readonly hint?: string
   /** Removing a point is not the same kind of thing as adding one. */
   readonly destructive?: boolean
   readonly onChoose: () => void
@@ -99,7 +107,8 @@ export function ContextMenu({ at, items, onDismiss }: ContextMenuProps): React.J
             onDismiss()
           }}
         >
-          {item.label}
+          <span className="context-menu__label">{item.label}</span>
+          {item.hint !== undefined && <span className="context-menu__hint">{item.hint}</span>}
         </button>
       ))}
     </div>

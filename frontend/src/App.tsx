@@ -24,11 +24,16 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { apiClient } from './api/apiClient'
 import type { ApiClient } from './api/client'
 import type { Coordinate, GeocodeResult, LegIntent, Poi, Trip, TripLeg, Waypoint } from './api/types'
-import { MapCanvas, type ContextTarget } from './map/MapCanvas'
+import {
+  MapCanvas,
+  type ContextTarget,
+  type PoiClusterOpened,
+  type ScreenPoint,
+} from './map/MapCanvas'
 import { ContextMenu, type ContextMenuItem } from './map/ContextMenu'
 import { MAP_ID, loadMaps } from './map/googleMaps'
 import type { GoogleMapsLoader } from './map/loadGoogleMaps'
-import { isVerified } from './map/poiPin'
+import { isVerified, poiLabel } from './map/poiPin'
 import { PlaceList } from './poi/PlaceList'
 import { RouteThroughBest } from './poi/RouteThroughBest'
 import { PoiDetailPane } from './poi/PoiDetailPane'
@@ -519,71 +524,109 @@ function TripSession({
   }, [])
 
   /**
-   * What was right-clicked, and therefore what the menu is about.
+   * The popover the map has open, if any.
    *
-   * The canvas reports rather than acts, so every destructive right-click now has a name on it
-   * and a way out. Held here rather than in the canvas because the actions are the shell's:
-   * the map knows a pin was clicked, not what removing it means.
+   * One piece of state for two sources, because they are one thing on screen. A right-click
+   * names actions that used to happen silently; clicking a group of overlapping pins names the
+   * places underneath, which are otherwise unreachable. Held here rather than in the canvas
+   * because the map knows a pin was clicked, not what removing it means.
    */
-  const [menuTarget, setMenuTarget] = useState<ContextTarget | null>(null)
-
-  const menuItems = useMemo<readonly ContextMenuItem[]>(() => {
-    if (menuTarget === null) return []
-    if (menuTarget.kind === 'waypoint') {
-      const { index } = menuTarget
-      return [
-        {
-          key: 'remove',
-          label: 'Remove this point',
-          destructive: true,
-          onChoose: () => {
-            removeWaypoint(index)
-          },
-        },
-      ]
-    }
-    if (menuTarget.kind === 'route') {
-      const { legIndex, coordinate } = menuTarget
-      return [
-        {
-          key: 'split',
-          label: 'Add point here',
-          onChoose: () => {
-            splitLegAt(legIndex, coordinate)
-          },
-        },
-      ]
-    }
-    const { poi } = menuTarget
-    return [
-      {
-        key: 'add',
-        label: 'Add to route',
-        onChoose: () => {
-          onPoiAdd(poi)
-        },
-      },
-      {
-        key: 'detail',
-        label: 'Show details',
-        onChoose: () => {
-          onPoiOpen(poi)
-        },
-      },
-      {
-        key: 'ignore',
-        label: 'Hide this place',
-        destructive: true,
-        onChoose: () => {
-          onPoiIgnore(poi)
-        },
-      },
-    ]
-  }, [menuTarget, removeWaypoint, splitLegAt, onPoiAdd, onPoiOpen, onPoiIgnore])
+  const [menu, setMenu] = useState<{
+    readonly at: ScreenPoint
+    readonly items: readonly ContextMenuItem[]
+  } | null>(null)
 
   const dismissMenu = useCallback(() => {
-    setMenuTarget(null)
+    setMenu(null)
   }, [])
+
+  /** What a right-click on each kind of thing offers. */
+  const contextItemsFor = useCallback(
+    (target: ContextTarget): readonly ContextMenuItem[] => {
+      if (target.kind === 'waypoint') {
+        const { index } = target
+        return [
+          {
+            key: 'remove',
+            label: 'Remove this point',
+            destructive: true,
+            onChoose: () => {
+              removeWaypoint(index)
+            },
+          },
+        ]
+      }
+      if (target.kind === 'route') {
+        const { legIndex, coordinate } = target
+        return [
+          {
+            key: 'split',
+            label: 'Add point here',
+            onChoose: () => {
+              splitLegAt(legIndex, coordinate)
+            },
+          },
+        ]
+      }
+      const { poi } = target
+      return [
+        {
+          key: 'add',
+          label: 'Add to route',
+          onChoose: () => {
+            onPoiAdd(poi)
+          },
+        },
+        {
+          key: 'detail',
+          label: 'Show details',
+          onChoose: () => {
+            onPoiOpen(poi)
+          },
+        },
+        {
+          key: 'ignore',
+          label: 'Hide this place',
+          destructive: true,
+          onChoose: () => {
+            onPoiIgnore(poi)
+          },
+        },
+      ]
+    },
+    [removeWaypoint, splitLegAt, onPoiAdd, onPoiOpen, onPoiIgnore],
+  )
+
+  const onMapContextMenu = useCallback(
+    (target: ContextTarget) => {
+      setMenu({ at: target.at, items: contextItemsFor(target) })
+    },
+    [contextItemsFor],
+  )
+
+  /**
+   * What is under a group pin.
+   *
+   * The count on the pin says how many; only this says which. Each row opens the place's own
+   * detail, where adding it to the route and hiding it already live — a second copy of those
+   * actions here would be a second place for them to drift.
+   */
+  const onClusterOpen = useCallback(
+    ({ members, at }: PoiClusterOpened) => {
+      setMenu({
+        at,
+        items: members.map((place) => ({
+          key: place.id,
+          label: place.name,
+          hint: poiLabel(place.category),
+          onChoose: () => {
+            onPoiOpen(place)
+          },
+        })),
+      })
+    },
+    [onPoiOpen],
+  )
 
   /**
    * Route through a whole group of discovered places.
@@ -790,11 +833,10 @@ function TripSession({
           onLegCancel={onLegCancel}
           pois={placed}
           onPoiOpen={onPoiOpen}
-          onContextMenu={setMenuTarget}
+          onClusterOpen={onClusterOpen}
+          onContextMenu={onMapContextMenu}
         />
-        {menuTarget !== null && (
-          <ContextMenu at={menuTarget.at} items={menuItems} onDismiss={dismissMenu} />
-        )}
+        {menu !== null && <ContextMenu at={menu.at} items={menu.items} onDismiss={dismissMenu} />}
       </main>
       <aside className="chat-pane" aria-label="Trip assistant">
         <div className="trip-bar">

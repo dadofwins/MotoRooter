@@ -115,3 +115,30 @@ export function createPoiPin(poi: Poi): HTMLElement {
   pin.title = name
   return pin
 }
+
+/**
+ * The pin that stands for several places at once.
+ *
+ * Its one job the individual pins cannot do is say **how many**. Measured on a live corridor,
+ * 29 of 31 pins were obscured by another at the zoom a rider plans at, and the one drawn on top
+ * was whichever happened to be last — so without a number the map quietly under-reports what
+ * discovery found.
+ *
+ * Deliberately not category-coloured. A group of a campground, a diner and a fuel stop has no
+ * honest single category, and slicing the pin three ways makes a smaller number harder to read
+ * to say something a rider can find out by opening it.
+ */
+export function createClusterPin(count: number): HTMLElement {
+  const pin = document.createElement('div')
+  // Three digits do not fit in a circle sized for a glyph. Twelve was the largest group measured
+  // on a real corridor, so this is a real case rather than a defensive one.
+  pin.className = `poi-cluster${count > 9 ? ' poi-cluster--wide' : ''}`
+  pin.textContent = String(count)
+
+  const name = `${String(count)} places here`
+  // A button, not an image: everything underneath is unreachable except through it.
+  pin.setAttribute('role', 'button')
+  pin.setAttribute('aria-label', name)
+  pin.title = name
+  return pin
+}

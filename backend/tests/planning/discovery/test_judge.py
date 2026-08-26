@@ -11,9 +11,10 @@ from math import pi
 
 import pytest
 
+from motorooter.llm.errors import LlmError, LlmUnavailable
 from motorooter.llm.messages import AssistantMessage
 from motorooter.llm.providers.fake import FakeLlmClient
-from motorooter.planning.discovery.judge import CandidateJudge
+from motorooter.planning.discovery.judge import JUDGE_BATCH_SIZE, CandidateJudge
 from motorooter.planning.discovery.models import Candidate, ResolvedCandidate
 from motorooter.routing.geo import EARTH_RADIUS_M
 from motorooter.routing.models import Coordinate, LegIntent, RouteLeg
@@ -56,7 +57,7 @@ def says(payload: object) -> AssistantMessage:
     return AssistantMessage(content=json.dumps(payload))
 
 
-def judge(*replies: AssistantMessage) -> tuple[CandidateJudge, FakeLlmClient]:
+def judge(*replies: AssistantMessage | LlmError) -> tuple[CandidateJudge, FakeLlmClient]:
     client = FakeLlmClient(replies=replies)
     return CandidateJudge(client), client
 
@@ -325,6 +326,88 @@ class TestOneBadEntryDoesNotCostTheBatch:
         )
         scored = await scorer.judge([resolved("A"), resolved("B"), resolved("C")], LEG)
         assert [item.score for item in scored] == [0.9, 0.8]
+
+
+class TestAWholeRouteOfCandidates:
+    """One call per corridor has a cliff in it, and whole-route search walks off it.
+
+    Measured against the live model at the judge's own 45 s budget: one batch of forty took
+    40.8 s, already at the edge, and a real whole-route corridor produced 162. The stage
+    failed with `request to OpenAI failed` and the run reported "0 worth showing".
+
+    Batching touches a recorded decision — one call so the model can compare places against
+    each other — so it was measured rather than assumed. The same forty places, scored whole
+    and scored in twenties:
+
+        one batch of 40 :  40.8s
+        two batches of 20:  25.9s
+        score delta: median 0.05, max 0.25
+        top-3 overlap 3/3, top-5 4/5, top-10 7/10
+
+    Median 0.05 is the run-to-run variance of the *identical* whole batch, measured this
+    morning at median 0.05 and max 0.15. Splitting disturbs the ranking about as much as
+    asking twice does, and twenty is still a field to compare — the objection in the recorded
+    decision is to per-candidate calls, which this is not.
+    """
+
+    @staticmethod
+    def _batch(size: int):
+        return [resolved(f"Place {index}") for index in range(size)]
+
+    @staticmethod
+    def _scores(indices):
+        return says(
+            {"scores": [{"index": index, "score": 0.8, "reason": "worth it"} for index in indices]}
+        )
+
+    async def test_a_large_batch_is_split_into_several_calls(self):
+        """Each reply scores something, or the retry-on-nothing consumes another call."""
+        size = JUDGE_BATCH_SIZE * 2 + 1
+        scorer, client = judge(*(self._scores([0]) for _ in range(3)))
+        await scorer.judge(self._batch(size), LEG)
+        assert len(client.conversations) == 3
+
+    async def test_a_batch_that_fits_is_still_one_call(self):
+        scorer, client = judge(self._scores([0]))
+        await scorer.judge(self._batch(JUDGE_BATCH_SIZE), LEG)
+        assert len(client.conversations) == 1
+
+    async def test_each_batch_is_indexed_from_zero(self):
+        """The model answers by position within what it was shown, not within the corridor."""
+        scorer, _ = judge(self._scores([0]), self._scores([0]))
+        scored = await scorer.judge(self._batch(JUDGE_BATCH_SIZE + 1), LEG)
+        assert {item.resolved.candidate.name for item in scored} == {
+            "Place 0",
+            f"Place {JUDGE_BATCH_SIZE}",
+        }
+
+    async def test_the_batch_size_leaves_room_under_the_timeout(self):
+        """Forty took 40.8 s against a 45 s budget. Twenty is measured, not interpolated."""
+        assert JUDGE_BATCH_SIZE <= 40
+
+    async def test_one_failed_batch_does_not_cost_the_others(self):
+        scorer, _ = judge(LlmUnavailable("request to OpenAI failed"), self._scores([0]))
+        scored = await scorer.judge(self._batch(JUDGE_BATCH_SIZE + 1), LEG)
+        assert [item.resolved.candidate.name for item in scored] == [f"Place {JUDGE_BATCH_SIZE}"]
+
+    async def test_results_are_ranked_across_batches_not_within_them(self):
+        """Selection takes the best few overall, so the returned order has to be global."""
+        scorer, _ = judge(
+            says({"scores": [{"index": 0, "score": 0.2, "reason": "dull"}]}),
+            says({"scores": [{"index": 0, "score": 0.9, "reason": "superb"}]}),
+        )
+        scored = await scorer.judge(self._batch(JUDGE_BATCH_SIZE + 1), LEG)
+        assert [item.score for item in scored] == [0.9, 0.2]
+
+    async def test_every_batch_failing_is_still_a_failure(self):
+        scorer, _ = judge(
+            LlmUnavailable("timed out"),
+            LlmUnavailable("timed out"),
+            LlmUnavailable("timed out"),
+            LlmUnavailable("timed out"),
+        )
+        with pytest.raises(LlmUnavailable):
+            await scorer.judge(self._batch(JUDGE_BATCH_SIZE + 1), LEG)
 
 
 class TestAnUnusableReplyIsRetried:

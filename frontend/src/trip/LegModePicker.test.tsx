@@ -22,6 +22,7 @@ function picker(overrides: Partial<Parameters<typeof LegModePicker>[0]> = {}) {
       from="Cashmere"
       to="Blewett Pass"
       reportsSurface={() => true}
+      reportsTrustworthyDuration={() => true}
       onChange={vi.fn()}
       {...overrides}
     />
@@ -97,5 +98,39 @@ describe('LegModePicker', () => {
 
     expect(screen.getByRole('option', { name: /Fast.*no surface/i })).toBeInTheDocument()
     expect(screen.getByRole('option', { name: 'Offroad' })).toBeInTheDocument()
+  })
+
+  it('says whose riding time a mode gives you, without calling it unreliable', () => {
+    // Provenance, not quality — and the distinction matters because the two engines fail in
+    // opposite directions. On dirt *our* number is the better one: ORS reported 143 min for a
+    // 40 km leg that takes 46. A rider must not come away thinking the dirt leg is the dodgy one.
+    render(picker({ intent: 'unpaved', reportsTrustworthyDuration: () => false }))
+
+    const note = screen.getByText(/riding time/i).textContent ?? ''
+    expect(note).toMatch(/our (own )?estimate/i)
+    expect(note).not.toMatch(/unreliable|inaccurate|cannot be trusted/i)
+  })
+
+  it('says nothing about time when the engine figure is the one used', () => {
+    render(picker({ intent: 'highway_connector', reportsTrustworthyDuration: () => true }))
+
+    expect(screen.queryByText(/riding time/i)).not.toBeInTheDocument()
+  })
+
+  it('does not caveat a figure before the table has said anything', () => {
+    render(picker({ intent: 'unpaved', reportsTrustworthyDuration: () => null }))
+
+    expect(screen.queryByText(/riding time/i)).not.toBeInTheDocument()
+  })
+
+  it('leaves the time note out of the options, because it is not a cost', () => {
+    // The surface warning *is* in the option labels: choosing Fast loses you the dirt/paved
+    // breakdown, which is a loss at the moment of choosing. Whose clock produced the estimate is
+    // not a loss, so putting it in every label would read as nine warnings.
+    render(picker({ reportsTrustworthyDuration: () => false, reportsSurface: () => true }))
+
+    for (const option of screen.getAllByRole('option')) {
+      expect(option.textContent ?? '').not.toMatch(/riding time|estimate/i)
+    }
   })
 })

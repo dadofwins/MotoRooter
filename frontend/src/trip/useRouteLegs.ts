@@ -75,6 +75,16 @@ export interface RouteLegsState {
    * is null the caller falls back to the trip document's own figure.
    */
   readonly estimatedDurationS: number | null
+  /**
+   * Whether any part of that total is our speed model rather than an engine's own figure.
+   *
+   * Mirrors `Trip.duration_is_estimated`, which cannot be read for a trip being edited because
+   * there is no stored document yet — the same reason `needsReplan` derives its answer here. Any
+   * one modelled leg makes the total a model, which is the backend's rule too.
+   *
+   * False while there is no total, because a caveat with no number attached is noise.
+   */
+  readonly durationIsEstimated: boolean
   /** Any leg still in flight. */
   readonly isRouting: boolean
   /** One of the current failures, for the message. Null when nothing current has failed. */
@@ -231,9 +241,18 @@ export function useRouteLegs(
         !failures.has(entry.question),
     )
 
+    // Provenance of the total, not of any one leg: any modelled leg makes the whole figure a
+    // model. Read from the answers rather than from the legs handed in, because that is where the
+    // response's own `duration_is_trustworthy` lives.
+    const modelled = asked.some((entry) => {
+      const answer = entry.stale ? answers.get(entry.question) : undefined
+      return answer !== undefined && answer.routed.duration_is_trustworthy !== true
+    })
+
     return {
       legs: filled,
       estimatedDurationS: totalled,
+      durationIsEstimated: totalled !== null && modelled,
       isRouting: stillAsking,
       error: failed[0] === undefined ? null : (failures.get(failed[0].question) ?? null),
       unroutableCount: failed.length,

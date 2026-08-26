@@ -1246,6 +1246,84 @@ describe('App arriving', () => {
   })
 })
 
+describe('where the riding time came from', () => {
+  /**
+   * The field exists because backend argued for it in these terms: a rider must not get a number
+   * that looks exact when half of it is a guess.
+   *
+   * `formatDuration` already says "about", but that is about rounding to five minutes — it says
+   * nothing about whether the figure is an engine's measurement or our speed table. Those are
+   * different claims and only one of them was being made.
+   */
+  function loaded(estimated: boolean) {
+    window.history.replaceState(null, '', '/?trip=wabdr-north')
+    const fake = createFakeMaps()
+    const router = fakeRouter()
+    router.routeLeg.mockImplementation((request: RouteLegInput) =>
+      Promise.resolve(
+        routeLegResponse({
+          leg: routeLeg({
+            geometry: [...request.waypoints],
+            distance_m: 40_000,
+            duration_is_trustworthy: !estimated,
+          }),
+          estimated_duration_s: 3600,
+        }),
+      ),
+    )
+    router.getTrip.mockResolvedValue(
+      tripFixture({
+        slug: 'wabdr-north',
+        name: 'WABDR North',
+        waypoints: [waypointFixture(47, -120), waypointFixture(48, -120)],
+      }),
+    )
+    render(<App mapLoader={fake.loader} mapId="motorooter-test-vector" client={router} />)
+    return { fake, router }
+  }
+
+  /** The caveat attached to the trip total, not the one on a segment's mode picker. */
+  function summaryNote(): HTMLElement | null {
+    return document.querySelector('.route-summary__provenance')
+  }
+
+  it('says when part of the time is our own model', async () => {
+    const { fake } = loaded(true)
+    await mapReady(fake)
+
+    await waitFor(() => {
+      expect(summaryNote()).not.toBeNull()
+    })
+    expect(summaryNote()?.textContent ?? '').toMatch(/our own estimate/i)
+  })
+
+  it('says nothing when the figure is the engine own measurement', async () => {
+    const { fake } = loaded(false)
+    await mapReady(fake)
+    await waitFor(() => {
+      expect(screen.getByText(/points placed/)).toHaveTextContent(/about/)
+    })
+
+    // The absence is the signal. A trip whose every leg was measured needs no caveat, and
+    // labelling it "measured" would put ink on the ordinary case.
+    expect(summaryNote()).toBeNull()
+  })
+
+  it('does not call the estimate unreliable, because on dirt it is the better number', async () => {
+    // Hosted ORS reported 143 min for a 40 km leg that takes about 46. A rider must not come away
+    // believing the dirt figure is the dodgy one.
+    const { fake } = loaded(true)
+    await mapReady(fake)
+    await waitFor(() => {
+      expect(summaryNote()).not.toBeNull()
+    })
+
+    expect(summaryNote()?.textContent ?? '').not.toMatch(
+      /unreliable|inaccurate|cannot be trusted|rough guess/i,
+    )
+  })
+})
+
 describe('what the rail puts first', () => {
   /**
    * The invariant this exists to protect, and the one that regressed twice.

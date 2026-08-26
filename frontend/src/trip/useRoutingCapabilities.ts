@@ -41,6 +41,19 @@ export interface RoutingCapabilitiesState {
    * things to put in front of a rider.
    */
   readonly reportsSurface: (intent: LegIntent) => boolean | null
+  /**
+   * Whether this intent's engine reports a riding time worth believing, or `null` when the table
+   * cannot say.
+   *
+   * A capability rather than a rule, because the two engines fail in opposite directions. Hosted
+   * ORS routes dirt through a bicycle profile and reported 143 min for a 40 km leg that takes 46;
+   * Google runs a car profile and reported 128 min for 177 km of highway where our own speed
+   * table said 193. So for one our model is the better number and for the other it is worse.
+   *
+   * This is *provenance*, not quality. A mode answering `false` is one where the figure shown is
+   * our estimate — which on dirt is the more accurate of the two.
+   */
+  readonly reportsTrustworthyDuration: (intent: LegIntent) => boolean | null
 }
 
 export function useRoutingCapabilities(client: CapabilitiesReader): RoutingCapabilitiesState {
@@ -75,6 +88,10 @@ export function useRoutingCapabilities(client: CapabilitiesReader): RoutingCapab
       capabilities,
       isLoaded: capabilities !== null,
       error,
+      reportsTrustworthyDuration: (intent: LegIntent): boolean | null =>
+        // Straight off the intent table: the backend resolves intent to provider to capability,
+        // so there is nothing for the frontend to work out and nothing to go stale.
+        capabilities?.intents[intent]?.reports_trustworthy_duration ?? null,
       reportsSurface: (intent: LegIntent): boolean | null => {
         const provider = capabilities?.intents[intent]?.provider
         if (provider === undefined) return null

@@ -524,3 +524,80 @@ describe('quota', () => {
     expect(signals.every((signal) => signal.aborted)).toBe(true)
   })
 })
+
+describe('where the riding time came from', () => {
+  /**
+   * A rider must not get a number that looks exact when half of it is a guess.
+   *
+   * The flag is on `Trip`, but a trip being edited has no stored document to read it from — so it
+   * is derived here by the same rule the backend uses, the way `needsReplan` already mirrors a
+   * backend property for exactly this reason. Deriving it differently would be worse than not
+   * having it.
+   */
+  function respond(trustworthy: boolean, durationS = 600) {
+    return {
+      routeLeg: vi.fn((request: RouteLegInput, _options?: RequestOptions) =>
+        Promise.resolve(
+          routeLegResponse({
+            leg: routeLeg({
+              geometry: [...request.waypoints],
+              duration_is_trustworthy: trustworthy,
+            }),
+            estimated_duration_s: durationS,
+          }),
+        ),
+      ),
+    }
+  }
+
+  it('says the total is estimated when a leg was not measured', async () => {
+    const view = renderHook(() => useRouteLegs(respond(false), THREE, legsSpanning(3, 'unpaved')))
+
+    await waitFor(() => {
+      expect(view.result.current.estimatedDurationS).not.toBeNull()
+    })
+    expect(view.result.current.durationIsEstimated).toBe(true)
+  })
+
+  it('says nothing of the sort when every leg came from an engine we believe', async () => {
+    const view = renderHook(() => useRouteLegs(respond(true), THREE, legsSpanning(3, 'unpaved')))
+
+    await waitFor(() => {
+      expect(view.result.current.estimatedDurationS).not.toBeNull()
+    })
+    expect(view.result.current.durationIsEstimated).toBe(false)
+  })
+
+  it('is estimated when any leg is, not only when all of them are', async () => {
+    // A mixed trip is the normal case — Tim's test route is highway, dirt, highway — and one
+    // modelled section is enough to make the total a model.
+    const client = {
+      routeLeg: vi.fn((request: RouteLegInput, _options?: RequestOptions) =>
+        Promise.resolve(
+          routeLegResponse({
+            leg: routeLeg({
+              geometry: [...request.waypoints],
+              duration_is_trustworthy: request.waypoints[0]?.lat !== 48,
+            }),
+            estimated_duration_s: 600,
+          }),
+        ),
+      ),
+    }
+    const view = renderHook(() => useRouteLegs(client, THREE, legsSpanning(3, 'unpaved')))
+
+    await waitFor(() => {
+      expect(view.result.current.estimatedDurationS).toBe(1200)
+    })
+    expect(view.result.current.durationIsEstimated).toBe(true)
+  })
+
+  it('claims nothing before there is a total to qualify', () => {
+    const view = renderHook(() => useRouteLegs(respond(true), THREE, legsSpanning(3, 'unpaved')))
+
+    expect(view.result.current.estimatedDurationS).toBeNull()
+    // False rather than true: with no figure on screen there is nothing to caveat, and a caveat
+    // with no number attached is just noise.
+    expect(view.result.current.durationIsEstimated).toBe(false)
+  })
+})

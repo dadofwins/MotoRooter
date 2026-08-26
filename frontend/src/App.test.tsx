@@ -141,8 +141,10 @@ function createFakeMaps() {
       this.handlers.set(event, handler)
       return { remove: () => this.handlers.delete(event) }
     }
-    fitBounds(): void {
-      // Nothing to assert here; framing is covered in MapCanvas's own tests.
+    /** Counted, since whether the camera re-frames is now a question about the whole path. */
+    readonly fitted: unknown[] = []
+    fitBounds(bounds: unknown): void {
+      this.fitted.push(bounds)
     }
     setOptions(): void {
       // Panning is toggled during a drag; asserted in MapCanvas's own tests.
@@ -3120,5 +3122,58 @@ describe('App and what a map click does', () => {
       expect(router.routeLeg).toHaveBeenCalled()
     })
     expect(router.routeLeg.mock.calls[0]?.[0].intent).toBe('highway_connector')
+  })
+})
+
+/**
+ * The camera, when the assistant plots a route.
+ *
+ * Tim: *"When the assistant finishes plotting a route it doesn't zoom to show the whole route."*
+ * The canvas framed once and never again, which is right about drags and wrong about this: a
+ * trip the assistant just built is not an edit to what is on screen, and the rider has expressed
+ * no camera preference about a route that did not exist a second ago.
+ */
+describe('App framing what the assistant plots', () => {
+  it('zooms to the route the assistant just built', async () => {
+    window.history.replaceState(null, '', '/')
+    const fake = createFakeMaps()
+    const router = fakeRouter()
+    // A turn that edits the trip. The client re-reads the document on `trip_changed`, which is
+    // the door a plotted route arrives through.
+    router.chat.mockImplementation(
+      // eslint-disable-next-line @typescript-eslint/require-await
+      async function* (): AsyncGenerator<ChatEvent, void, undefined> {
+        yield {
+          kind: 'message',
+          message: 'Plotted a loop out of Leavenworth.',
+          trip_changed: true,
+          truncated: false,
+        }
+        yield { kind: 'done', message: '', trip_changed: true, truncated: false }
+      },
+    )
+    render(<App mapLoader={fake.loader} mapId="motorooter-test-vector" client={router} />)
+    await mapReady(fake)
+
+    // A route the rider built by hand, and the camera framed on it.
+    fake.clickMap(47.0, -120.0)
+    fake.clickMap(47.2, -120.1)
+    await waitFor(() => expect(fake.maps[0]?.fitted.length).toBeGreaterThan(0))
+    const framedOnce = fake.maps[0]?.fitted.length ?? 0
+
+    // Then the assistant replaces it with a trip somewhere else entirely.
+    router.getTrip.mockResolvedValue(
+      tripFixture({
+        slug: 'derived',
+        waypoints: [waypointFixture(48.9, -119.2), waypointFixture(49.1, -118.8)],
+      }),
+    )
+    const box = screen.getByRole('textbox', { name: /message|ask|chat/i })
+    fireEvent.change(box, { target: { value: 'plan me a loop out of Leavenworth' } })
+    fireEvent.submit(box.closest('form') as HTMLFormElement)
+
+    await waitFor(() => {
+      expect(fake.maps[0]?.fitted.length).toBeGreaterThan(framedOnce)
+    })
   })
 })

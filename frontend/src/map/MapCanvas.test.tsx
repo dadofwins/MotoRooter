@@ -1028,6 +1028,114 @@ describe('MapCanvas', () => {
     expect(fake.maps[0]?.fitted).toHaveLength(1)
   })
 
+  it('frames again when a different route arrives, which is what the assistant sends', async () => {
+    // Tim: *"When the assistant finishes plotting a route it doesn't zoom to show the whole
+    // route."* Framing once and never again is too coarse — a route sharing no waypoint with the
+    // one before it is not an edit to what is on screen, it is a different trip, and the rider
+    // has expressed no camera preference about a trip that did not exist a second ago.
+    const fake = createFakeMaps()
+    const { rerender } = render(
+      <MapCanvas
+        mapId={MAP_ID}
+        loader={fake.loader}
+        waypoints={[waypoint(47), waypoint(47.02)]}
+        legs={[leg(coords(3, 47))]}
+      />,
+    )
+    await waitFor(() => expect(fake.maps[0]?.fitted).toHaveLength(1))
+
+    rerender(
+      <MapCanvas
+        mapId={MAP_ID}
+        loader={fake.loader}
+        waypoints={[waypoint(51), waypoint(51.4)]}
+        legs={[leg(coords(4, 51))]}
+      />,
+    )
+
+    await waitFor(() => expect(fake.maps[0]?.fitted).toHaveLength(2))
+  })
+
+  it('does not frame again for a drag, which shares the points either side of it', async () => {
+    // The rule this must not break. A map that jumps mid-gesture is unusable, and a drag inserts
+    // a via between two waypoints that are still there.
+    const fake = createFakeMaps()
+    const { rerender } = render(
+      <MapCanvas
+        mapId={MAP_ID}
+        loader={fake.loader}
+        waypoints={[waypoint(47), waypoint(47.02)]}
+        legs={[leg(coords(3, 47))]}
+      />,
+    )
+    await waitFor(() => expect(fake.maps[0]?.fitted).toHaveLength(1))
+
+    rerender(
+      <MapCanvas
+        mapId={MAP_ID}
+        loader={fake.loader}
+        waypoints={[waypoint(47), waypoint(47.01), waypoint(47.02)]}
+        legs={[leg(coords(5, 47))]}
+      />,
+    )
+
+    await waitFor(() => expect(fake.polylines.length).toBeGreaterThan(1))
+    expect(fake.maps[0]?.fitted).toHaveLength(1)
+  })
+
+  it('does not frame again when a point is added to the end', async () => {
+    const fake = createFakeMaps()
+    const { rerender } = render(
+      <MapCanvas
+        mapId={MAP_ID}
+        loader={fake.loader}
+        waypoints={[waypoint(47), waypoint(47.02)]}
+        legs={[leg(coords(3, 47))]}
+      />,
+    )
+    await waitFor(() => expect(fake.maps[0]?.fitted).toHaveLength(1))
+
+    rerender(
+      <MapCanvas
+        mapId={MAP_ID}
+        loader={fake.loader}
+        waypoints={[waypoint(47), waypoint(47.02), waypoint(47.5)]}
+        legs={[leg(coords(3, 47)), leg(coords(3, 47.2))]}
+      />,
+    )
+
+    await waitFor(() => expect(fake.polylines.length).toBeGreaterThan(1))
+    expect(fake.maps[0]?.fitted).toHaveLength(1)
+  })
+
+  it('does not frame again when only the road changes under the same points', async () => {
+    // Switching a leg from Offroad to Fast replaces every coordinate in the geometry and changes
+    // nothing about what the rider asked for. Keying on geometry rather than on waypoints would
+    // re-frame on every mode change and every re-route.
+    const fake = createFakeMaps()
+    const { rerender } = render(
+      <MapCanvas
+        mapId={MAP_ID}
+        loader={fake.loader}
+        waypoints={[waypoint(47), waypoint(47.02)]}
+        legs={[leg(coords(3, 47))]}
+      />,
+    )
+    await waitFor(() => expect(fake.maps[0]?.fitted).toHaveLength(1))
+
+    rerender(
+      <MapCanvas
+        mapId={MAP_ID}
+        loader={fake.loader}
+        waypoints={[waypoint(47), waypoint(47.02)]}
+        legs={[leg(coords(9, 60))]}
+      />,
+    )
+
+    await waitFor(() => expect(fake.polylines.length).toBeGreaterThan(1))
+    expect(fake.maps[0]?.fitted).toHaveLength(1)
+  })
+
   it('offers a retry when loading failed, since a dropped connection is not permanent', async () => {
     const fake = createFakeMaps()
     let attempt = 0

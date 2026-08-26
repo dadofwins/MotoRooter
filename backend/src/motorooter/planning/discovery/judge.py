@@ -76,10 +76,35 @@ class CandidateJudge:
             return ()
 
         evidence = [assemble(candidate, leg, others=resolved) for candidate in resolved]
-        reply = await self._client.complete(self._conversation(resolved, evidence), [])
+        conversation = self._conversation(resolved, evidence)
 
+        # Asked twice if the first reply yields nothing usable. Measured across four live
+        # runs of one corridor, three produced zero scores from five to eight resolved
+        # candidates — after every search, extraction and Places lookup had been paid for.
+        #
+        # It is not batch size (twenty score fine) and not the timeout (the failing runs
+        # finished well inside it), and it has resisted reproduction. Surviving it is worth
+        # more than explaining it: this is one call, it works most of the time, and a second
+        # attempt costs one request against a corridor's worth of work already spent.
+        #
+        # Only on *nothing*. A partial answer is a judgement — the model declining to score
+        # one place — and asking again would discard the scores it did give.
+        for attempt in (1, 2):
+            reply = await self._client.complete(conversation, [])
+            scored = self._parse(reply.content, resolved, evidence)
+            if scored or attempt == 2:
+                return scored
+        raise AssertionError("unreachable: the loop returns on both attempts")  # pragma: no cover
+
+    def _parse(
+        self,
+        content: str | None,
+        resolved: Sequence[ResolvedCandidate],
+        evidence: Sequence[Evidence],
+    ) -> tuple[ScoredCandidate, ...]:
+        """Usable scores from one reply, best first. Anything unusable is dropped."""
         scored: list[ScoredCandidate] = []
-        for entry in _scores_in(reply.content):
+        for entry in _scores_in(content):
             index = entry.get("index")
             if not isinstance(index, int) or not 0 <= index < len(resolved):
                 continue

@@ -154,7 +154,13 @@ class TestTheEvidenceItIsGiven:
         assert "0% unpaved" not in str(client.conversations[-1])
 
     async def test_one_call_for_the_whole_batch(self):
-        _, client = judge(says({"scores": []}))
+        """Scoring must not become a fan-out multiplier, and a model comparing places against
+        each other ranks them better than one seeing each alone.
+
+        Scripted with a *usable* reply on purpose: an empty one is now retried, so this would
+        count two calls for reasons that have nothing to do with the batch.
+        """
+        _, client = judge(says({"scores": [{"index": 0, "score": 0.8, "reason": "good"}]}))
         await CandidateJudge(client).judge([resolved("A"), resolved("B")], LEG)
         assert client.call_count == 1
 
@@ -211,4 +217,92 @@ class TestAMisbehavingModel:
     async def test_an_empty_batch_calls_nothing(self):
         _, client = judge(says({"scores": []}))
         assert await CandidateJudge(client).judge([], LEG) == ()
+        assert client.call_count == 0
+
+
+class TestAnUnusableReplyIsRetried:
+    """The judge intermittently returns nothing usable, and it is expensive when it does.
+
+    Measured across four live runs of one corridor: three produced zero POIs from five to
+    eight resolved, on-route candidates. Every search, extraction and Places lookup had
+    already been paid for.
+
+    What it is not: batch size — twenty candidates score fine in 24s — and not the timeout,
+    since the failing runs finished in 32s against a 45s budget. It has resisted
+    reproduction, and chasing an intermittent cause is worth less than surviving it: this is
+    one call, it works most of the time, and a second attempt costs one request against a
+    corridor's worth of work already spent.
+
+    Retried only when the reply yields *nothing*. A partial answer is a judgement — the model
+    declining to score one place — and asking again would discard the scores it did give.
+    """
+
+    @staticmethod
+    def _scores(count: int) -> str:
+        import json as _json
+
+        return _json.dumps(
+            {"scores": [{"index": i, "score": 0.8, "reason": "good"} for i in range(count)]}
+        )
+
+    async def test_an_empty_reply_is_asked_again(self):
+        client = FakeLlmClient(
+            replies=(
+                AssistantMessage(content='{"scores": []}'),
+                AssistantMessage(content=self._scores(2)),
+            )
+        )
+        scored = await CandidateJudge(client).judge(
+            tuple(resolved(f"Place {i}") for i in range(2)), LEG
+        )
+        assert len(scored) == 2
+        assert client.call_count == 2
+
+    async def test_prose_is_asked_again(self):
+        """The documented failure: a model answering with prose instead of JSON."""
+        client = FakeLlmClient(
+            replies=(
+                AssistantMessage(content="Sure! Here are my thoughts on these places..."),
+                AssistantMessage(content=self._scores(1)),
+            )
+        )
+        assert await CandidateJudge(client).judge(
+            tuple(resolved(f"Place {i}") for i in range(1)), LEG
+        )
+        assert client.call_count == 2
+
+    async def test_it_gives_up_after_one_retry(self):
+        """Two attempts, not a loop. A model returning prose twice will return it again, and
+        the run has other things to finish."""
+        client = FakeLlmClient(
+            replies=(AssistantMessage(content="no json here"),), repeat_last=True
+        )
+        assert (
+            await CandidateJudge(client).judge(tuple(resolved(f"Place {i}") for i in range(2)), LEG)
+            == ()
+        )
+        assert client.call_count == 2
+
+    async def test_a_partial_answer_is_not_retried(self):
+        """Declining to score one place is an opinion. Asking again would throw away the
+        scores it did give, to no purpose."""
+        client = FakeLlmClient(
+            replies=(AssistantMessage(content=self._scores(1)),), repeat_last=True
+        )
+        scored = await CandidateJudge(client).judge(
+            tuple(resolved(f"Place {i}") for i in range(3)), LEG
+        )
+        assert len(scored) == 1
+        assert client.call_count == 1
+
+    async def test_a_good_answer_is_not_retried(self):
+        client = FakeLlmClient(
+            replies=(AssistantMessage(content=self._scores(2)),), repeat_last=True
+        )
+        await CandidateJudge(client).judge(tuple(resolved(f"Place {i}") for i in range(2)), LEG)
+        assert client.call_count == 1
+
+    async def test_nothing_to_score_asks_nothing(self):
+        client = FakeLlmClient(replies=(AssistantMessage(content="{}"),), repeat_last=True)
+        assert await CandidateJudge(client).judge((), LEG) == ()
         assert client.call_count == 0

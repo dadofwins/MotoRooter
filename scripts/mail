@@ -49,6 +49,15 @@ FROM="${MOTOROOTER_ROLE:-$(_default_role)}"
 
 die() { echo "mail: $*" >&2; exit 1; }
 
+# Refuse rather than file under `unknown`. A detached HEAD — after dropping a branch, or in a
+# scratch worktree — matches no prefix, and the message went out attributed to nobody while
+# looking delivered to the sender. A failure the sender cannot see is worse than one that
+# stops them.
+if [ "$FROM" = unknown ]; then
+  die "cannot tell who you are: HEAD is '$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo detached)',
+     which matches no role prefix. Check out your branch, or set MOTOROOTER_ROLE=backend|frontend|integrator."
+fi
+
 check_box() {
   local box="$1"
   for known in "${BOXES[@]}"; do [[ "$box" == "$known" ]] && return 0; done

@@ -55,6 +55,28 @@ If the frontend needs a shape that does not exist, do not invent it locally. A
 locally-invented type that later disagrees with the backend is precisely the failure the
 generated contract exists to prevent.
 
+### Removing a required field: neither order is safe, so bridge instead
+
+Sequencing a removal does not work, and this was learned the hard way on `preserve_pinned`.
+Frontend-first is red — dropping the alias that made the field optional forces every caller to
+supply the field they are trying to stop sending, while the generated type still requires it.
+Backend-first is red too — `DefaultsOptional<ReplanRequest, 'preserve_pinned'>` stops compiling
+the moment the key no longer exists.
+
+**Write a type that is green in both states, then either side can land whenever.**
+
+```ts
+export type ReplanInput = Omit<ReplanRequest, 'preserve_pinned'>
+```
+
+`Omit<T, K>` constrains `K` to `keyof any` rather than `keyof T`, so it compiles whether the
+field is still declared or already gone. After the removal lands the alias is a no-op and gets
+deleted as ordinary cleanup, with no coordination and no window where anything is red.
+
+Generalise the shape rather than the specific type: for a coordinated contract change, look for
+a formulation that is valid on both sides of it, and prefer that to agreeing an order. An agreed
+order still has a window, and a window needs both parties awake.
+
 ## Definition of done
 
 Before handing anything over, in your own worktree:

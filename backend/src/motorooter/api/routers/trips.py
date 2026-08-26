@@ -96,6 +96,7 @@ async def update_trip(slug: str, request: UpdateTripRequest, store: Trips) -> Tr
         waypoints=request.waypoints,
         legs=request.legs,
         pois=request.pois,
+        default_intent=request.default_intent,
     )
 
 

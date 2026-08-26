@@ -135,7 +135,7 @@ class _TripTool(Tool):
         """
         if len(waypoints) < MINIMUM_WAYPOINTS:
             return
-        intent = trip.legs[0].intent if trip.legs else LegIntent.TWISTY_PAVED
+        intent = trip.legs[0].intent if trip.legs else trip.intent_for_new_legs
         try:
             await self._router.route_waypoints(waypoints, intent=intent)
         except RoutingError as exc:
@@ -349,6 +349,64 @@ class SetLegIntent(_TripTool):
         )
 
 
+class SetRidingModeArguments(ToolArguments):
+    mode: str = Field(
+        description=(
+            "Riding mode for the whole trip. 'highway_connector' is Fast, 'twisty_paved' is "
+            "Twisties, 'unpaved' is Offroad. Only 'unpaved' reports what the road is made of."
+        )
+    )
+
+
+class SetRidingMode(_TripTool):
+    name: ClassVar[str] = "set_riding_mode"
+    description: ClassVar[str] = (
+        "Say what kind of trip this is: it becomes the mode for every leg, now and for any "
+        "leg added later. Call this once when the rider states a preference — 'as much dirt "
+        "as possible', 'keep it fast' — rather than setting each leg in turn. Use "
+        "set_leg_intent afterwards only to make one section different from the rest."
+    )
+    arguments: ClassVar[type] = SetRidingModeArguments
+
+    async def run(self, arguments: Any, on_progress: ProgressReport | None = None) -> ToolOutcome:  # noqa: ANN401 -- narrowed by base
+        """Record the mode on the trip and bring every existing leg into line.
+
+        Both halves matter. Recording it is what survives the trip being rebuilt — the mode
+        used to live only in legs that happened to exist, so stripping a trip back to one
+        waypoint discarded it silently. Applying it is what the rider actually asked for, and
+        doing it here rather than one `set_leg_intent` call per leg is the difference between
+        one decision and six chances to get rate-limited into a paved leg.
+        """
+        trip = await self._trip()
+        try:
+            intent = LegIntent(arguments.mode)
+        except ValueError as exc:
+            available = ", ".join(sorted(item.value for item in LegIntent))
+            msg = f"no riding mode named {arguments.mode!r}. Available modes: {available}"
+            raise ToolCallFailed(msg) from exc
+
+        legs: list[TripLeg] = []
+        for leg in trip.legs:
+            span = trip.waypoints[leg.start_waypoint_index : leg.end_waypoint_index + 1]
+            try:
+                routed = await self._router.route_waypoints(tuple(span), intent=intent)
+            except RoutingError as exc:
+                # Nothing is written. A leg carrying a dirt intent and paved geometry is
+                # worse than either, and a half-applied mode is worse still.
+                msg = f"leg {len(legs)} cannot be routed as {intent.value}: {exc}"
+                raise ToolCallFailed(msg) from exc
+            legs.append(
+                leg.model_copy(update={"intent": intent, "routed": routed[0] if routed else None})
+            )
+
+        await edit_trip(self._store, self._slug, legs=tuple(legs), default_intent=intent)
+        changed = f" {len(legs)} legs are now {intent.value}." if legs else ""
+        return ToolOutcome(
+            content=f"This is a {intent.value} trip.{changed} Legs added later will match.",
+            payload={"trip_changed": True},
+        )
+
+
 class AddPoiToRouteArguments(ToolArguments):
     place_id: str = Field(
         min_length=1,
@@ -520,7 +578,7 @@ def _legs_for(trip: Trip, waypoints: tuple[Waypoint, ...]) -> tuple[TripLeg, ...
     """
     if len(waypoints) < MINIMUM_WAYPOINTS:
         return ()
-    default = trip.legs[0].intent if trip.legs else LegIntent.TWISTY_PAVED
+    default = trip.intent_for_new_legs
     existing = {(leg.start_waypoint_index, leg.end_waypoint_index): leg for leg in trip.legs}
     return tuple(
         TripLeg(
@@ -535,7 +593,7 @@ def _legs_for(trip: Trip, waypoints: tuple[Waypoint, ...]) -> tuple[TripLeg, ...
 
 
 class TripTools:
-    """The six tools, bound to one trip and published as a registry."""
+    """The tools, bound to one trip and published as a registry."""
 
     def __init__(
         self,
@@ -558,6 +616,7 @@ class TripTools:
                 build(FindPlaces),
                 build(AddWaypoint),
                 build(RemoveWaypoint),
+                build(SetRidingMode),
                 build(SetLegIntent),
                 build(AddPoiToRoute),
             ]

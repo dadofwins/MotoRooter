@@ -36,6 +36,20 @@ from motorooter.speeds import (
 
 CURRENT_SCHEMA_VERSION = 1
 
+DEFAULT_INTENT = LegIntent.UNPAVED
+"""How a leg routes when nothing has said otherwise.
+
+**The only unstated default in the system.** There were three, and they disagreed: the chat
+tools invented `twisty_paved` in two places and the frontend invented `unpaved` in a third,
+on the explicit grounds that dirt is the point of an adventure motorcycle planner. Same
+question, two answers, on either side of the contract — and the frontend had the better of
+the argument, so this is its value rather than the tools'.
+
+Everything else reads `Trip.default_intent`, and this is what that falls back to when a trip
+has never had a mode stated. Adding a fourth constant is the failure to avoid; if a caller
+needs a default, it needs this one.
+"""
+
 
 class PoiCategory(StrEnum):
     """What a point of interest is, which drives its map icon and discovery prompt."""
@@ -195,6 +209,19 @@ class Trip(BaseModel):
     legs: tuple[TripLeg, ...] = ()
     pois: tuple[Poi, ...] = ()
 
+    default_intent: LegIntent | None = None
+    """What kind of trip the rider said this is. Seeds new legs; decides nothing on its own.
+
+    `TripLeg.intent` is still what routes each section — this only says what a *new* section
+    should start as. `None` means nobody stated a preference, which is the ordinary case for
+    a trip built with the mouse.
+
+    It exists because the mode was previously remembered only by legs that happened to
+    exist. A trip stripped back to one waypoint has no legs, so rebuilding it fell through to
+    a hardcoded paved default and a rider who had asked for as much dirt as possible got a
+    paved route back with nothing to indicate anything had been forgotten.
+    """
+
     @model_validator(mode="after")
     def _legs_reference_real_contiguous_waypoints(self) -> Self:
         limit = len(self.waypoints) - 1
@@ -216,6 +243,18 @@ class Trip(BaseModel):
                 )
                 raise ValueError(msg)
         return self
+
+    @property
+    def intent_for_new_legs(self) -> LegIntent:
+        """How a leg added to this trip should route.
+
+        One rule, deliberately: the mode the rider stated, or the product's default. The
+        alternative — inheriting from whichever leg happens to be first — is what the missing
+        field was standing in for, and it has a cliff in it. A trip stripped back below two
+        waypoints has no legs to inherit from, so a rider who asked for as much dirt as
+        possible got a paved rebuild with nothing to indicate anything had been forgotten.
+        """
+        return self.default_intent or DEFAULT_INTENT
 
     @property
     def is_fully_routed(self) -> bool:

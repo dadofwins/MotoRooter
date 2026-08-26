@@ -25,23 +25,44 @@ from motorooter.chat.tools import (
     FindPlaces,
     RemoveWaypoint,
     SetLegIntent,
+    SetRidingMode,
     TripTools,
 )
 from motorooter.llm.errors import ToolCallFailed
 from motorooter.planning.discovery.pipeline import DiscoveryPipeline
-from motorooter.routing.errors import NoRouteFound
+from motorooter.routing.errors import NoRouteFound, ProviderUnavailable
 from motorooter.routing.models import Coordinate, LegIntent, RouteLeg
-from motorooter.trips.models import Poi, PoiCategory, PoiSource, Trip, TripLeg, Waypoint, utc_now
+from motorooter.trips.models import (
+    DEFAULT_INTENT,
+    Poi,
+    PoiCategory,
+    PoiSource,
+    Trip,
+    TripLeg,
+    Waypoint,
+    utc_now,
+)
 from motorooter.trips.store import InMemoryTripStore
 
 SLUG = "cascade-loop"
+
+THREE_POINTS = (
+    Waypoint(coordinate=Coordinate(lat=47.0, lon=-121.0), name="Start"),
+    Waypoint(coordinate=Coordinate(lat=47.1, lon=-121.1), name="Middle"),
+    Waypoint(coordinate=Coordinate(lat=47.2, lon=-121.2), name="End"),
+)
+
+TWO_PAVED_LEGS = (
+    TripLeg(intent=LegIntent.TWISTY_PAVED, start_waypoint_index=0, end_waypoint_index=1),
+    TripLeg(intent=LegIntent.TWISTY_PAVED, start_waypoint_index=1, end_waypoint_index=2),
+)
 
 
 def coordinate(lat: float = 47.0, lon: float = -121.0) -> Coordinate:
     return Coordinate(lat=lat, lon=lon)
 
 
-def trip(*, waypoints=None, legs=None, pois=(), routed=False) -> Trip:
+def trip(*, waypoints=None, legs=None, pois=(), routed=False, default_intent=None) -> Trip:
     now = utc_now()
     points = (
         waypoints
@@ -68,6 +89,7 @@ def trip(*, waypoints=None, legs=None, pois=(), routed=False) -> Trip:
             ),
         ),
         pois=pois,
+        default_intent=default_intent,
     )
 
 
@@ -241,6 +263,126 @@ class TestRemoveWaypoint:
         assert "Middle" not in outcome.content
 
 
+class TestTheTripRemembersItsMode:
+    """Where the mode lives, and why it cannot only live on legs.
+
+    A trip built from nothing has no legs to inherit from, so its first leg came from a
+    hardcoded constant — `twisty_paved`, chosen in the tool layer, disagreeing with the
+    frontend's `unpaved`, which was chosen on the grounds that dirt is the point of the
+    product. So **every chat-built trip was born paved**, and stayed paved unless the model
+    remembered to correct it afterwards, one `set_leg_intent` call and one routing request
+    per leg. On a six-leg trip that is six chances to do five of them.
+
+    `Trip.default_intent` is where the answer lives now, and `DEFAULT_INTENT` is the one
+    value it falls back to.
+    """
+
+    async def test_a_trip_built_from_nothing_is_not_born_paved(self):
+        kit = await tools(lookup=OneResult(), document=trip(waypoints=(), legs=()))
+        await call(kit, AddWaypoint.name, '{"name": "Ellensburg"}')
+        await call(kit, AddWaypoint.name, '{"name": "Cle Elum"}')
+        assert [leg.intent for leg in (await kit.store.get(SLUG)).legs] == [DEFAULT_INTENT]
+
+    async def test_a_new_leg_takes_the_mode_the_rider_stated(self):
+        kit = await tools(
+            lookup=OneResult(), document=trip(default_intent=LegIntent.HIGHWAY_CONNECTOR)
+        )
+        await call(kit, AddWaypoint.name, '{"name": "Cle Elum"}')
+        assert (await kit.store.get(SLUG)).legs[-1].intent is LegIntent.HIGHWAY_CONNECTOR
+
+    async def test_an_unstated_mode_falls_back_to_the_products_default(self):
+        """One rule, not two. Inheriting from leg 0 is what the missing field stood in for,
+        and it is the rule with the cliff: no legs, nothing to inherit, silent pavement."""
+        kit = await tools(
+            lookup=OneResult(),
+            document=trip(
+                legs=(
+                    TripLeg(
+                        intent=LegIntent.HIGHWAY_CONNECTOR,
+                        start_waypoint_index=0,
+                        end_waypoint_index=1,
+                    ),
+                )
+            ),
+        )
+        await call(kit, AddWaypoint.name, '{"name": "Cle Elum"}')
+        legs = (await kit.store.get(SLUG)).legs
+        assert legs[0].intent is LegIntent.HIGHWAY_CONNECTOR  # a stated leg is left alone
+        assert legs[-1].intent is DEFAULT_INTENT
+
+    async def test_a_stated_mode_beats_the_default(self):
+        kit = await tools(
+            lookup=OneResult(),
+            document=trip(
+                default_intent=LegIntent.HIGHWAY_CONNECTOR,
+                legs=(
+                    TripLeg(intent=LegIntent.UNPAVED, start_waypoint_index=0, end_waypoint_index=1),
+                ),
+            ),
+        )
+        await call(kit, AddWaypoint.name, '{"name": "Cle Elum"}')
+        assert (await kit.store.get(SLUG)).legs[-1].intent is LegIntent.HIGHWAY_CONNECTOR
+
+    async def test_the_mode_survives_the_route_being_cleared_and_replotted(self):
+        """The map can strip a trip to a single point; chat cannot, but the rider can."""
+        kit = await tools(
+            lookup=OneResult(), document=trip(default_intent=LegIntent.HIGHWAY_CONNECTOR)
+        )
+        emptied = (await kit.store.get(SLUG)).model_copy(
+            update={"waypoints": THREE_POINTS[:1], "legs": ()}
+        )
+        await kit.store.put(emptied)
+        await call(kit, AddWaypoint.name, '{"name": "Cle Elum"}')
+        assert (await kit.store.get(SLUG)).legs[-1].intent is LegIntent.HIGHWAY_CONNECTOR
+
+
+class TestSetRidingMode:
+    """One call to say what kind of trip this is, instead of one call per leg.
+
+    Per-leg was the only way to say it, and it costs a routing request each: on a six-leg
+    trip that is six chances to be rate-limited into a paved leg, and it is forgotten the
+    moment the trip is rebuilt.
+    """
+
+    async def test_it_records_the_mode_on_the_trip(self):
+        kit = await tools()
+        await call(kit, SetRidingMode.name, '{"mode": "unpaved"}')
+        assert (await kit.store.get(SLUG)).default_intent is LegIntent.UNPAVED
+
+    async def test_it_applies_the_mode_to_every_existing_leg(self):
+        kit = await tools(document=trip(waypoints=THREE_POINTS, legs=TWO_PAVED_LEGS))
+        await call(kit, SetRidingMode.name, '{"mode": "unpaved"}')
+        legs = (await kit.store.get(SLUG)).legs
+        assert [leg.intent for leg in legs] == [LegIntent.UNPAVED, LegIntent.UNPAVED]
+
+    async def test_it_reroutes_each_leg_it_changed(self):
+        """A leg carrying dirt intent and paved geometry is worse than either."""
+        router = StubRouter()
+        kit = await tools(document=trip(waypoints=THREE_POINTS, legs=TWO_PAVED_LEGS), router=router)
+        await call(kit, SetRidingMode.name, '{"mode": "unpaved"}')
+        assert len(router.calls) == 2
+
+    async def test_an_unknown_mode_is_refused(self):
+        kit = await tools()
+        with pytest.raises(ToolCallFailed, match="riding mode"):
+            await call(kit, SetRidingMode.name, '{"mode": "hover"}')
+
+    async def test_a_trip_with_no_legs_still_records_the_mode(self):
+        """Stating the mode before plotting anything is the order that avoids the bug."""
+        kit = await tools(
+            document=trip(waypoints=(Waypoint(coordinate=coordinate(), name="Start"),), legs=())
+        )
+        await call(kit, SetRidingMode.name, '{"mode": "unpaved"}')
+        assert (await kit.store.get(SLUG)).default_intent is LegIntent.UNPAVED
+
+    async def test_nothing_is_saved_if_a_leg_will_not_route_that_way(self):
+        router = StubRouter(error=ProviderUnavailable("down"))
+        kit = await tools(document=trip(), router=router)
+        with pytest.raises(ToolCallFailed):
+            await call(kit, SetRidingMode.name, '{"mode": "unpaved"}')
+        assert (await kit.store.get(SLUG)).default_intent is None
+
+
 class TestSetLegIntent:
     async def test_it_changes_the_intent(self):
         kit = await tools()
@@ -355,6 +497,7 @@ class TestTheSetItself:
             "find_places",
             "add_waypoint",
             "remove_waypoint",
+            "set_riding_mode",
             "set_leg_intent",
             "add_poi_to_route",
         }

@@ -192,3 +192,46 @@ class TestTheModelFillsWhatPlacesCannot:
         client = FakeLlmClient(replies=(AssistantMessage(content="I am not sure."),))
         result = await CategoryClassifier(client).classify([self._resolved("A")])
         assert result[0].category is None
+
+
+class TestARoadIsNeverAPlace:
+    """Places types a highway, a byway and a forest road all as `route`.
+
+    Asking the model to categorise one produces a plausible answer rather than a refusal:
+    `Suntop Trail` and `Mather Memorial Highway` both came back as viewpoints on a live run,
+    and would have been pinned as somewhere a rider could stop. Excluded on Places' own
+    answer instead, which is deterministic and does not depend on a model declining.
+    """
+
+    def test_a_route_has_no_category(self):
+        assert from_places_types(["route"]) is None
+
+    def test_a_route_is_not_rescued_by_another_type(self):
+        """`park` would otherwise map it, and a road through a park is still a road."""
+        assert from_places_types(["route", "park"]) is None
+
+    def test_a_real_place_is_unaffected(self):
+        assert from_places_types(["tourist_attraction", "point_of_interest"]) is not None
+
+    async def test_the_model_is_not_asked_about_roads(self):
+        from motorooter.llm.messages import AssistantMessage
+        from motorooter.llm.providers.fake import FakeLlmClient
+        from motorooter.planning.discovery.category import CategoryClassifier
+        from motorooter.planning.discovery.models import Candidate, ResolvedCandidate
+        from motorooter.routing.models import Coordinate
+
+        road = ResolvedCandidate(
+            candidate=Candidate(
+                name="Mather Memorial Highway",
+                category=PoiCategory.VIEWPOINT,
+                found_near=Coordinate(lat=47.0, lon=-121.0),
+                source="brave",
+            ),
+            place_id="ChIJ_road",
+            coordinate=Coordinate(lat=47.0, lon=-121.0),
+            places_types=("route",),
+        )
+        client = FakeLlmClient(replies=(AssistantMessage(content='{"categories": []}'),))
+        result = await CategoryClassifier(client).classify([road])
+        assert client.call_count == 0
+        assert result[0].category is None

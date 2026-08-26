@@ -67,12 +67,36 @@ mapping them would make this branch always fire and the model never run.
 """
 
 
+NOT_A_PLACE_TYPES: frozenset[str] = frozenset({"route", "street_address", "premise"})
+"""Places types that describe something you ride through rather than stop at.
+
+`route` is the important one. Places types a highway, a byway and a forest road all as
+`route`, and asking the model to categorise one produces a plausible answer — `Suntop Trail`
+and `Mather Memorial Highway` both came back as viewpoints on a live run, and would have been
+pinned as places a rider could stop at.
+
+Excluded before the model is asked, rather than left for it to decline. It is the same
+roads-are-leads rule the extract stage applies, enforced here with Places' own answer instead
+of a judgement.
+"""
+
+
+def is_a_place(types: Iterable[object]) -> bool:
+    """Whether Places describes this as somewhere you can stop.
+
+    A road is not, however interesting it is. Following it is the expansion stage's job.
+    """
+    return not any(isinstance(entry, str) and entry in NOT_A_PLACE_TYPES for entry in types)
+
+
 def from_places_types(types: Iterable[object]) -> PoiCategory | None:
     """The category Places implies, or `None` if it does not imply one.
 
     Takes the first recognised type: Places lists them roughly most-specific first, so a
     campground that is also in a park should read as a campground.
     """
+    if not is_a_place(types):
+        return None
     for entry in types:
         if isinstance(entry, str):
             category = PLACES_TYPE_TO_CATEGORY.get(entry)
@@ -115,10 +139,12 @@ class CategoryClassifier:
         self, resolved: Sequence[ResolvedCandidate]
     ) -> tuple[ResolvedCandidate, ...]:
         """Fill in missing categories. Anything still unknown is returned unchanged."""
+        # A road is never a place, so the model is not asked about one. Left to it, it
+        # answers plausibly — two highways came back as viewpoints on a live run.
         pending = [
             (index, candidate)
             for index, candidate in enumerate(resolved)
-            if candidate.category is None
+            if candidate.category is None and is_a_place(candidate.places_types)
         ]
         if not pending:
             return tuple(resolved)

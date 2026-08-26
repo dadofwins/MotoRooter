@@ -639,6 +639,16 @@ body {
   color: var(--ink-muted);
 }
 
+/* Saved, and what that means: the link is the sharing model, so it is said rather than left in
+   the address bar. Sized with the other secondary notes — it had no rule at all, so it rendered
+   at default paragraph size and read as a heading in a rail where everything else is 13px. */
+.trip-saved {
+  margin: 0.5rem 0 0;
+  font-size: 0.75rem;
+  line-height: 1.4;
+  color: var(--ink-muted);
+}
+
 /* Typing a place instead of hunting for it on the map. Sits with the route it adds to. */
 .place-search {
   margin-top: 1rem;
@@ -1883,6 +1893,11 @@ body {
   overflow-y: auto;
   padding: 0.25rem;
   background: #fff;
+  /* An edge of its own, not just a shadow. Measured: the menu's surface is 1.25:1 against the
+     light basemap tone and 1.13:1 against the dark one, so over pale terrain or bright satellite
+     imagery the shadow is the only thing saying where the menu stops — and a shadow is the first
+     thing to disappear against a busy photograph. */
+  border: 1px solid rgb(0 0 0 / 0.16);
   border-radius: 8px;
   box-shadow: 0 2px 16px rgb(0 0 0 / 0.18);
 }
@@ -1952,6 +1967,7 @@ body {
 @media (prefers-color-scheme: dark) {
   .context-menu {
     background: #26262a;
+    border-color: rgb(255 255 255 / 0.22);
     box-shadow: 0 2px 16px rgb(0 0 0 / 0.5);
   }
 

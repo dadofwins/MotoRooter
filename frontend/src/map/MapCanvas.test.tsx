@@ -1412,9 +1412,14 @@ describe('MapCanvas fanning a small group', () => {
     await waitFor(() => expect(fake.poiPins()).toHaveLength(2))
   })
 
-  it('draws a line from the group to each place it moved', async () => {
+  it('draws a line from the group to each place it moved, over a casing', async () => {
     // The pins are not where their places are. Without the line that is a lie; with it, it is an
     // offset the rider can see and follow back.
+    //
+    // Two strokes per member, not one. Rendered over satellite imagery a single mid-grey line
+    // disappears into the pale bands and merges into the dark ones — measured 3.88:1 against the
+    // flat pane tone, which is not the surface it actually sits on. A light casing under a dark
+    // line is what the pins already do with their white ring, one dimension down.
     const { fake } = await withCrowd(3)
     const before = fake.polylines.filter((line) => line.map !== null).length
 
@@ -1423,7 +1428,7 @@ describe('MapCanvas fanning a small group', () => {
     })
 
     await waitFor(() => {
-      expect(fake.polylines.filter((line) => line.map !== null).length).toBe(before + 3)
+      expect(fake.polylines.filter((line) => line.map !== null).length).toBe(before + 6)
     })
   })
 

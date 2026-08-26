@@ -141,22 +141,35 @@ function contextPointOf(event: unknown): ScreenPoint {
 interface DrawnPin {
   readonly marker: AttachedMarker
   readonly listeners: readonly (google.maps.MapsEventListener | null)[]
-  /** The line back to the group, on a fanned member. */
-  readonly leader?: google.maps.Polyline
+  /** The line back to the group and its casing, on a fanned member. */
+  readonly leader?: readonly google.maps.Polyline[]
 }
 
 /**
- * The line from an opened group to one of its members.
+ * The line from an opened group to one of its members, and the casing under it.
  *
- * Quiet and thin. It is a piece of explanation, not a route, and it must not read as one on a
- * map whose whole subject is a line.
+ * Quiet and thin: it is a piece of explanation, not a route, and it must not read as one on a map
+ * whose whole subject is a line. But quiet is not the same as invisible, and a single mid-grey
+ * stroke measured 3.88:1 against the *flat pane tone* — which is not the surface it sits on.
+ * Rendered over satellite imagery it vanishes into the pale bands and merges into the dark ones.
+ *
+ * A light casing under a dark line is the same answer the pins already use, one dimension down:
+ * they survive any basemap because of their white ring, not because of their fill.
  */
-const FAN_LEADER_STYLE: google.maps.PolylineOptions = {
-  strokeColor: '#6b7280',
-  strokeOpacity: 0.85,
-  strokeWeight: 1.5,
+const FAN_LEADER_CASING: google.maps.PolylineOptions = {
+  strokeColor: '#ffffff',
+  strokeOpacity: 0.9,
+  strokeWeight: 4,
   clickable: false,
   zIndex: 1,
+}
+
+const FAN_LEADER_STYLE: google.maps.PolylineOptions = {
+  strokeColor: '#374151',
+  strokeOpacity: 0.95,
+  strokeWeight: 1.5,
+  clickable: false,
+  zIndex: 2,
 }
 
 export interface PoiClusterOpened {
@@ -704,11 +717,10 @@ export function MapCanvas({
         hubPin,
         ...cluster.members.map((member, index) => {
           const at = spots[index] ?? cluster.coordinate
-          const leader = new maps.Polyline({
-            ...FAN_LEADER_STYLE,
-            path: [toLatLng(cluster.coordinate), toLatLng(at)],
-            map,
-          })
+          const path = [toLatLng(cluster.coordinate), toLatLng(at)]
+          const leader = [FAN_LEADER_CASING, FAN_LEADER_STYLE].map(
+            (style) => new maps.Polyline({ ...style, path, map }),
+          )
           return { ...placePin(member, at), leader }
         }),
       ]
@@ -718,7 +730,7 @@ export function MapCanvas({
       for (const { marker, listeners, leader } of pins) {
         for (const listener of listeners) listener?.remove()
         marker.detach()
-        leader?.setMap(null)
+        for (const line of leader ?? []) line.setMap(null)
       }
     }
   }, [maps, clusters, hasMapId, fannedKey, currentZoom])

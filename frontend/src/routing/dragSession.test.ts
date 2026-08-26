@@ -63,6 +63,7 @@ function fakeClient(
 function session(
   client: LegRouter,
   intervalMs: number | null = 0,
+  perIntent?: Partial<Record<TripLeg['intent'], number | null>>,
 ): {
   drag: DragSession
   onPreview: ReturnType<typeof vi.fn>
@@ -73,7 +74,15 @@ function session(
   const onCommit = vi.fn()
   const onError = vi.fn()
   return {
-    drag: new DragSession({ client, intervalMs, onPreview, onCommit, onError }),
+    drag: new DragSession({
+      client,
+      // The API answers per intent, so the session asks per intent. A fixed number here is
+      // the old shape, kept for the tests that do not care which leg they grabbed.
+      intervalFor: (intent) => (perIntent === undefined ? intervalMs : (perIntent[intent] ?? null)),
+      onPreview,
+      onCommit,
+      onError,
+    }),
     onPreview,
     onCommit,
     onError,
@@ -168,6 +177,80 @@ describe('DragSession', () => {
     drag.release({ lat: 47.5, lon: -120.3 })
     await vi.waitFor(() => expect(onCommit).toHaveBeenCalledTimes(1))
     expect(client.routeLeg).toHaveBeenCalledTimes(1)
+  })
+
+  it('takes its cadence from the leg the rider grabbed, not from the trip', async () => {
+    // Mode is per leg now, and so is the engine behind it: Google is cheap enough to refresh
+    // near-live, ORS is on a 2,000-a-day free tier. One cadence for the whole trip means
+    // either a dirt leg burning quota at highway speed or a highway leg feeling sluggish.
+    const client = fakeClient()
+    const mixed: RouteEdit = {
+      waypoints: [waypoint(47), waypoint(48), waypoint(49)],
+      legs: [leg(0, 1, 'highway_connector'), leg(1, 2, 'unpaved')],
+    }
+    const { drag, onPreview } = session(client, 0, {
+      highway_connector: 0, // cheap: refresh while the pointer moves
+      unpaved: null, // metered: hold off until release
+    })
+
+    // The dirt leg: nothing until the rider lets go.
+    drag.begin(mixed, { legIndex: 1, grabbed: { lat: 48.5, lon: -120 } })
+    drag.update({ lat: 48.5, lon: -120.1 })
+    expect(client.routeLeg).not.toHaveBeenCalled()
+    drag.cancel()
+
+    // The highway leg, same session: live.
+    drag.begin(mixed, { legIndex: 0, grabbed: { lat: 47.5, lon: -120 } })
+    drag.update({ lat: 47.5, lon: -120.1 })
+
+    await vi.waitFor(() => expect(onPreview).toHaveBeenCalledTimes(1))
+    expect(client.routeLeg.mock.calls[0]?.[0].intent).toBe('highway_connector')
+  })
+
+  it('asks the capability table about the grabbed leg, and only that', () => {
+    const asked: string[] = []
+    const client = fakeClient()
+    const drag = new DragSession({
+      client,
+      intervalFor: (intent) => {
+        asked.push(intent)
+        return 0
+      },
+      onPreview: vi.fn(),
+      onCommit: vi.fn(),
+    })
+    const mixed: RouteEdit = {
+      waypoints: [waypoint(47), waypoint(48), waypoint(49)],
+      legs: [leg(0, 1, 'highway_connector'), leg(1, 2, 'technical_offroad')],
+    }
+
+    drag.begin(mixed, { legIndex: 1, grabbed: { lat: 48.5, lon: -120 } })
+
+    // Not the trip's first leg, and not a constant: the one under the cursor.
+    expect(asked).toEqual(['technical_offroad'])
+  })
+
+  it('does not ask about a leg it refuses to drag', () => {
+    // A leg with no geometry cannot be grabbed at all, so resolving a cadence for it would
+    // be answering a question nobody asked.
+    const asked: string[] = []
+    const client = fakeClient()
+    const drag = new DragSession({
+      client,
+      intervalFor: (intent) => {
+        asked.push(intent)
+        return 0
+      },
+      onPreview: vi.fn(),
+      onCommit: vi.fn(),
+    })
+    const bare: RouteEdit = {
+      waypoints: [waypoint(47), waypoint(48)],
+      legs: [{ ...leg(0, 1), routed: null }],
+    }
+
+    expect(drag.begin(bare, { legIndex: 0, grabbed: { lat: 47.5, lon: -120 } })).toBe(false)
+    expect(asked).toEqual([])
   })
 
   it('aborts the superseded request when the drag releases', async () => {

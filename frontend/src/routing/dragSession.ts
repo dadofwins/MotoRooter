@@ -21,7 +21,7 @@
  *   history, and never the thing that sets the replan dirty flag.
  */
 import type { ApiClient, RequestOptions } from '../api/client'
-import type { Coordinate, RouteLegResponse } from '../api/types'
+import type { Coordinate, LegIntent, RouteLegResponse } from '../api/types'
 import { DragScheduler } from './dragScheduler'
 import { insertVia, legWaypoints, spliceRoutedLeg, viaInsertionOffset, type RouteEdit } from './tripEdits'
 
@@ -31,12 +31,18 @@ export type LegRouter = Pick<ApiClient, 'routeLeg'>
 export interface DragSessionOptions {
   readonly client: LegRouter
   /**
-   * Minimum gap between live re-routes, or `null` for preview-only.
+   * Minimum gap between live re-routes for a given intent, or `null` for preview-only.
+   *
+   * A function of the intent rather than one number, because a trip's legs are not served by
+   * one engine. Google is cheap enough to refresh while the pointer moves; ORS is on a free
+   * tier of roughly 2,000 requests a day and holds off until release. One cadence for the whole
+   * trip means either a dirt leg burning quota at highway speed or a highway leg feeling
+   * sluggish for no reason.
    *
    * Comes from `GET /api/routing/capabilities` — never a constant in the frontend, or it
    * silently diverges from whichever engine is actually serving the leg.
    */
-  readonly intervalMs: number | null
+  readonly intervalFor: (intent: LegIntent) => number | null
   /** Provisional geometry during the gesture. Never persisted. */
   readonly onPreview: (edit: RouteEdit) => void
   /** The authoritative result of the gesture. The only one that should be saved. */
@@ -76,7 +82,9 @@ export class DragSession {
   constructor(options: DragSessionOptions) {
     this.#options = options
     this.#scheduler = new DragScheduler({
-      intervalMs: options.intervalMs,
+      // Replaced at every grab by the grabbed leg's own cadence. Preview-only until then, which
+      // is the safe direction: it spends no quota on a gesture whose engine is not yet known.
+      intervalMs: null,
       route: (request, signal) => this.#routeLeg(request, signal),
       onPreview: ({ request, response }) => {
         options.onPreview(withRoutedLeg(request, response))
@@ -106,6 +114,10 @@ export class DragSession {
 
     const geometry = leg.routed?.geometry ?? []
     if (geometry.length < 2) return false
+
+    // Resolved here, after the refusals: a leg that cannot be dragged has no cadence to ask
+    // about. This is the one point at which the engine behind the gesture becomes known.
+    this.#scheduler.setIntervalMs(this.#options.intervalFor(leg.intent))
 
     this.#active = {
       base: edit,

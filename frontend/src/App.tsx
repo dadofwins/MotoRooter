@@ -60,9 +60,6 @@ type AppClient = Pick<
   | 'replan'
 >
 
-/** The intent a dragged leg keeps. Matches the one the slice routes with. */
-const DRAG_INTENT = 'unpaved'
-
 const NO_POIS: readonly Poi[] = []
 
 /**
@@ -203,13 +200,17 @@ function TripSession({
 
   const capabilities = useRoutingCapabilities(client)
   /**
-   * The value, not the object it came from.
+   * The lookup, not a resolved number.
    *
-   * A DragSession keyed on the capabilities object is rebuilt whenever that object's identity
-   * changes. A preview landing mid-drag re-renders, so the gesture was destroyed by its own
-   * progress: the release had nothing to end and the rider's drag disappeared.
+   * Cadence is per leg now, because a trip's legs are not served by one engine, so the session
+   * resolves it at every grab from the leg the rider actually took hold of.
+   *
+   * Still not the capabilities object itself. A DragSession keyed on that is rebuilt whenever
+   * its identity changes, and a preview landing mid-drag re-renders — so the gesture was
+   * destroyed by its own progress, the release had nothing to end, and the rider's drag
+   * disappeared. `intervalFor` is memoised with the response, so it changes once, on load.
    */
-  const dragIntervalMs = capabilities.intervalFor(DRAG_INTENT)
+  const intervalFor = capabilities.intervalFor
 
   /**
    * The trip's leg structure: one leg per pair of waypoints, each with its own intent.
@@ -271,8 +272,9 @@ function TripSession({
     () =>
       new DragSession({
         client,
-        // From the API, never a constant: unknown resolves to preview-only.
-        intervalMs: dragIntervalMs,
+        // From the API, never a constant: the grabbed leg's own intent decides, and an
+        // intent the table does not mention resolves to preview-only.
+        intervalFor,
         onPreview: (previewed) => {
           setPreview(previewed.legs)
         },
@@ -288,9 +290,9 @@ function TripSession({
           setPreview(null)
         },
       }),
-    // Rebuilt when the cadence arrives, so the first drag after load is not stuck on
+    // Rebuilt when the capability table arrives, so the first drag after load is not stuck on
     // preview-only for the rest of the session — and at no other time.
-    [client, dragIntervalMs, change],
+    [client, intervalFor, change],
   )
 
   const onLegGrab = useCallback(

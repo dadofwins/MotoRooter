@@ -9,6 +9,7 @@ import {
   routeLeg,
   routeLegResponse,
   trip as tripFixture,
+  tripLeg,
   waypoint as waypointFixture,
 } from './api/fixtures'
 import type {
@@ -1107,6 +1108,131 @@ describe('App arriving', () => {
     await waitFor(() => {
       expect(router.getTrip).toHaveBeenCalledWith('wabdr-north', expect.anything())
     })
+  })
+})
+
+describe('dragging one leg of a multi-leg trip', () => {
+  /**
+   * A trip loaded with two legs on different intents.
+   *
+   * Loaded rather than clicked, because there is no mode picker yet — that is the next branch.
+   * The legs still carry real intents, which is what the drag has to respect.
+   */
+  function mixedTrip() {
+    const geometryFor = (from: number, to: number) => [
+      { lat: from, lon: -120 },
+      { lat: (from + to) / 2, lon: -120 },
+      { lat: to, lon: -120 },
+    ]
+    return tripFixture({
+      slug: 'mixed',
+      name: 'Mixed',
+      waypoints: [waypointFixture(47, -120), waypointFixture(48, -120), waypointFixture(49, -120)],
+      legs: [
+        tripLeg({
+          intent: 'highway_connector',
+          start_waypoint_index: 0,
+          end_waypoint_index: 1,
+          routed: routeLeg({ geometry: geometryFor(47, 48), intent: 'highway_connector' }),
+        }),
+        tripLeg({
+          intent: 'unpaved',
+          start_waypoint_index: 1,
+          end_waypoint_index: 2,
+          routed: routeLeg({ geometry: geometryFor(48, 49), intent: 'unpaved' }),
+        }),
+      ],
+    })
+  }
+
+  /** Cheap engine live, metered engine preview-only — the real direction of the tradeoff. */
+  const MIXED_CAPABILITIES: RoutingCapabilitiesResponse = {
+    providers: [],
+    intents: {
+      highway_connector: { provider: 'google', live_update_interval_ms: 0 },
+      unpaved: { provider: 'ors', live_update_interval_ms: null },
+    },
+  }
+
+  async function loadedApp() {
+    window.history.replaceState(null, '', '/?trip=mixed')
+    const fake = createFakeMaps()
+    const router = fakeRouter()
+    router.getTrip.mockResolvedValue(mixedTrip())
+    router.routingCapabilities.mockResolvedValue(MIXED_CAPABILITIES)
+    render(<App mapLoader={fake.loader} mapId="motorooter-test-vector" client={router} />)
+    await mapReady(fake)
+    await waitFor(() => {
+      expect(fake.polylines.filter((line) => line.map !== null).length).toBeGreaterThan(1)
+    })
+    return { fake, router }
+  }
+
+  /** The polyline drawn for a given leg, which is what the rider grabs. */
+  function lineForLeg(fake: ReturnType<typeof createFakeMaps>, legIndex: number) {
+    return fake.polylines.filter(
+      (line) => line.map !== null && line.options['zIndex'] === 10,
+    )[legIndex]
+  }
+
+  it('re-routes only the leg the rider grabbed', async () => {
+    // What the whole multi-leg exercise was for. This used to re-request every waypoint of
+    // the trip, which on Tim's 274 km route is what he felt as latency.
+    const { fake, router } = await loadedApp()
+    const map = fake.maps[0]
+    router.routeLeg.mockClear()
+
+    act(() => {
+      lineForLeg(fake, 1)?.mouseDown({ lat: 48.5, lon: -120 })
+    })
+    act(() => {
+      map?.mouseUp({ lat: 48.5, lon: -120.4 })
+    })
+
+    await waitFor(() => expect(router.routeLeg).toHaveBeenCalledTimes(1))
+    const request = router.routeLeg.mock.calls[0]?.[0]
+    // The second leg's own two waypoints with the via between them. Not the trip's three.
+    expect(request?.waypoints).toEqual([
+      { lat: 48, lon: -120 },
+      { lat: 48.5, lon: -120.4 },
+      { lat: 49, lon: -120 },
+    ])
+    // And the leg's own mode, not a default: a drag must not retarmac a dirt section.
+    expect(request?.intent).toBe('unpaved')
+  })
+
+  it('holds off during the gesture on a metered leg, and updates live on a cheap one', async () => {
+    // Cadence follows the engine behind the leg under the cursor. One interval for the whole
+    // trip means either a dirt leg burning a 2,000-a-day quota at highway speed, or a highway
+    // leg feeling sluggish for a reason that does not apply to it.
+    const { fake, router } = await loadedApp()
+    const map = fake.maps[0]
+    router.routeLeg.mockClear()
+
+    // The dirt leg: preview-only, so moving spends nothing.
+    act(() => {
+      lineForLeg(fake, 1)?.mouseDown({ lat: 48.5, lon: -120 })
+    })
+    act(() => {
+      map?.mouseMove({ lat: 48.5, lon: -120.2 })
+    })
+    expect(router.routeLeg).not.toHaveBeenCalled()
+    act(() => {
+      map?.mouseUp({ lat: 48.5, lon: -120.3 })
+    })
+    await waitFor(() => expect(router.routeLeg).toHaveBeenCalledTimes(1))
+
+    // The highway leg: live while the pointer moves.
+    router.routeLeg.mockClear()
+    act(() => {
+      lineForLeg(fake, 0)?.mouseDown({ lat: 47.5, lon: -120 })
+    })
+    act(() => {
+      map?.mouseMove({ lat: 47.5, lon: -120.2 })
+    })
+
+    await waitFor(() => expect(router.routeLeg).toHaveBeenCalledTimes(1))
+    expect(router.routeLeg.mock.calls[0]?.[0].intent).toBe('highway_connector')
   })
 })
 

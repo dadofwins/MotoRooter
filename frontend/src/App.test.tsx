@@ -1246,6 +1246,73 @@ describe('App arriving', () => {
   })
 })
 
+describe('what the rail puts first', () => {
+  /**
+   * The invariant this exists to protect, and the one that regressed twice.
+   *
+   * Tim failed to find two on-screen controls, and both times the answer was "scroll down". The
+   * cause was structural: the button that *produces* the places sat below the list of places it
+   * produced, so the better it worked the further away it moved. Measured in Chrome at five
+   * points and thirty places, the rail was 3017 px and the primary action was 2477 px down.
+   *
+   * jsdom has no layout, so height is not assertable here — but document order is, and order is
+   * what the fix rests on. Inputs above outputs: a reorder that undid it would pass every other
+   * test in this file.
+   */
+  function railOrder(): string[] {
+    const rail = screen.getByRole('complementary', { name: 'Trip assistant' })
+    const marks: { at: number; name: string }[] = []
+    const note = (name: string, node: Element | null) => {
+      if (node !== null) marks.push({ at: [...rail.querySelectorAll('*')].indexOf(node), name })
+    }
+    note('replan', rail.querySelector('.replan'))
+    note('gpx', rail.querySelector('.gpx'))
+    note('chat', rail.querySelector('.chat'))
+    note('points', rail.querySelector('.points'))
+    note('places', rail.querySelector('.places'))
+    return marks.sort((a, b) => a.at - b.at).map((mark) => mark.name)
+  }
+
+  it('puts the actions above the output they produce', async () => {
+    window.history.replaceState(null, '', '/?trip=wabdr-north')
+    const fake = createFakeMaps()
+    const router = fakeRouter()
+    router.getTrip.mockResolvedValue(
+      tripFixture({
+        slug: 'wabdr-north',
+        name: 'WABDR North',
+        waypoints: [waypointFixture(47, -120), waypointFixture(48, -120), waypointFixture(49, -120)],
+        pois: [
+          poiFixture({ id: 'a', name: 'Lone Fir', source: 'places', place_id: 'p1' }),
+          poiFixture({ id: 'b', name: 'Chevron', category: 'fuel', source: 'places', place_id: 'p2' }),
+        ],
+      }),
+    )
+    render(<App mapLoader={fake.loader} mapId="motorooter-test-vector" client={router} />)
+    await mapReady(fake)
+    await screen.findByRole('button', { name: /^Lone Fir/ })
+
+    // Replan and GPX are asks; chat is an ask; points and places are what came back.
+    expect(railOrder()).toEqual(['replan', 'gpx', 'chat', 'points', 'places'])
+  })
+
+  it('keeps the primary action ahead of the points list however long it gets', async () => {
+    // The specific way it went wrong: the points list grows with every point placed, so an
+    // action below it recedes as the trip gets longer — exactly backwards, since a longer route
+    // is more worth searching.
+    const fake = createFakeMaps()
+    render(<App mapLoader={fake.loader} mapId="motorooter-test-vector" client={fakeRouter()} />)
+    await mapReady(fake)
+    for (const lat of [47.0, 47.5, 48.0, 48.5, 49.0]) fake.clickMap(lat, -120)
+    await waitFor(() => {
+      expect(screen.getByText(/5 points placed/)).toBeInTheDocument()
+    })
+
+    const order = railOrder()
+    expect(order.indexOf('replan')).toBeLessThan(order.indexOf('points'))
+  })
+})
+
 describe('exporting the trip for a GPS unit', () => {
   it('cannot export a trip with nowhere to go', async () => {
     const fake = createFakeMaps()

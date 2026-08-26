@@ -491,7 +491,11 @@ body {
   color: rgb(0 0 0 / 0.55);
 }
 
+/* Capped for the same reason, and lower: the points list grows with every point placed, so
+   without a bound the primary action moved further away the more route there was to search. */
 .points__list {
+  max-height: 13rem;
+  overflow-y: auto;
   margin: 0;
   padding: 0;
   list-style: none;
@@ -648,7 +652,22 @@ body {
   border-top: 1px solid rgb(0 0 0 / 0.12);
 }
 
+/* Bounded, and measured rather than guessed: at thirty places this section was 1839 px — 61% of
+   the whole rail — which is what buried the button that produces it. Scrolling inside keeps the
+   section in the same place whatever discovery returns, so the rail's height stops depending on
+   how well it worked. Nothing is hidden: the count is in the heading and the heading stays put. */
+.places {
+  max-height: 26rem;
+  overflow-y: auto;
+}
+
 .places__title {
+  position: sticky;
+  top: 0;
+  /* A system colour, so the heading stays legible over scrolling content in either scheme
+     without hard-coding a background the rest of the rail does not set. */
+  background: Canvas;
+  padding-bottom: 0.25rem;
   margin: 0 0 0.5rem;
   font-size: 0.8125rem;
   font-weight: 600;
@@ -848,10 +867,14 @@ body {
 }
 
 /* The segments between the points, each with its own mode. */
+/* Bounded for the same reason as the list above it: one picker per leg means this grows with the
+   trip, and an unbounded section is how the rail's height came to depend on the trip's length. */
 .points__segments {
   display: flex;
   flex-direction: column;
   gap: 0.5rem;
+  max-height: 11rem;
+  overflow-y: auto;
   margin-top: 0.625rem;
 }
 

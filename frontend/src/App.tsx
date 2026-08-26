@@ -229,11 +229,25 @@ function TripSession({
    * stored document is read, never rewritten behind the rider's back.
    */
   const structure = useMemo(
-    () => live.legs ?? legsSpanning(waypoints.length, DEFAULT_INTENT),
+    // Empty counts as absent, not as "a trip with no legs". A stored document can carry
+    // `legs: []` beside two waypoints — a trip saved before legs were real, or one the assistant
+    // built with `add_waypoint` — and treating that as the structure meant the trip never routed
+    // at all: no line, no distance, no time, and nothing reporting an error.
+    () =>
+      live.legs === null || live.legs.length === 0
+        ? legsSpanning(waypoints.length, DEFAULT_INTENT)
+        : live.legs,
     [live.legs, waypoints.length],
   )
 
-  const { legs, estimatedDurationS, isRouting, error, unroutableCount } = useRouteLegs(
+  const {
+    legs,
+    estimatedDurationS,
+    durationIsEstimated,
+    isRouting,
+    error,
+    unroutableCount,
+  } = useRouteLegs(
     client,
     waypoints,
     structure,
@@ -518,6 +532,21 @@ function TripSession({
   const shownDurationS =
     estimatedDurationS ?? (untouched ? (stored?.estimated_duration_s ?? null) : null)
 
+  /**
+   * Whether that figure is partly our speed model rather than an engine's own measurement.
+   *
+   * Taken from whichever source produced the number, so the caveat always describes the figure on
+   * screen rather than some other one: the hook's own derivation for a live trip, and the stored
+   * document's `duration_is_estimated` when the fallback is what is showing.
+   *
+   * `formatDuration` already says "about", but that is about rounding to five minutes and says
+   * nothing about provenance. They are different claims and only one of them was being made.
+   */
+  const shownDurationIsEstimated =
+    estimatedDurationS !== null
+      ? durationIsEstimated
+      : (untouched && (stored?.duration_is_estimated ?? false))
+
   // This browser's record of where it has been, updated whenever a trip is known — created
   // here, or arrived at by link.
   const knownSlug = save.slug
@@ -597,6 +626,16 @@ function TripSession({
               {shownDurationS !== null && ` · ${formatDuration(shownDurationS)}`}
               {isRouting && ' · routing…'}
             </p>
+            {shownDurationS !== null && shownDurationIsEstimated && (
+              // Stated, not warned about. On dirt our figure is the *better* one — hosted ORS
+              // reported 143 min for a 40 km leg that takes about 46 — so the honest word is
+              // "estimate", and nothing here should imply the modelled sections are the dodgy
+              // ones.
+              <p className="route-summary__provenance">
+                Riding time is partly our own estimate: the offroad engine reports bicycle times,
+                so those sections are modelled from distance and surface.
+              </p>
+            )}
             {/* The fast path for the common removal. Route-building is click, click, click,
                 oops, and with no Ctrl+Z in the app this is the nearest thing to an undo — the
                 list below can remove any point, which is what makes this an addition rather
@@ -699,6 +738,7 @@ function TripSession({
           onRemove={removeWaypoint}
           legs={structure}
           reportsSurface={capabilities.reportsSurface}
+          reportsTrustworthyDuration={capabilities.reportsTrustworthyDuration}
           onIntentChange={setLegIntent}
         />
 

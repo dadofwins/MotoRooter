@@ -185,3 +185,55 @@ describe('useRoutingCapabilities.reportsSurface', () => {
     expect(result.current.reportsSurface('technical_offroad')).toBeNull()
   })
 })
+
+/**
+ * Whether a mode's own duration can be believed.
+ *
+ * The distinction exists because the two engines fail in opposite directions. Hosted ORS routes
+ * dirt through a bicycle profile and reported 143 min for a 40 km leg that takes 46; Google runs a
+ * car profile and reported 128 min for 177 km of highway where our speed table said 193. So for
+ * one engine our model is the better number and for the other it is worse, which is why this is a
+ * capability and not a global rule.
+ */
+describe('useRoutingCapabilities.reportsTrustworthyDuration', () => {
+  it('answers from the intent table rather than from a provider name', async () => {
+    const { result } = renderHook(() =>
+      useRoutingCapabilities(
+        fakeClient({
+          ...CAPABILITIES,
+          intents: {
+            unpaved: {
+              provider: 'ors',
+              live_update_interval_ms: 3000,
+              reports_trustworthy_duration: false,
+            },
+            highway_connector: {
+              provider: 'google',
+              live_update_interval_ms: 1000,
+              reports_trustworthy_duration: true,
+            },
+          },
+        }),
+      ),
+    )
+
+    await waitFor(() => {
+      expect(result.current.isLoaded).toBe(true)
+    })
+    expect(result.current.reportsTrustworthyDuration('highway_connector')).toBe(true)
+    expect(result.current.reportsTrustworthyDuration('unpaved')).toBe(false)
+  })
+
+  it('does not guess before the table has arrived', async () => {
+    // Null, not false. Saying "this mode's times are our estimate" before we know is a claim
+    // about the engine we have not yet been told anything about.
+    const { result } = renderHook(() => useRoutingCapabilities(fakeClient()))
+
+    expect(result.current.reportsTrustworthyDuration('unpaved')).toBeNull()
+
+    await waitFor(() => {
+      expect(result.current.isLoaded).toBe(true)
+    })
+    expect(result.current.reportsTrustworthyDuration('nonexistent' as 'unpaved')).toBeNull()
+  })
+})

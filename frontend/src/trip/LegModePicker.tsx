@@ -22,6 +22,13 @@ export interface LegModePickerProps {
   readonly to: string
   /** From `GET /api/routing/capabilities`. `null` means the table has not said. */
   readonly reportsSurface: (intent: LegIntent) => boolean | null
+  /**
+   * Whether this mode's engine reports a riding time worth using.
+   *
+   * Also from the capability table, and deliberately *not* treated the same way as surface. See
+   * the note in the body: one is a cost, the other is provenance.
+   */
+  readonly reportsTrustworthyDuration: (intent: LegIntent) => boolean | null
   readonly onChange: (legIndex: number, intent: LegIntent) => void
 }
 
@@ -31,6 +38,7 @@ export function LegModePicker({
   from,
   to,
   reportsSurface,
+  reportsTrustworthyDuration,
   onChange,
 }: LegModePickerProps): React.JSX.Element {
   /** A mode with no label yet is still a mode the leg can be on, so it is offered as itself. */
@@ -41,6 +49,17 @@ export function LegModePicker({
   // False, not null: only an answer the table actually gave is worth putting in front of a
   // rider. Warning on "we have not loaded yet" would cry wolf on every first render.
   const losesSurface = reportsSurface(intent) === false
+
+  /**
+   * Whether the time shown for this leg is our model rather than the engine's figure.
+   *
+   * Stated, not warned about, and kept out of the option labels — unlike surface. Losing the
+   * dirt/paved breakdown is a *cost* a rider pays for choosing Fast, so it belongs in the choice.
+   * Which clock produced the estimate is *provenance*, and on dirt ours is the better number:
+   * hosted ORS reported 143 min for a 40 km leg that takes about 46. Marking every offroad option
+   * as a warning would teach a rider the opposite of the truth.
+   */
+  const timeIsModelled = reportsTrustworthyDuration(intent) === false
 
   return (
     <div className="leg-mode">
@@ -65,6 +84,13 @@ export function LegModePicker({
       {losesSurface && (
         <p className="leg-mode__note">
           This engine reports no dirt or paved breakdown, so this segment will draw as unsurveyed.
+        </p>
+      )}
+
+      {timeIsModelled && (
+        <p className="leg-mode__provenance">
+          Riding time here is our own estimate from distance and surface — this engine reports
+          bicycle times.
         </p>
       )}
     </div>

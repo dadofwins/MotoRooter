@@ -31,6 +31,7 @@ export interface RoutePointsProps {
   readonly legs?: readonly TripLeg[]
   /** From `GET /api/routing/capabilities`, never a list kept here. */
   readonly reportsSurface?: (intent: LegIntent) => boolean | null
+  readonly reportsTrustworthyDuration?: (intent: LegIntent) => boolean | null
   readonly onIntentChange?: (legIndex: number, intent: LegIntent) => void
 }
 
@@ -51,6 +52,7 @@ export function RoutePoints({
   onRemove,
   legs,
   reportsSurface,
+  reportsTrustworthyDuration,
   onIntentChange,
 }: RoutePointsProps): React.JSX.Element | null {
   // Nothing rather than an empty list: a heading over no rows reads as broken rather than
@@ -121,6 +123,7 @@ export function RoutePoints({
                   from={describe(from)}
                   to={describe(to)}
                   reportsSurface={reportsSurface}
+                  reportsTrustworthyDuration={reportsTrustworthyDuration ?? (() => null)}
                   onChange={onIntentChange}
                 />
               )

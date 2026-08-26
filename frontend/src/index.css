@@ -366,6 +366,11 @@ body {
     border-color: rgb(255 255 255 / 0.45);
   }
 
+  .route-summary__provenance,
+  .leg-mode__provenance {
+    color: rgb(255 255 255 / 0.5);
+  }
+
   .points {
     border-top-color: rgb(255 255 255 / 0.14);
   }
@@ -473,6 +478,16 @@ body {
     background: rgb(245 158 11 / 0.14);
     border-left-color: #d97706;
   }
+}
+
+/* Where a number came from. Quieter than the figure it qualifies, because it is provenance and
+   not a warning — on dirt our estimate is the better number. */
+.route-summary__provenance,
+.leg-mode__provenance {
+  margin: 0.25rem 0 0;
+  font-size: 0.6875rem;
+  line-height: 1.4;
+  color: rgb(0 0 0 / 0.5);
 }
 
 /* The route, point by point. Compact enough that a week-long trip still fits a 380px rail. */

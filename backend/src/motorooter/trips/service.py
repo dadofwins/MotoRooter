@@ -46,26 +46,59 @@ def longest_routed_leg(trip: Trip) -> RouteLeg | None:
 
 
 def legs_for(trip: Trip, waypoints: Sequence[Waypoint]) -> tuple[TripLeg, ...]:
-    """Legs spanning consecutive waypoint pairs, keeping each existing pair's intent.
+    """Legs spanning consecutive waypoint pairs, keeping what is still true of each.
 
     Rebuilt rather than patched because indices shift: a leg recorded as 2-3 means a
-    different stretch of road once a waypoint is inserted ahead of it. Geometry is dropped —
-    the leg is stale by definition — and the next route request fills it back in.
+    different stretch of road once a waypoint is inserted ahead of it. So the pair of
+    *coordinates* is the identity here, not the pair of indices.
+
+    **Geometry survives if it is still current.** It used to be dropped unconditionally, on
+    the grounds that a rebuilt leg is stale by definition — which is true of the legs an edit
+    touched and false of every other leg on the trip. The cost was visible: a chat-built trip
+    arrived reporting zero distance, and the route-through button refused a second press,
+    because adding one waypoint discarded the geometry of every stretch on the route. What is
+    still current is decided by `TripLeg.has_current_geometry`, the same judgement the
+    exporter uses to refuse a trip whose route no longer matches.
+
+    A leg that failed to route keeps no geometry and gains none, so a neighbour changing is
+    not a reason to spend a request retrying it.
     """
     points = tuple(waypoints)
     if len(points) < MINIMUM_WAYPOINTS:
         return ()
     default = trip.intent_for_new_legs
-    existing = {(leg.start_waypoint_index, leg.end_waypoint_index): leg for leg in trip.legs}
+    existing = {
+        (
+            trip.waypoints[leg.start_waypoint_index].coordinate,
+            trip.waypoints[leg.end_waypoint_index].coordinate,
+        ): leg
+        for leg in trip.legs
+    }
     return tuple(
-        TripLeg(
-            intent=existing[(index, index + 1)].intent
-            if (index, index + 1) in existing
-            else default,
-            start_waypoint_index=index,
-            end_waypoint_index=index + 1,
+        _rebuilt(
+            existing.get((points[index].coordinate, points[index + 1].coordinate)),
+            index,
+            default,
+            points,
         )
         for index in range(len(points) - 1)
+    )
+
+
+def _rebuilt(
+    previous: TripLeg | None, index: int, default: LegIntent, points: Sequence[Waypoint]
+) -> TripLeg:
+    """One leg at its new indices, carrying over whatever the edit did not invalidate."""
+    if previous is None:
+        return TripLeg(intent=default, start_waypoint_index=index, end_waypoint_index=index + 1)
+    span = (points[index], points[index + 1])
+    return TripLeg(
+        intent=previous.intent,
+        provider_override=previous.provider_override,
+        start_waypoint_index=index,
+        end_waypoint_index=index + 1,
+        routed=previous.routed if previous.has_current_geometry(span) else None,
+        last_routing_error=previous.last_routing_error,
     )
 
 

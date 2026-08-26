@@ -13,6 +13,7 @@ Two decisions are load-bearing and easy to undo by accident:
 - `needs_replan` is derived from timestamps, not stored. A stored boolean drifts.
 """
 
+from collections.abc import Sequence
 from datetime import datetime
 from enum import StrEnum
 from typing import Annotated, Self
@@ -27,12 +28,22 @@ from pydantic import (
 )
 
 from motorooter.error_codes import ErrorCode
-from motorooter.routing.models import Coordinate, LegIntent, RouteLeg, Surface
+from motorooter.routing.models import (
+    Coordinate,
+    LegIntent,
+    RouteFingerprint,
+    RouteLeg,
+    RouteRequest,
+    Surface,
+)
 from motorooter.speeds import (
     DEFAULT_RIDING_SPEEDS,
     RidingSpeeds,
     leg_duration_s,
 )
+
+MINIMUM_SPAN = 2
+"""Below two waypoints there is no leg to have geometry for."""
 
 CURRENT_SCHEMA_VERSION = 1
 
@@ -198,6 +209,34 @@ class TripLeg(BaseModel):
 
     Cleared by a successful route. A stale marker would leave a healthy leg flagged forever.
     """
+
+    def has_current_geometry(self, span: Sequence["Waypoint"]) -> bool:
+        """Whether `routed` still describes the leg this now is, given its waypoints.
+
+        **Compares the request, not the endpoints.** An engine snaps to the nearest routable
+        node, sometimes by hundreds of metres, so there is no tolerance that separates
+        snapping from a rider dragging the point. `RouteFingerprint` records what was asked
+        for, and that has no such ambiguity.
+
+        Two callers, and they ask for opposite reasons. The exporter asks so it can refuse a
+        trip whose geometry no longer matches — a route missing or misrepresenting a section
+        renders perfectly, so nothing downstream would catch it. A rebuild asks so it can
+        *keep* geometry that is still good, instead of discarding every leg because one
+        waypoint moved and making the rider wait for a route they already had.
+
+        A leg with no fingerprint falls back to comparing the intent, which is weaker: it
+        cannot see a moved waypoint. Those are documents written before the field existed,
+        and refusing them would turn a missing annotation into a broken trip.
+        """
+        routed = self.routed
+        if routed is None or len(span) < MINIMUM_SPAN:
+            return False
+        if routed.routed_from is None:
+            return routed.intent is self.intent
+        return routed.routed_from == RouteFingerprint.of(
+            RouteRequest(waypoints=tuple(point.coordinate for point in span), intent=self.intent),
+            provider_override=self.provider_override,
+        )
 
     @model_validator(mode="after")
     def _must_move_forward(self) -> Self:

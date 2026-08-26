@@ -29,7 +29,7 @@ from motorooter.planning.discovery.selection import above_the_floor, worth_routi
 from motorooter.planning.insertion import insert_in_route_order
 from motorooter.routing.errors import RouteIncomplete
 from motorooter.routing.models import LegIntent, RouteLeg
-from motorooter.trips.models import Poi, Trip, Waypoint
+from motorooter.trips.models import Poi, Trip, TripLeg, Waypoint
 from motorooter.trips.service import changed_legs, edit_trip, legs_for, longest_routed_leg
 from motorooter.trips.store import TripStore
 
@@ -109,18 +109,11 @@ async def route_through_best(
         [Waypoint(coordinate=place.coordinate, name=place.name) for place in chosen],
         geometry=leg.geometry,
     )
-    for changed in changed_legs(trip, waypoints):
-        # Only the stretches this insertion creates — two per place, in and out — rather
-        # than the whole route as one span. Asking about the whole route cost a request the
-        # size of the trip and refused edits for failures in stretches nobody had touched.
-        span = (waypoints[changed.start_waypoint_index], waypoints[changed.end_waypoint_index])
-        await router.route_waypoints(span, intent=changed.intent)
-
     saved = await edit_trip(
         store,
         slug,
         waypoints=waypoints,
-        legs=legs_for(trip, waypoints),
+        legs=await _routed_legs(trip, waypoints, router),
         pois=_marked_on_route(trip.pois, chosen),
     )
     return RoutedThrough(
@@ -128,6 +121,38 @@ async def route_through_best(
         added=_in_route_order(chosen, waypoints),
         left_out=_left_out(trip.pois, chosen),
     )
+
+
+async def _routed_legs(
+    trip: Trip, waypoints: Sequence[Waypoint], router: LegRouter
+) -> tuple[TripLeg, ...]:
+    """Legs to save: the stretches this insertion created, routed, and the rest as they were.
+
+    Two requests per place — into it and out of it — rather than one for the whole route.
+    Asking about the whole route as a single span cost a request the size of the trip and
+    could not express a trip whose legs route through different engines, so it was answering
+    an easier question than the one being asked.
+
+    Their replies are kept rather than discarded, which is what lets a rider press the button
+    twice. It used to leave every leg without geometry, so the second press was refused as
+    `route_incomplete` until a browser had routed the trip again.
+    """
+    fresh = {
+        (leg.start_waypoint_index, leg.end_waypoint_index) for leg in changed_legs(trip, waypoints)
+    }
+    legs: list[TripLeg] = []
+    for leg in legs_for(trip, waypoints):
+        if (leg.start_waypoint_index, leg.end_waypoint_index) not in fresh:
+            legs.append(leg)
+            continue
+        span = (waypoints[leg.start_waypoint_index], waypoints[leg.end_waypoint_index])
+        routed = await router.route_waypoints(span, intent=leg.intent)
+        legs.append(
+            leg.model_copy(
+                update={"routed": routed[0] if routed else None, "last_routing_error": None}
+            )
+        )
+    return tuple(legs)
 
 
 def _marked_on_route(pois: Sequence[Poi], chosen: Sequence[Poi]) -> tuple[Poi, ...]:

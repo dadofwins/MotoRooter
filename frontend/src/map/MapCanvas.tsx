@@ -40,7 +40,10 @@ const NO_MAP_ID_NOTICE =
 interface AttachedMarker {
   readonly detach: () => void
   readonly move: (position: google.maps.LatLngLiteral) => void
-  readonly on: (event: string, handler: () => void) => google.maps.MapsEventListener | null
+  readonly on: (
+    event: string,
+    handler: (event: unknown) => void,
+  ) => google.maps.MapsEventListener | null
 }
 
 interface MarkerInput {
@@ -98,6 +101,29 @@ function createMarker(maps: GoogleMaps, input: MarkerInput): AttachedMarker {
   }
 }
 
+/** What was right-clicked, and where on screen, so a menu can open over it. */
+export type ContextTarget =
+  | { readonly kind: 'waypoint'; readonly index: number; readonly at: ScreenPoint }
+  | { readonly kind: 'poi'; readonly poi: Poi; readonly at: ScreenPoint }
+  | {
+      readonly kind: 'route'
+      readonly legIndex: number
+      readonly coordinate: Coordinate
+      readonly at: ScreenPoint
+    }
+
+/** A position in viewport pixels, which is what a menu needs to open under the cursor. */
+export interface ScreenPoint {
+  readonly x: number
+  readonly y: number
+}
+
+/** Where a Maps mouse event happened on screen, when it can say. */
+function screenPointOf(event: unknown): ScreenPoint {
+  const dom = (event as { domEvent?: { clientX?: number; clientY?: number } }).domEvent
+  return { x: dom?.clientX ?? 0, y: dom?.clientY ?? 0 }
+}
+
 export interface MapCanvasProps {
   /**
    * Resolves the Maps API. Must be a stable reference — create it once at module scope,
@@ -128,18 +154,29 @@ export interface MapCanvasProps {
   readonly onLegCancel?: () => void
 
   /**
-   * A place was right-clicked: the mouse path for putting it on the route.
+   * Something was right-clicked, with where on screen it happened.
    *
-   * Never called for an unconfirmed suggestion — the backend refuses to pin one, so offering
-   * it would be a control that cannot work.
+   * Reported rather than acted on. Right-click used to remove a waypoint and add a place to the
+   * route directly, with no label and no confirmation — the worst kind of destructive action,
+   * because the rider who discovers it discovers it by doing it. The caller turns this into a
+   * named menu.
+   *
+   * Never fires for an unconfirmed suggestion: the backend refuses to pin one, so there is
+   * nothing to offer.
    */
+  readonly onContextMenu?: (target: ContextTarget) => void
   /**
    * Right-click a route point to take it off the route.
    *
-   * The same idiom as right-clicking a POI to add it, and the fast path for what the route list
-   * in the rail does discoverably.
+   * The direct path, kept for a caller with no menu wired. Where `onContextMenu` is given, that
+   * wins and this is not called.
    */
   readonly onWaypointRemove?: (index: number) => void
+  /**
+   * A place was right-clicked: the mouse path for putting it on the route.
+   *
+   * Same precedence as above, and likewise never called for an unconfirmed suggestion.
+   */
   readonly onPoiAdd?: (poi: Poi) => void
   /** A place was clicked. Opens its detail, whatever its provenance. */
   readonly onPoiOpen?: (poi: Poi) => void
@@ -173,6 +210,7 @@ export function MapCanvas({
   onLegDrag,
   onLegDrop,
   onLegCancel,
+  onContextMenu,
   onWaypointRemove,
   onPoiAdd,
   onPoiOpen,
@@ -228,6 +266,11 @@ export function MapCanvas({
   useEffect(() => {
     waypointHandler.current = onWaypointRemove
   }, [onWaypointRemove])
+
+  const contextHandler = useRef(onContextMenu)
+  useEffect(() => {
+    contextHandler.current = onContextMenu
+  }, [onContextMenu])
 
   /**
    * The gesture in progress, if any.
@@ -416,7 +459,23 @@ export function MapCanvas({
             map,
           }),
       )
-      const listeners = draggable
+      // A right-click on the road itself, which is where "add a point here" comes from.
+      //
+      // Attached unconditionally, unlike the drag listener. Gating it on the prop would bake the
+      // answer into this per-leg cache, which only rebuilds when a leg reroutes — a handler that
+      // arrived later would go unheard until then. A no-op listener costs less than that bug.
+      const contextListeners = lines.map((line) =>
+        line.addListener('contextmenu', (event: google.maps.MapMouseEvent) => {
+          if (event.latLng === null) return
+          contextHandler.current?.({
+            kind: 'route',
+            legIndex,
+            coordinate: toCoordinate(event.latLng),
+            at: screenPointOf(event),
+          })
+        }),
+      )
+      const dragListeners = draggable
         ? lines.map((line) =>
             line.addListener('mousedown', (event: google.maps.MapMouseEvent) => {
               if (event.latLng === null) return
@@ -436,6 +495,7 @@ export function MapCanvas({
             }),
           )
         : []
+      const listeners = [...contextListeners, ...dragListeners]
       overlays.set(legIndex, { routed: leg.routed, lines, listeners })
     })
 
@@ -479,7 +539,13 @@ export function MapCanvas({
       })
       // Read through the ref so a new handler identity does not tear down and rebuild every
       // pin on the route — which on a long trip is a visible flicker on every render.
-      const listener = marker.on('contextmenu', () => {
+      const listener = marker.on('contextmenu', (event) => {
+        // A menu, where the caller wants one. The direct removal stays as the fallback so a
+        // canvas used without a menu keeps working.
+        if (contextHandler.current !== undefined) {
+          contextHandler.current({ kind: 'waypoint', index, at: screenPointOf(event) })
+          return
+        }
         waypointHandler.current?.(index)
       })
       return { marker, listener }
@@ -510,7 +576,11 @@ export function MapCanvas({
         // Right-click is the add-to-route path, and it is offered only where it can work.
         ...(isVerified(poi)
           ? [
-              marker.on('contextmenu', () => {
+              marker.on('contextmenu', (event) => {
+                if (contextHandler.current !== undefined) {
+                  contextHandler.current({ kind: 'poi', poi, at: screenPointOf(event) })
+                  return
+                }
                 poiHandlers.current.onPoiAdd?.(poi)
               }),
             ]

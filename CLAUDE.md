@@ -73,6 +73,23 @@ Update this section as reality changes, and do not describe a component as exist
 does — this section has twice described work as unbuilt that had shipped, and once described the
 LLM layer as done when it had no tools.
 
+
+### Numbers that work and that nobody has checked
+
+Each is documented thoroughly where it lives, which is exactly the problem: nobody meets the
+caveat until they are already inside the file that uses it. Collected here so they read as a
+queue rather than as footnotes.
+
+| Constant | Where | Status |
+|---|---|---|
+| `GARMIN_TRACK_POINT_LIMIT = 10_000` | `gpx.py` | **Blocking M2.** Commonly documented for modern units; older handhelds cut at 500 per segment. Needs Tim's device. |
+| `RidingSpeeds` 80/40/55 km/h | `speeds.py` | Original guess. Now applied only to legs whose provider is not trusted on duration, so its blast radius shrank rather than its accuracy improving. |
+| `GAP_REPORT_THRESHOLD_M = 25.0` | leg stitching | Never measured against a real mixed-engine trip. The frontend's 500 m *drawing* threshold was measured (0.5 m and 11.3 m observed); this one was not. |
+| discovery cost weights | `pipeline.py` | From one live corridor. Being wrong skews the progress bar rather than breaking it, which is why it is tolerable. |
+
+None except the Garmin limit blocks anything, and all four fail safely. Fix a number here rather
+than an algorithm when one turns out wrong — that is why each is a single constant.
+
 ## Stack
 
 | Layer | Choice |

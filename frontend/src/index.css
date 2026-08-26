@@ -384,6 +384,20 @@ body {
     color: #fca5a5;
   }
 
+  .leg-mode__label {
+    color: rgb(255 255 255 / 0.55);
+  }
+
+  .leg-mode__field select {
+    color: inherit;
+    background: rgb(255 255 255 / 0.06);
+    border-color: rgb(255 255 255 / 0.22);
+  }
+
+  .leg-mode__note {
+    color: #fcd34d;
+  }
+
   .route-warning {
     color: #fcd34d;
     background: rgb(245 158 11 / 0.14);
@@ -452,6 +466,42 @@ body {
 
 .points__remove:hover {
   color: #b91c1c;
+}
+
+/* The segments between the points, each with its own mode. */
+.points__segments {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  margin-top: 0.625rem;
+}
+
+.leg-mode__field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1875rem;
+}
+
+.leg-mode__label {
+  font-size: 0.75rem;
+  color: rgb(0 0 0 / 0.55);
+}
+
+.leg-mode__field select {
+  font: inherit;
+  font-size: 0.8125rem;
+  padding: 0.1875rem 0.25rem;
+  border: 1px solid rgb(0 0 0 / 0.2);
+  border-radius: 0.25rem;
+}
+
+/* Said in words as well as marked in the option, because this is the one thing the app exists
+   to show and losing it should not be a surprise. */
+.leg-mode__note {
+  margin: 0.1875rem 0 0;
+  font-size: 0.75rem;
+  line-height: 1.35;
+  color: #7c4a02;
 }
 
 /* A segment failed, the rest of the trip did not.

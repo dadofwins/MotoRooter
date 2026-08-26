@@ -23,7 +23,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { apiClient } from './api/apiClient'
 import type { ApiClient } from './api/client'
-import type { Coordinate, Poi, Trip, TripLeg, Waypoint } from './api/types'
+import type { Coordinate, LegIntent, Poi, Trip, TripLeg, Waypoint } from './api/types'
 import { MapCanvas } from './map/MapCanvas'
 import { MAP_ID, loadMaps } from './map/googleMaps'
 import type { GoogleMapsLoader } from './map/loadGoogleMaps'
@@ -286,6 +286,27 @@ function TripSession({
     [change],
   )
 
+  /**
+   * Change one segment's routing mode.
+   *
+   * The mouse equivalent of the assistant's `set_leg_intent`. The geometry is left in place
+   * deliberately: `isLegStale` compares the leg's intent against its fingerprint, so the new
+   * route is fetched without the line blinking out in the meantime — and no neighbouring leg is
+   * touched, because a mode is a property of one segment.
+   */
+  const setLegIntent = useCallback(
+    (legIndex: number, intent: LegIntent) => {
+      change((from) => {
+        const current = from.legs ?? legsSpanning(from.waypoints.length, DEFAULT_INTENT)
+        if (current[legIndex] === undefined) return {}
+        return {
+          legs: current.map((leg, index) => (index === legIndex ? { ...leg, intent } : leg)),
+        }
+      })
+    },
+    [change],
+  )
+
   const drag = useMemo(
     () =>
       new DragSession({
@@ -508,12 +529,25 @@ function TripSession({
               {shownDurationS !== null && ` · ${formatDuration(shownDurationS)}`}
               {isRouting && ' · routing…'}
             </p>
+            {/* The fast path for the common removal. Route-building is click, click, click,
+                oops, and with no Ctrl+Z in the app this is the nearest thing to an undo — the
+                list below can remove any point, which is what makes this an addition rather
+                than a duplicate. */}
+            <button type="button" onClick={() => removeWaypoint(waypoints.length - 1)}>
+              Remove last point
+            </button>
           </div>
         )}
 
         {/* The mouse's reach over the route, point by point. Right-click on a pin is the fast
             path; this is the discoverable and keyboard-reachable one. */}
-        <RoutePoints waypoints={waypoints} onRemove={removeWaypoint} />
+        <RoutePoints
+          waypoints={waypoints}
+          onRemove={removeWaypoint}
+          legs={structure}
+          reportsSurface={capabilities.reportsSurface}
+          onIntentChange={setLegIntent}
+        />
 
         <SurfaceSummary legs={shownLegs} unit={unit} />
 

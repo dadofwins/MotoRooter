@@ -27,6 +27,20 @@ export interface RoutingCapabilitiesState {
    * is legitimate — see the note in `useDistanceUnit`.
    */
   readonly intervalFor: (intent: LegIntent) => number | null
+  /**
+   * Whether this intent routes through an engine that reports surface, or `null` when the table
+   * cannot say.
+   *
+   * Resolved intent → provider → `reports_surface`, never a list kept in the frontend. A
+   * hand-kept one went stale the day the policy table repointed an intent and produced an
+   * entirely grey route with no explanation. Measured live: `twisty_paved` resolves to Google,
+   * which returns zero spans, so 229 of 269 km of a real trip rendered `unknown`.
+   *
+   * `null` rather than `false` for the three unknowns — not loaded, intent absent, provider
+   * absent — because "we cannot tell you" and "this mode will not tell you" are different
+   * things to put in front of a rider.
+   */
+  readonly reportsSurface: (intent: LegIntent) => boolean | null
 }
 
 export function useRoutingCapabilities(client: CapabilitiesReader): RoutingCapabilitiesState {
@@ -61,6 +75,11 @@ export function useRoutingCapabilities(client: CapabilitiesReader): RoutingCapab
       capabilities,
       isLoaded: capabilities !== null,
       error,
+      reportsSurface: (intent: LegIntent): boolean | null => {
+        const provider = capabilities?.intents[intent]?.provider
+        if (provider === undefined) return null
+        return capabilities?.providers.find((each) => each.name === provider)?.reports_surface ?? null
+      },
       intervalFor: (intent: LegIntent): number | null =>
         // `?? null` collapses three different unknowns — not loaded, failed, intent absent
         // from the table — into the one safe answer. An interval the API did not authorise

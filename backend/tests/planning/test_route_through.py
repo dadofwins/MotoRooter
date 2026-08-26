@@ -166,18 +166,31 @@ class TestWhatItAdds:
         assert [place.on_route for place in result.trip.pois] == [True]
 
     async def test_running_it_twice_does_not_add_the_same_place_twice(self):
-        """The on-route flag is what stops it, so the second run must see a routed trip.
+        """The on-route flag is what stops it, and no re-route is needed in between.
 
-        An edit leaves every leg it touched without geometry — they are stale by
-        definition — so the map re-routes before anything asks again. `rerouted` stands in
-        for that.
+        It used to be: the edit discarded the geometry of every leg, so a second press was
+        refused as `route_incomplete` until a browser had routed the trip again. The
+        stretches it creates are now routed and kept, so the trip it leaves behind is one it
+        can act on.
         """
         store = await store_with(trip(poi("Lion Rock", 0.95)))
-        first = await route_through_best(store=store, slug="wabdr", router=FakeRouter())
-        await store.put(rerouted(first.trip))
+        await route_through_best(store=store, slug="wabdr", router=FakeRouter())
         again = await route_through_best(store=store, slug="wabdr", router=FakeRouter())
         assert again.added == ()
         assert len(again.trip.waypoints) == 3
+
+    async def test_it_leaves_the_trip_routed(self):
+        store = await store_with(trip(poi("Lion Rock", 0.95)))
+        result = await route_through_best(store=store, slug="wabdr", router=FakeRouter())
+        assert result.trip.is_fully_routed is True
+
+    async def test_the_stretches_it_did_not_touch_keep_the_geometry_they_had(self):
+        """Five legs, one insertion: two stretches routed, three carried over untouched."""
+        store = await store_with(long_trip(poi("Lion Rock", 0.95, along=0.55)))
+        router = FakeRouter()
+        result = await route_through_best(store=store, slug="wabdr", router=router)
+        assert len(router.calls) == 2
+        assert result.trip.is_fully_routed is True
 
     async def test_it_says_what_it_left_out_so_the_rider_can_ask_for_more(self):
         found = [poi(f"p{index}", 0.9 - index / 100, along=0.1 * index) for index in range(5)]

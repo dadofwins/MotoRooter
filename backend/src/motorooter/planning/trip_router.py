@@ -45,7 +45,6 @@ from motorooter.planning.stitching import (
 )
 from motorooter.routing.errors import RouteIncomplete, RoutingError
 from motorooter.routing.models import (
-    RouteFingerprint,
     RouteLeg,
     RouteRequest,
     stamped,
@@ -218,30 +217,21 @@ class TripRouter:
     def _stale_leg_indices(self, trip: Trip) -> tuple[int, ...]:
         """Legs whose geometry came from a request the leg no longer describes.
 
-        Compares fingerprints, not geometry. Comparing a leg's endpoints against its
-        waypoints cannot work: engines snap to the nearest routable node, sometimes by
-        hundreds of metres, so no tolerance separates snapping from a user dragging the
-        point. Comparing the request has no such ambiguity.
+        The judgement itself is `TripLeg.has_current_geometry`, shared with the rebuild that
+        decides which legs keep their geometry after a waypoint edit. Two answers to "is this
+        route what the rider is looking at" would be two answers to the only question that
+        matters here.
 
-        A leg with no fingerprint is trusted, falling back to the weaker intent comparison.
-        Those are documents written before the field existed, and refusing to export them
-        would turn a missing annotation into a broken trip.
+        A leg with no geometry is not stale — it is unrouted, which the caller handles
+        separately — so it is skipped rather than reported.
         """
-        stale: list[int] = []
-        for index, leg in enumerate(trip.legs):
-            routed = leg.routed
-            if routed is None:
-                continue
-            if routed.routed_from is None:
-                if routed.intent is not leg.intent:
-                    stale.append(index)
-            elif routed.routed_from != self._fingerprint(trip, leg):
-                stale.append(index)
-        return tuple(stale)
-
-    def _fingerprint(self, trip: Trip, leg: TripLeg) -> RouteFingerprint:
-        return RouteFingerprint.of(
-            self.leg_request(trip, leg), provider_override=leg.provider_override
+        return tuple(
+            index
+            for index, leg in enumerate(trip.legs)
+            if leg.routed is not None
+            and not leg.has_current_geometry(
+                trip.waypoints[leg.start_waypoint_index : leg.end_waypoint_index + 1]
+            )
         )
 
     def leg_request(self, trip: Trip, leg: TripLeg) -> RouteRequest:

@@ -103,17 +103,22 @@ class _TripTool(Tool):
             msg = f"could not look up {text!r}: {exc}"
             raise ToolCallFailed(msg) from exc
 
-    async def _route_changed(self, trip: Trip, waypoints: tuple[Waypoint, ...]) -> None:
-        """Confirm the stretches this edit creates can actually be joined, before writing.
+    async def _routed_legs(
+        self, trip: Trip, waypoints: tuple[Waypoint, ...]
+    ) -> tuple[TripLeg, ...]:
+        """The legs to save: every stretch this edit created, routed, and the rest untouched.
 
         Routing failure is the second check on geography: a verified place with no road near
         it fails here rather than becoming a pin nobody can ride to.
 
-        **Only the stretches that changed.** This routed the whole trip as one span, which
-        cost a seven-point request per waypoint added and, worse, refused edits for failures
-        elsewhere in the route — a live run was told its new stop could not be joined when the
-        problem was a different stretch entirely. Appending asks about one pair, inserting
-        two, removing one.
+        **Only the stretches that changed.** This once routed the whole trip as one span,
+        which cost a request the size of the route per waypoint added and, worse, refused
+        edits for failures elsewhere — a live run was told its new stop could not be joined
+        when the problem was a different stretch entirely.
+
+        **And the geometry is kept.** The request has already been made; discarding the reply
+        left the trip reporting zero distance until a browser routed it again. Legs the edit
+        did not touch keep the geometry they had, which `legs_for` decides.
 
         A single point is not routed because there is nothing to route — but it is no longer
         unchecked, which is the part that was wrong. The old comment claimed the exemption
@@ -123,17 +128,28 @@ class _TripTool(Tool):
         makes a lone waypoint safe now is that its coordinate came from Places rather than
         from a model.
         """
-        for leg in changed_legs(trip, waypoints):
-            span = (
-                waypoints[leg.start_waypoint_index],
-                waypoints[leg.end_waypoint_index],
-            )
+        fresh = {
+            (leg.start_waypoint_index, leg.end_waypoint_index)
+            for leg in changed_legs(trip, waypoints)
+        }
+        legs: list[TripLeg] = []
+        for leg in legs_for(trip, waypoints):
+            if (leg.start_waypoint_index, leg.end_waypoint_index) not in fresh:
+                legs.append(leg)
+                continue
+            span = (waypoints[leg.start_waypoint_index], waypoints[leg.end_waypoint_index])
             try:
-                await self._router.route_waypoints(span, intent=leg.intent)
+                routed = await self._router.route_waypoints(span, intent=leg.intent)
             except RoutingError as exc:
                 between = " and ".join(point.name or "an unnamed point" for point in span)
                 msg = f"the stretch between {between} could not be routed: {exc}"
                 raise ToolCallFailed(msg) from exc
+            legs.append(
+                leg.model_copy(
+                    update={"routed": routed[0] if routed else None, "last_routing_error": None}
+                )
+            )
+        return tuple(legs)
 
 
 class DescribeTripArguments(ToolArguments):
@@ -237,10 +253,8 @@ class AddWaypoint(_TripTool):
         point = Waypoint(coordinate=chosen.coordinate, name=chosen.name)
 
         proposed = (*trip.waypoints, point)
-        await self._route_changed(trip, proposed)
-        saved = await edit_trip(
-            self._store, self._slug, waypoints=proposed, legs=legs_for(trip, proposed)
-        )
+        legs = await self._routed_legs(trip, proposed)
+        saved = await edit_trip(self._store, self._slug, waypoints=proposed, legs=legs)
         return ToolOutcome(
             content=f"Added waypoint {len(saved.waypoints) - 1}.\n{_numbered(saved)}",
             found=1,
@@ -434,10 +448,8 @@ class AddPoiToRoute(_TripTool):
 
         point = Waypoint(coordinate=match.coordinate, name=match.name)
         proposed = (*trip.waypoints, point)
-        await self._route_changed(trip, proposed)
-        saved = await edit_trip(
-            self._store, self._slug, waypoints=proposed, legs=legs_for(trip, proposed)
-        )
+        legs = await self._routed_legs(trip, proposed)
+        saved = await edit_trip(self._store, self._slug, waypoints=proposed, legs=legs)
         return ToolOutcome(
             content=f"Routing through {match.name}.\n{_numbered(saved)}",
             found=1,

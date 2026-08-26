@@ -134,18 +134,20 @@ class TestWhenItCannot:
         assert response.status_code == 422
         assert response.json()["code"] == "route_incomplete"
 
-    async def test_calling_it_twice_without_rerouting_between_is_refused(self):
-        """Documented rather than discovered, because a live run discovered it.
+    async def test_pressing_it_twice_is_answered_rather_than_refused(self):
+        """This used to be a 422, and it was documented rather than fixed.
 
-        Any edit that moves waypoints leaves the legs it touched without geometry — they are
-        stale by definition — and the map routes them again. Until it does, there is no
-        corridor to measure a detour against, so a second press in that window is refused
-        rather than answered against a route that no longer exists. The client must route
-        between presses; the refusal says so instead of guessing.
+        The reason was that the edit discarded the geometry of every leg, so the second press
+        had no corridor to measure against until a browser had routed the trip again. The
+        stretches it creates are now routed and kept, so the trip it leaves behind is one it
+        can act on. Kept as a test rather than deleted, because it is the behaviour a client
+        author will lean on.
         """
         client = await client_for(trip(a_poi("Lion Rock", 0.95)))
         assert client.post(URL, json={}).status_code == 200
-        assert client.post(URL, json={}).json()["code"] == "route_incomplete"
+        second = client.post(URL, json={})
+        assert second.status_code == 200
+        assert second.json()["added"] == []
 
     async def test_an_unknown_trip_is_a_404(self):
         client = await client_for(trip())

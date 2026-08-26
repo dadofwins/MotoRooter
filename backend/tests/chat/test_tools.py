@@ -266,6 +266,39 @@ class TestRemoveWaypoint:
         assert "Middle" not in outcome.content
 
 
+class TestAChatEditLeavesARoutedTrip:
+    """The trip used to arrive unrouted, and the reason was that nothing kept the answer.
+
+    Validation routed the stretch it created, confirmed the points could be joined, and threw
+    the geometry away — so `total_distance_m` was 0 until a browser loaded the trip and routed
+    it again, and the route-through button refused a second press. The request has already
+    been made and paid for; storing the reply costs nothing.
+    """
+
+    async def test_the_stretch_it_routed_keeps_its_geometry(self):
+        kit = await tools(document=trip(routed=True), lookup=OneResult())
+        await call(kit, AddWaypoint.name, '{"name": "Blewett Pass"}')
+        assert (await kit.store.get(SLUG)).legs[-1].routed is not None
+
+    async def test_the_trip_is_fully_routed_afterwards(self):
+        kit = await tools(document=trip(routed=True), lookup=OneResult())
+        await call(kit, AddWaypoint.name, '{"name": "Blewett Pass"}')
+        assert (await kit.store.get(SLUG)).is_fully_routed is True
+
+    async def test_it_reports_a_distance_rather_than_zero(self):
+        kit = await tools(document=trip(routed=True), lookup=OneResult())
+        await call(kit, AddWaypoint.name, '{"name": "Blewett Pass"}')
+        assert (await kit.store.get(SLUG)).total_distance_m > 0
+
+    async def test_a_trip_that_was_not_routed_before_is_not_claimed_to_be_now(self):
+        """Only the stretch this edit created was routed. The rest is still unknown."""
+        kit = await tools(document=trip(routed=False), lookup=OneResult())
+        await call(kit, AddWaypoint.name, '{"name": "Blewett Pass"}')
+        saved = await kit.store.get(SLUG)
+        assert saved.is_fully_routed is False
+        assert saved.legs[-1].routed is not None
+
+
 class TestValidationAsksOnlyAboutWhatChanged:
     """Adding a waypoint must not re-litigate the rest of the route.
 

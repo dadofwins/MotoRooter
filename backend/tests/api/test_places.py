@@ -50,6 +50,28 @@ def client(mock_places):
     return TestClient(app)
 
 
+@pytest.fixture
+def places_returning():
+    """A client whose Places answers with one scripted body.
+
+    These tests still assign `app.state.places` themselves — which is exactly how the
+    endpoint came to answer 501 in production while every test here passed. That gap is
+    covered by `tests/test_app_wiring.py`, which builds the app the way the deployment does;
+    these stay focused on what the endpoint does with a response it got.
+    """
+    with respx.mock(assert_all_called=False) as mock:
+
+        def build(body: dict[str, Any]) -> TestClient:
+            mock.get(url__startswith=PLACE_DETAILS_URL).mock(
+                return_value=httpx.Response(200, json=body)
+            )
+            app = create_app(RoutingSettings(offline=True))
+            app.state.places = PlaceDetails(api_key="places-test-key")
+            return TestClient(app)
+
+        yield build
+
+
 class TestTheDialogGetsItsData:
     def test_it_answers_ok(self, client):
         assert client.get(f"/api/places/{PLACE_ID}").status_code == 200
@@ -185,3 +207,73 @@ class TestFailure:
             app.state.places = PlaceDetails(api_key="k")
             response = TestClient(app, raise_server_exceptions=False).get(f"/api/places/{PLACE_ID}")
         assert response.status_code >= 400
+
+
+class TestPhotos:
+    """`photo_urls` was declared, frozen into the contract, and never populated.
+
+    The field mask deliberately omitted photos — "until something renders them", which was
+    correct when written. Something renders them now, and frontend asked exactly the right
+    question rather than guessing: does the string carry a resource name, a URL needing a
+    key appended, or something a browser can load?
+
+    **A URL a browser can load, and nothing else.** The alternatives both leak the server
+    key into an unauthenticated page or make the client construct Google URLs, and neither
+    is a thing to hand a client that only knows how to put strings in `src`.
+    """
+
+    @staticmethod
+    def _body(**extra):
+        return {
+            "id": "ChIJ_halfway",
+            "displayName": {"text": "Halfway Flat"},
+            "location": {"latitude": 46.87, "longitude": -121.52},
+            "types": ["campground"],
+        } | extra
+
+    @staticmethod
+    def _photos(count: int):
+        return [
+            {"name": f"places/ChIJ_halfway/photos/ref{index}", "widthPx": 3000}
+            for index in range(count)
+        ]
+
+    def test_the_mask_asks_for_photos(self):
+        from motorooter.planning.discovery.details import DETAIL_FIELD_MASK
+
+        assert "photos" in DETAIL_FIELD_MASK
+
+    def test_a_photo_reference_becomes_a_loadable_url(self, places_returning):
+        client = places_returning(self._body(photos=self._photos(1)))
+        urls = client.get("/api/places/ChIJ_halfway").json()["detail"]["photo_urls"]
+        assert urls
+        assert urls[0].startswith("https://")
+
+    def test_the_url_carries_the_photo_reference(self, places_returning):
+        client = places_returning(self._body(photos=self._photos(1)))
+        urls = client.get("/api/places/ChIJ_halfway").json()["detail"]["photo_urls"]
+        assert "places/ChIJ_halfway/photos/ref0" in urls[0]
+
+    def test_no_photos_is_an_empty_list_not_an_error(self, places_returning):
+        """Dispersed camping is what this app cares most about and what Places knows least
+        about. A dialog with a name and a location is a valid answer."""
+        client = places_returning(self._body())
+        assert client.get("/api/places/ChIJ_halfway").json()["detail"]["photo_urls"] == []
+
+    def test_only_a_few_are_returned(self, places_returning):
+        """Each one is a second request when the browser loads it, per dialog open. Ten
+        photos for a place nobody scrolls is a cost with no benefit — the same reasoning
+        that kept photos out of the mask in the first place, applied to the count."""
+        from motorooter.api.routers.places import MAX_PHOTOS
+
+        client = places_returning(self._body(photos=self._photos(10)))
+        urls = client.get("/api/places/ChIJ_halfway").json()["detail"]["photo_urls"]
+        assert len(urls) == MAX_PHOTOS
+        assert MAX_PHOTOS <= 3
+
+    def test_a_malformed_photo_entry_is_skipped(self, places_returning):
+        client = places_returning(
+            self._body(photos=[{"widthPx": 100}, "a string", None, *self._photos(1)])
+        )
+        urls = client.get("/api/places/ChIJ_halfway").json()["detail"]["photo_urls"]
+        assert len(urls) == 1

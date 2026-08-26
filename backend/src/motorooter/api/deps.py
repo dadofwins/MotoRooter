@@ -16,6 +16,19 @@ from motorooter.routing.policy import PolicyResolver
 from motorooter.routing.registry import ProviderRegistry
 from motorooter.trips.store import TripStore
 
+OPTIONAL_SERVICES: tuple[str, ...] = ("discovery", "places", "chat_model")
+"""The `app.state` attributes that may legitimately be `None`, named in one place.
+
+Each of these disables one feature when its credentials are absent, rather than refusing to
+boot — discovery needs four keys, and a backend that would not start without them takes
+routing and storage down for a feature most requests never touch.
+
+Listed here so the app factory can assign them in a loop and a test can enumerate them.
+`PlaceDetails` was implemented, tested, and constructed nowhere outside tests: three
+hand-written assignments in `create_app`, and omitting one silently disabled an endpoint
+with nothing failing anywhere. A name in a tuple is a poor abstraction and a good tripwire.
+"""
+
 
 def get_registry(request: Request) -> ProviderRegistry:
     registry: ProviderRegistry = request.app.state.provider_registry

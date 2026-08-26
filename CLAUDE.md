@@ -68,10 +68,21 @@ queue), `fe/multi-leg-structure`.
 **Stubbed with frozen schemas** (501, so the frontend builds against real shapes): GPX export,
 and the chat endpoint `POST /api/trips/{slug}/chat`.
 
-**Not built:** the chat rail — the last M1 item with nothing behind it. Multi-leg trips: a trip
-is still one leg spanning every waypoint, which blocks per-segment routing modes and is why
-drag latency is a whole-route recompute. `Trip.default_intent`, forward geocoding, the settings
-dialog, GPX export.
+**Not built, and bigger than it looks: the assistant cannot actually do anything.** M1 item 1
+needs three pieces and has one. The `Tool` base class, `ToolRegistry` and the `Agent` loop are
+merged and well tested — but **no concrete `Tool` subclass exists anywhere in `src/`,
+`ToolRegistry` is constructed only in tests, `Agent(...)` is never constructed outside tests,
+and `POST /api/trips/{slug}/chat` still raises `NotImplementedYet`.** So the framework is
+complete and has zero capabilities and zero production callers. This is the
+"correct but unreachable" pattern this project keeps producing, and it was previously recorded
+here as though the layer were done.
+
+What M1 item 1 actually requires: concrete tools that are thin wrappers over the same service
+functions the REST endpoints call, the agent wired into the streaming chat endpoint, and the
+frontend rail. The rail can be built against the frozen contract in parallel.
+
+**Also not built:** `Trip.default_intent`, the routing-mode picker, forward geocoding, the
+settings dialog (gear icon, miles/km), GPX export.
 
 Update this section as reality changes, and do not describe a component as existing until it does.
 

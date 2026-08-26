@@ -221,6 +221,31 @@ Never edit anything under `backend/`.
   well right up to a deployment served over plain HTTP. **And localhost is a secure context**, so
   dev never sees the failure.
 
+- **Never wait for a value that is the same at both ends of the thing you are waiting for.**
+
+  `waitFor` satisfies itself on the *first* reading, so waiting for a value to return to its
+  starting state cannot tell "finished" from "not started". It made a green test fail about one
+  run in twelve and turned `main` intermittently red:
+
+  ```ts
+  result.current.locate()
+  await waitFor(() => expect(result.current.isLocating).toBe(false))  // false before it starts
+  expect(result.current.canLocate).toBe(false)                        // read too early
+  ```
+
+  Wait on the thing that changes **once**, which is usually the assertion itself.
+
+  **And where nothing changes at all, a wait cannot help — use a control.** Two tests in the same
+  file asserted a flag stayed false, which it does both before the answer arrives and after a
+  denial; no amount of waiting distinguishes them, and a "wait for a transition" helper would have
+  made them look fixed while still proving nothing. Rendering a *permissive* hook beside the
+  subject and waiting for it to flip is what makes the negative meaningful: the same wait turned
+  one true, so the other's false is a state it settled in rather than one it started in.
+
+  This is the fourth of its kind — the map object versus the loading text, the preview request
+  versus the redraw, a rendered name versus a stored record, and now a flag that is false at both
+  ends. Each time the test waited on a proxy for the thing it needed.
+
 - **Verify with the exit code, never by reading the output.** `make check` prints ruff's
   "All checks passed!" from the backend step and can still exit non-zero on the frontend
   lint that follows. `make check; echo $?` is the only honest check, and piping it through

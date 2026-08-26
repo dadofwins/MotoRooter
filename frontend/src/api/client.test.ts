@@ -612,7 +612,9 @@ describe('typed surface', () => {
     const replan: Parameters<Api['replan']>[1] = {}
 
     expect(leg.avoid_tolls).toBeUndefined()
-    expect(replan.preserve_pinned).toBeUndefined()
+    // No assertion about `preserve_pinned`: it is being removed, and this compiles whether or not
+    // it is still declared. That is what the `Omit` bridge in types.ts buys.
+    expect(Object.keys(replan)).toEqual([])
   })
 
   it('returns the generated response types, not hand-written copies', () => {

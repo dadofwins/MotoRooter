@@ -244,7 +244,11 @@ describe('useReplan', () => {
     expect(signals[0]?.aborted).toBe(true)
   })
 
-  it('preserves the pinned POIs the rider chose, by asking the server to', async () => {
+  it('asks for nothing it cannot be given', async () => {
+    // `preserve_pinned` used to be sent here, and the handler never read it. It is gone from the
+    // contract now, and the behaviour it claimed is the client's: a run *adds* to what the trip
+    // already holds rather than replacing it, which is asserted where that union happens rather
+    // than by inspecting a request field that did nothing.
     const client = fakeClient([event({ stage: 'done' })])
     const { result } = renderHook(() => useReplan(client))
 
@@ -253,9 +257,7 @@ describe('useReplan', () => {
       await Promise.resolve()
     })
 
-    // The default the contract documents, sent explicitly rather than relied upon: a replan
-    // that silently discarded hand-placed POIs would be the worst kind of surprise.
-    expect(client.replan.mock.calls[0]?.[1].preserve_pinned).toBe(true)
+    expect(Object.keys(client.replan.mock.calls[0]?.[1] ?? {})).toEqual([])
   })
 })
 
@@ -511,7 +513,7 @@ describe('useReplan with chosen categories', () => {
     expect(client.replan.mock.calls[0]?.[1]).not.toHaveProperty('categories')
   })
 
-  it('still preserves the places a rider pinned', async () => {
+  it('sends the categories and nothing else', async () => {
     const client = {
       replan: vi.fn(
         // eslint-disable-next-line require-yield
@@ -527,6 +529,6 @@ describe('useReplan with chosen categories', () => {
       await Promise.resolve()
     })
 
-    expect(client.replan.mock.calls[0]?.[1].preserve_pinned).toBe(true)
+    expect(client.replan.mock.calls[0]?.[1]).toEqual({ categories: ['wild_camp'] })
   })
 })

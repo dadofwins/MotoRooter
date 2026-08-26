@@ -1,6 +1,6 @@
 import { screen } from '@testing-library/dom'
 import { describe, expect, it } from 'vitest'
-import { createPoiPin, isVerified, poiGroup, POI_CATEGORIES } from './poiPin'
+import { createClusterPin, createPoiPin, isVerified, poiGroup, POI_CATEGORIES } from './poiPin'
 import type { Poi, PoiCategory } from '../api/types'
 
 /**
@@ -116,5 +116,43 @@ describe('the category list', () => {
     const asContract: PoiCategory[] = [...POI_CATEGORIES]
 
     expect(asContract).toContain('wild_camp')
+  })
+})
+
+/**
+ * The pin that stands for several places.
+ *
+ * It has one job the individual pins cannot do: say how many are underneath. Measured on a live
+ * corridor, 29 of 31 pins were obscured at the zoom a rider plans at — so without a number, the
+ * map is silently lying about how much it found.
+ */
+describe('createClusterPin', () => {
+  it('says how many places are in it', () => {
+    expect(createClusterPin(7).textContent).toBe('7')
+  })
+
+  it('names itself for a screen reader, in words rather than a bare number', () => {
+    // "7" alone announces as a number with no noun. A rider using a screen reader on a map
+    // needs to know it is seven places, not seven of something unnamed.
+    expect(createClusterPin(7).getAttribute('aria-label')).toMatch(/7 places/i)
+  })
+
+  it('says "places" plurally only when it means it', () => {
+    // A cluster of two is the common case and the smallest one that exists; a cluster of one is
+    // drawn as the place itself, so this never has to say "1 places".
+    expect(createClusterPin(2).getAttribute('aria-label')).toMatch(/2 places/i)
+  })
+
+  it('is a button, because it is the only way to reach what is underneath', () => {
+    // Not decoration and not an image: everything in the cluster is unreachable except through
+    // it, so it has to be announced as something you can operate.
+    expect(createClusterPin(3).getAttribute('role')).toBe('button')
+  })
+
+  it('stays legible when the group is big', () => {
+    // Twelve was the largest group measured on a real corridor at the planning zoom. A pin whose
+    // number overflows its own circle is worse than no number.
+    expect(createClusterPin(12).className).toMatch(/poi-cluster--wide/)
+    expect(createClusterPin(9).className).not.toMatch(/poi-cluster--wide/)
   })
 })

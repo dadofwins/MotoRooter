@@ -20,7 +20,8 @@ import type { GoogleMaps, GoogleMapsLoader } from './loadGoogleMaps'
 import { distanceM } from '../routing/geo'
 import { createMapOptions, toCoordinate, toLatLng, type MapColorScheme } from './mapOptions'
 import { polylineStyle, toRouteSegments } from './routeLayer'
-import { createPoiPin, isVerified } from './poiPin'
+import { createClusterPin, createPoiPin, isVerified } from './poiPin'
+import { clusterPois } from './cluster'
 import { createDragHandle, createWaypointPin, waypointKind } from './waypointPin'
 
 /** Stable identities: inline defaults would rebuild every overlay on every render. */
@@ -135,6 +136,11 @@ function contextPointOf(event: unknown): ScreenPoint {
   return { x: dom?.clientX ?? 0, y: dom?.clientY ?? 0 }
 }
 
+export interface PoiClusterOpened {
+  readonly members: readonly Poi[]
+  readonly at: ScreenPoint
+}
+
 export interface MapCanvasProps {
   /**
    * Resolves the Maps API. Must be a stable reference — create it once at module scope,
@@ -178,6 +184,14 @@ export interface MapCanvasProps {
   readonly onContextMenu?: (target: ContextTarget) => void
   /** A place was clicked. Opens its detail, whatever its provenance. */
   readonly onPoiOpen?: (poi: Poi) => void
+  /**
+   * A group of overlapping places was clicked.
+   *
+   * The pin says how many; only the caller can say which, so this hands over the members and a
+   * point to open a disclosure at. Never fires for a group of one — that is drawn as the place
+   * itself and reported through `onPoiOpen`.
+   */
+  readonly onClusterOpen?: (cluster: PoiClusterOpened) => void
 }
 
 /**
@@ -210,6 +224,7 @@ export function MapCanvas({
   onLegCancel,
   onContextMenu,
   onPoiOpen,
+  onClusterOpen,
 }: MapCanvasProps): React.JSX.Element {
   const containerRef = useRef<HTMLDivElement>(null)
   const mapRef = useRef<google.maps.Map | null>(null)
@@ -217,6 +232,14 @@ export function MapCanvas({
   const onMapClickRef = useRef(onMapClick)
 
   const [maps, setMaps] = useState<GoogleMaps | null>(null)
+  /**
+   * The zoom the pins are grouped at.
+   *
+   * State rather than a read at draw time, because whether two pins overlap depends on it: the
+   * grouping has to be redone when the rider zooms, and zooming in is how they take a group
+   * apart. Seeded from the initial camera so the first draw is not grouped at the wrong scale.
+   */
+  const [currentZoom, setCurrentZoom] = useState(zoom ?? DEFAULT_ZOOM)
   const [error, setError] = useState<Error | null>(null)
   const [attempt, setAttempt] = useState(0)
 
@@ -252,10 +275,11 @@ export function MapCanvas({
 
   const poiHandlers = useRef<{
     onPoiOpen?: ((poi: Poi) => void) | undefined
+    onClusterOpen?: ((cluster: PoiClusterOpened) => void) | undefined
   }>({})
   useEffect(() => {
-    poiHandlers.current = { onPoiOpen }
-  }, [onPoiOpen])
+    poiHandlers.current = { onPoiOpen, onClusterOpen }
+  }, [onPoiOpen, onClusterOpen])
 
   const contextHandler = useRef(onContextMenu)
   useEffect(() => {
@@ -384,6 +408,9 @@ export function MapCanvas({
       map.addListener('mouseup', (event: google.maps.MapMouseEvent) => {
         if (gesture.current === null) return
         endGesture(event.latLng === null ? gesture.current.last : toCoordinate(event.latLng), true)
+      }),
+      map.addListener('zoom_changed', () => {
+        setCurrentZoom(map.getZoom() ?? DEFAULT_ZOOM)
       }),
     ]
 
@@ -542,26 +569,53 @@ export function MapCanvas({
     }
   }, [maps, waypoints, hasMapId])
 
+  /**
+   * Places grouped by whether their pins would overlap at this zoom.
+   *
+   * Redone when the rider zooms, which is what makes zooming in a way to take a group apart.
+   */
+  const clusters = useMemo(() => clusterPois(pois, { zoom: currentZoom }), [pois, currentZoom])
+
   useEffect(() => {
     const map = mapRef.current
     if (maps === null || map === null) return undefined
 
-    const pins = pois.map((poi) => {
+    const pins = clusters.map((cluster) => {
+      const [only] = cluster.members
+      // A group of one is the place itself. Drawing a "1" over it would say a rider has
+      // something to open when they have exactly what they can already see.
+      const alone = cluster.members.length === 1 && only !== undefined
+
       const marker = createMarker(maps, {
         map,
-        position: toLatLng(poi.coordinate),
-        pin: createPoiPin(poi),
+        position: toLatLng(cluster.coordinate),
+        pin: alone ? createPoiPin(only) : createClusterPin(cluster.members.length),
         advanced: hasMapId,
       })
+
+      if (!alone) {
+        return {
+          marker,
+          listeners: [
+            marker.on('click', (event) => {
+              poiHandlers.current.onClusterOpen?.({
+                members: cluster.members,
+                at: contextPointOf(event),
+              })
+            }),
+          ],
+        }
+      }
+
       const listeners = [
         marker.on('click', () => {
-          poiHandlers.current.onPoiOpen?.(poi)
+          poiHandlers.current.onPoiOpen?.(only)
         }),
         // Right-click is the add-to-route path, and it is offered only where it can work.
-        ...(isVerified(poi)
+        ...(isVerified(only)
           ? [
               marker.on('contextmenu', (event) => {
-                contextHandler.current?.({ kind: 'poi', poi, at: contextPointOf(event) })
+                contextHandler.current?.({ kind: 'poi', poi: only, at: contextPointOf(event) })
               }),
             ]
           : []),
@@ -575,7 +629,7 @@ export function MapCanvas({
         marker.detach()
       }
     }
-  }, [maps, pois, hasMapId])
+  }, [maps, clusters, hasMapId])
 
   useEffect(() => {
     const map = mapRef.current

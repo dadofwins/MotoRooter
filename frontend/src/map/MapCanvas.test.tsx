@@ -90,6 +90,13 @@ function createFakeMaps({ withMarkerLibrary = true }: { withMarkerLibrary?: bool
     setZoom(zoom: number): void {
       this.#zoom = zoom
     }
+    /** Drives a zoom the way the rider would: the value changes, then the map says so. */
+    zoomTo(zoom: number): void {
+      this.#zoom = zoom
+      for (const listener of this.listeners.filter((l) => l.event === 'zoom_changed' && !l.removed)) {
+        listener.handler({})
+      }
+    }
     setOptions(options: google.maps.MapOptions): void {
       this.applied.push(options)
     }
@@ -159,8 +166,12 @@ function createFakeMaps({ withMarkerLibrary = true }: { withMarkerLibrary?: bool
       this.listeners.set(event, handler)
       return { remove: () => this.listeners.delete(event) }
     }
-    click(): void {
-      this.listeners.get('click')?.({})
+    click(at?: ScreenAt): void {
+      this.listeners.get('click')?.(
+        at === undefined
+          ? {}
+          : { domEvent: { clientX: at.x, clientY: at.y, preventDefault: nativeMenu.preventDefault } },
+      )
     }
     contextMenu(at?: ScreenAt): void {
       this.listeners.get('contextmenu')?.(
@@ -197,8 +208,12 @@ function createFakeMaps({ withMarkerLibrary = true }: { withMarkerLibrary?: bool
       this.listeners.set(event, handler)
       return { remove: () => this.listeners.delete(event) }
     }
-    click(): void {
-      this.listeners.get('click')?.({})
+    click(at?: ScreenAt): void {
+      this.listeners.get('click')?.(
+        at === undefined
+          ? {}
+          : { domEvent: { clientX: at.x, clientY: at.y, preventDefault: nativeMenu.preventDefault } },
+      )
     }
     contextMenu(at?: ScreenAt): void {
       this.listeners.get('contextmenu')?.(
@@ -237,14 +252,28 @@ function createFakeMaps({ withMarkerLibrary = true }: { withMarkerLibrary?: bool
       [...markers, ...legacyMarkers].filter(
         (marker) =>
           marker.map !== null &&
-          (marker.options['content'] as HTMLElement | undefined)?.className?.startsWith('poi') ===
+          (marker.options['content'] as HTMLElement | undefined)?.className?.startsWith('poi ') ===
             true,
       ),
     poiPins: () =>
       [...markers, ...legacyMarkers]
         .filter((marker) => marker.map !== null)
         .map((marker) => marker.options['content'] as HTMLElement | undefined)
-        .filter((pin) => pin?.className?.startsWith('poi') === true),
+        .filter((pin) => pin?.className?.startsWith('poi ') === true),
+    /** Markers standing for a group of places, which show a count rather than a glyph. */
+    clusterMarkers: () =>
+      [...markers, ...legacyMarkers].filter(
+        (marker) =>
+          marker.map !== null &&
+          (marker.options['content'] as HTMLElement | undefined)?.className?.startsWith(
+            'poi-cluster',
+          ) === true,
+      ),
+    clusterPins: () =>
+      [...markers, ...legacyMarkers]
+        .filter((marker) => marker.map !== null)
+        .map((marker) => marker.options['content'] as HTMLElement | undefined)
+        .filter((pin) => pin?.className?.startsWith('poi-cluster') === true),
     /** Markers standing for a trip waypoint, in the order they were placed. */
     waypointMarkers: () =>
       [...markers, ...legacyMarkers].filter(
@@ -987,10 +1016,13 @@ describe('MapCanvas showing points of interest', () => {
   it('draws a pin for each place', async () => {
     const fake = createFakeMaps()
 
+    // At a planning zoom. Fifty kilometres apart is nine pixels at the opening camera, which
+    // is one pin's worth — those two are a crowd, and there is a test below that says so.
     render(
       <MapCanvas
         mapId={MAP_ID}
         loader={fake.loader}
+        zoom={12}
         pois={[poi(), poi({ id: 'poi-2', category: 'fuel', coordinate: { lat: 48, lon: -120 } })]}
       />,
     )
@@ -1201,5 +1233,130 @@ describe('MapCanvas reporting a right-click', () => {
 
     await waitFor(() => expect(fake.polylines.length).toBeGreaterThan(1))
     expect(first?.listeners.every((listener) => listener.removed)).toBe(true)
+  })
+})
+
+/**
+ * Pins that would land on top of each other.
+ *
+ * Measured on a live corridor: at the zoom where a rider sees the whole day, 29 of 31 pins were
+ * obscured by another, and the visible one was whichever was drawn last. So the map was silently
+ * under-reporting what discovery found, and there was no way to reach the places underneath.
+ *
+ * The grouping arithmetic is tested in cluster.test.ts. What is tested here is that the canvas
+ * asks the question at the right zoom, asks it again when the rider changes the zoom, and leaves
+ * nothing attached behind.
+ */
+describe('MapCanvas clustering places', () => {
+  /**
+   * Two places about 250 m apart — nine pixels at a planning zoom, seventy at zoom 15.
+   *
+   * A real spacing rather than a contrived one: campgrounds off the same forest road sit about
+   * this far from each other, which is exactly why the live corridor had 29 of 31 pins covered.
+   */
+  const CROWDED = [
+    placeFixture({ id: 'a', name: 'Lone Fir', coordinate: { lat: 47.5, lon: -120.5 } }),
+    placeFixture({ id: 'b', name: 'Mineral Springs', coordinate: { lat: 47.5015, lon: -120.4985 } }),
+  ]
+
+  it('draws one pin for a crowd rather than a pile of pins', async () => {
+    const fake = createFakeMaps()
+
+    render(<MapCanvas mapId={MAP_ID} loader={fake.loader} zoom={12} pois={CROWDED} />)
+
+    await waitFor(() => expect(fake.clusterPins()).toHaveLength(1))
+    expect(fake.clusterPins()[0]?.textContent).toBe('2')
+    // And not the places themselves, or the cluster would sit on top of what it stands for.
+    expect(fake.poiPins()).toHaveLength(0)
+  })
+
+  it('leaves places that do not collide as themselves', async () => {
+    const fake = createFakeMaps()
+    const apart = [
+      placeFixture({ id: 'a', coordinate: { lat: 47.5, lon: -120.5 } }),
+      placeFixture({ id: 'b', coordinate: { lat: 47.9, lon: -120.1 } }),
+    ]
+
+    render(<MapCanvas mapId={MAP_ID} loader={fake.loader} zoom={12} pois={apart} />)
+
+    await waitFor(() => expect(fake.poiPins()).toHaveLength(2))
+    expect(fake.clusterPins()).toHaveLength(0)
+  })
+
+  it('takes the crowd apart when the rider zooms in', async () => {
+    // Zooming is the rider's own way of resolving a cluster, and it has to actually work —
+    // otherwise the only way in is the disclosure, and a map that never separates is a list.
+    const fake = createFakeMaps()
+    render(<MapCanvas mapId={MAP_ID} loader={fake.loader} zoom={12} pois={CROWDED} />)
+    await waitFor(() => expect(fake.clusterPins()).toHaveLength(1))
+
+    act(() => {
+      fake.maps[0]?.zoomTo(15)
+    })
+
+    await waitFor(() => expect(fake.poiPins()).toHaveLength(2))
+    expect(fake.clusterPins()).toHaveLength(0)
+  })
+
+  it('reports a click on a crowd with what is in it and where it is', async () => {
+    // The count says how many; only the caller can say which, so the canvas hands over the
+    // members and the point to open a disclosure at.
+    const fake = createFakeMaps()
+    const onClusterOpen = vi.fn()
+
+    render(
+      <MapCanvas
+        mapId={MAP_ID}
+        loader={fake.loader}
+        zoom={12}
+        pois={CROWDED}
+        onClusterOpen={onClusterOpen}
+      />,
+    )
+    await waitFor(() => expect(fake.clusterPins()).toHaveLength(1))
+
+    act(() => {
+      fake.clusterMarkers()[0]?.click({ x: 210, y: 130 })
+    })
+
+    expect(onClusterOpen).toHaveBeenCalledWith({
+      members: CROWDED,
+      at: { x: 210, y: 130 },
+    })
+  })
+
+  it('opens a lone place directly rather than through a crowd of one', async () => {
+    const fake = createFakeMaps()
+    const onPoiOpen = vi.fn()
+    const onClusterOpen = vi.fn()
+    const only = placeFixture({ id: 'a', coordinate: { lat: 47.5, lon: -120.5 } })
+
+    render(
+      <MapCanvas
+        mapId={MAP_ID}
+        loader={fake.loader}
+        pois={[only]}
+        onPoiOpen={onPoiOpen}
+        onClusterOpen={onClusterOpen}
+      />,
+    )
+    await waitFor(() => expect(fake.poiPins()).toHaveLength(1))
+
+    act(() => {
+      fake.poiMarkers()[0]?.click()
+    })
+
+    expect(onPoiOpen).toHaveBeenCalledWith(only)
+    expect(onClusterOpen).not.toHaveBeenCalled()
+  })
+
+  it('leaves nothing attached when the places go away', async () => {
+    const fake = createFakeMaps()
+    const view = render(<MapCanvas mapId={MAP_ID} loader={fake.loader} zoom={12} pois={CROWDED} />)
+    await waitFor(() => expect(fake.clusterPins()).toHaveLength(1))
+
+    view.unmount()
+
+    expect(fake.attached()).toHaveLength(0)
   })
 })

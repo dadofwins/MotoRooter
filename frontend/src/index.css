@@ -1621,6 +1621,33 @@ body {
   rotate: -45deg;
 }
 
+/* A group of overlapping places. Deliberately not category-coloured: a campground, a diner and
+   a fuel stop have no honest single category, and slicing the pin three ways makes the number
+   harder to read to say something the rider can find out by opening it. */
+.poi-cluster {
+  display: grid;
+  place-content: center;
+  width: 1.75rem;
+  height: 1.75rem;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+  color: #fff;
+  background: #334155;
+  border: 2px solid #fff;
+  border-radius: 50%;
+  box-shadow: 0 1px 4px rgb(0 0 0 / 0.4);
+  cursor: pointer;
+}
+
+/* Two digits do not fit in a circle sized for one. Twelve was the largest group measured on a
+   real corridor, so this is the normal case at a planning zoom, not a defensive one. */
+.poi-cluster--wide {
+  width: 2.125rem;
+  border-radius: 0.875rem;
+}
+
 /* Unconfirmed: hollow and dashed. A suggestion nobody has checked should not look like a
    place that exists, whatever its category. */
 .poi--unverified {
@@ -1835,6 +1862,10 @@ body {
   z-index: 5;
   display: grid;
   min-width: 11rem;
+  /* A group of twelve is a real measurement, not a hypothetical, so the list has to be able to
+     run out of room without running off the screen. */
+  max-height: 60vh;
+  overflow-y: auto;
   padding: 0.25rem;
   background: #fff;
   border-radius: 8px;
@@ -1861,6 +1892,20 @@ body {
   background: rgb(0 0 0 / 0.07);
 }
 
+/* When the menu is listing places rather than actions: the name leads, the kind follows
+   quietly. Both are read out — choosing between two campgrounds and a diner is when it matters. */
+.context-menu__item:has(.context-menu__hint) {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 0.75rem;
+  align-items: baseline;
+}
+
+.context-menu__hint {
+  font-size: 0.75rem;
+  color: var(--ink-muted);
+}
+
 /* Named as well as coloured. The label already says "Remove", so the colour reinforces a word
    rather than being the only thing that distinguishes the destructive item. */
 .context-menu__item--destructive {
@@ -1885,6 +1930,11 @@ body {
 
   .context-menu__item--destructive {
     color: #fca5a5;
+  }
+
+  .poi-cluster {
+    background: #475569;
+    border-color: #0f172a;
   }
 
   .map-pane,

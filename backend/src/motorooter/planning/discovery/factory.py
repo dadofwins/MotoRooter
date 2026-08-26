@@ -87,6 +87,16 @@ class DiscoverySettings:
     brave_api_key: str | None = None
     openai_api_key: str | None = None
     places_api_key: str | None = None
+
+    places_photo_key: str | None = None
+    """A browser key, restricted by HTTP referrer and to Places Photos.
+
+    Separate from `places_api_key` because photo URLs carry their key into an
+    unauthenticated page, and the search-side key also authorises Directions, Geocoding and
+    Places Text Search with no ceiling. `None` falls back to the server key, which keeps a
+    prototype working and is announced at startup rather than assumed.
+    """
+
     model: str = DEFAULT_MODEL
 
     @property
@@ -108,6 +118,7 @@ def settings_from_env() -> DiscoverySettings:
         # The same key Places resolution uses. Currently also the browser key; see the note
         # in `resolve` about what happens when that gets referrer-restricted.
         places_api_key=os.environ.get("GOOGLE_MAPS_SERVER_KEY") or None,
+        places_photo_key=os.environ.get("GOOGLE_MAPS_BROWSER_KEY") or None,
         model=os.environ.get("MOTOROOTER_LLM_MODEL") or DEFAULT_MODEL,
     )
 

@@ -48,29 +48,53 @@ dimensions nothing reads.
 class PlaceDetails:
     """One place, as Places currently describes it."""
 
-    @property
-    def api_key(self) -> str:
-        """Readable because photo URLs must carry it.
-
-        A Places photo is fetched from a URL with the key in the query string, so the
-        boundary that builds those URLs needs it. Exposed deliberately rather than reached
-        for privately: this is the key that ends up in a browser, and that fact should be
-        visible at the call site rather than buried.
-        """
-        return self._api_key
-
     def __init__(
         self,
         *,
         api_key: str,
+        photo_key: str | None = None,
         base_url: str = PLACE_DETAILS_URL,
         client: httpx.AsyncClient | None = None,
         timeout_s: float = 15.0,
     ) -> None:
+        """
+        Args:
+            api_key: the server-side Places key. Used for detail lookups, which are made
+                from here and never leave the process.
+            photo_key: a **browser** key, restricted by HTTP referrer and to Places Photos.
+                Photo URLs carry their key into an unauthenticated page, so the key they
+                carry must be one that is safe to publish — which the search-side key is
+                not, since it also authorises Directions, Geocoding and Places Text Search
+                with no ceiling. Falls back to `api_key` so a prototype with one key still
+                shows photos; the fallback is reported rather than silent.
+            base_url: override for a recording proxy.
+            client: injectable HTTP client, so callers can share a connection pool.
+            timeout_s: per-request budget.
+        """
         self._api_key = api_key
+        self._photo_key = photo_key
         self._base_url = base_url.rstrip("/")
         self._client = client
         self._timeout_s = timeout_s
+
+    @property
+    def photo_key(self) -> str:
+        """The key photo URLs should carry, which is not necessarily the one we call with.
+
+        Exposed deliberately rather than reached for privately: this is the key that ends up
+        in a browser, and that fact belongs at the call site rather than buried in a method.
+        """
+        return self._photo_key or self._api_key
+
+    @property
+    def photo_key_is_shared(self) -> bool:
+        """Whether photo URLs will publish the server-side key.
+
+        True on a deployment that configured only one key. Read at startup so the fallback
+        is announced: publishing a key that also authorises Directions and Geocoding is
+        exactly the thing that should be noisy rather than convenient.
+        """
+        return self._photo_key is None
 
     async def fetch(self, place_id: str) -> dict[str, Any]:
         """Raw detail for a place.

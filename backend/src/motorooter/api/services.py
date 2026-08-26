@@ -13,14 +13,17 @@ Returning a mapping keyed by `OPTIONAL_SERVICES` means a new service is added in
 and a missing one fails an enumerating test.
 """
 
+import logging
 from typing import Any
 
 from motorooter.api.deps import OPTIONAL_SERVICES
 from motorooter.chat.factory import build_chat_model
 from motorooter.planning.discovery.details import PlaceDetails
-from motorooter.planning.discovery.factory import build_discovery
+from motorooter.planning.discovery.factory import DiscoverySettings, build_discovery
 from motorooter.planning.discovery.factory import settings_from_env as discovery_from_env
 from motorooter.routing.factory import RoutingSettings
+
+logger = logging.getLogger(__name__)
 
 
 def build_optional_services(routing_config: RoutingSettings) -> dict[str, Any]:
@@ -54,7 +57,26 @@ def _build(routing_config: RoutingSettings) -> dict[str, Any]:
         # Needs only the one key, unlike discovery, so it is built directly rather than
         # gated behind `settings.configured` — the POI dialog should work on a deployment
         # with a Maps key and no search credentials.
-        "places": PlaceDetails(api_key=settings.places_api_key)
-        if settings.places_api_key
-        else None,
+        "places": _places(settings),
     }
+
+
+def _places(settings: DiscoverySettings) -> PlaceDetails | None:
+    """The Places detail client, announcing a shared photo key if that is what it got.
+
+    Photo URLs publish whatever key they carry. Falling back to the server key keeps a
+    prototype working, and warning about it is what stops that becoming a silent default —
+    nobody reads a docstring at deploy time, and a public URL turns this from a note into
+    billing exposure with no ceiling.
+    """
+    if not settings.places_api_key:
+        return None
+    places = PlaceDetails(api_key=settings.places_api_key, photo_key=settings.places_photo_key)
+    if places.photo_key_is_shared:
+        logger.warning(
+            "GOOGLE_MAPS_BROWSER_KEY is not set, so POI photo URLs will carry the "
+            "server-side Places key into the browser. That key also authorises Directions, "
+            "Geocoding and Places Text Search with no spend ceiling. Before deploying, "
+            "provision a browser key restricted by HTTP referrer and to Places Photos."
+        )
+    return places

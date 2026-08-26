@@ -110,7 +110,7 @@ async def get_place_detail(
             opening_hours=strings_in(
                 hours.get("weekdayDescriptions") if isinstance(hours, dict) else None
             ),
-            photo_urls=_photo_urls(body.get("photos"), key=places.api_key),
+            photo_urls=_photo_urls(body.get("photos"), key=places.photo_key),
         )
     )
 
@@ -140,9 +140,12 @@ def _photo_urls(value: object, *, key: str) -> tuple[str, ...]:
     reference makes the client construct Google URLs, and handing over a URL needing a key
     appended means publishing the server key to an unauthenticated page.
 
-    This URL carries the key, so it is as public as the Maps JS key already is — restrict it
-    by referrer and by API, and keep it distinct from the search-side keys. That constraint
-    is not new; it is the one CLAUDE.md already states for the browser key.
+    **The key it carries is the photo key, not the search key.** A URL handed to a browser
+    publishes whatever key is in it, and the search-side key also authorises Directions,
+    Geocoding and Places Text Search with no ceiling — so the two must not be the same value
+    on anything deployed. `PlaceDetails.photo_key` falls back to the server key when only one
+    is configured, which keeps a prototype working and is announced at startup rather than
+    assumed.
 
     Not cached anywhere: Google's terms permit storing `place_id` and little else, so these
     are rebuilt per request like every other field on `PoiDetail`.

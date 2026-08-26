@@ -2,7 +2,7 @@ import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
 import { MapCanvas } from './MapCanvas'
 import type { GoogleMaps } from './loadGoogleMaps'
-import { routeLeg } from '../api/fixtures'
+import { poi as placeFixture, routeLeg } from '../api/fixtures'
 import type { Coordinate, Poi, TripLeg, Waypoint } from '../api/types'
 
 /**
@@ -21,10 +21,29 @@ interface FakeListener {
   removed: boolean
 }
 
+/** Where a Maps event happened on screen. The API carries this on `domEvent`. */
+interface ScreenAt {
+  readonly x: number
+  readonly y: number
+}
+
+/** The browser's own menu, which has to be suppressed or it lands on top of ours. */
+const nativeMenu = { preventDefault: vi.fn() }
+
 /** Delivers a Maps event to every live listener registered for it. */
-function emit(listeners: readonly FakeListener[], event: string, coordinate: Coordinate): void {
+function emit(
+  listeners: readonly FakeListener[],
+  event: string,
+  coordinate: Coordinate,
+  at?: ScreenAt,
+): void {
   for (const listener of listeners.filter((l) => l.event === event && !l.removed)) {
-    listener.handler({ latLng: { lat: () => coordinate.lat, lng: () => coordinate.lon } })
+    listener.handler({
+      latLng: { lat: () => coordinate.lat, lng: () => coordinate.lon },
+      ...(at === undefined
+        ? {}
+        : { domEvent: { clientX: at.x, clientY: at.y, preventDefault: nativeMenu.preventDefault } }),
+    })
   }
 }
 
@@ -121,6 +140,10 @@ function createFakeMaps({ withMarkerLibrary = true }: { withMarkerLibrary?: bool
     mouseDown(coordinate: Coordinate): void {
       emit(this.listeners, 'mousedown', coordinate)
     }
+    /** Drives a right-click on the line, which carries a screen position with it. */
+    rightClick(coordinate: Coordinate, at: ScreenAt = { x: 0, y: 0 }): void {
+      emit(this.listeners, 'contextmenu', coordinate, at)
+    }
   }
 
   class FakeMarker {
@@ -139,8 +162,18 @@ function createFakeMaps({ withMarkerLibrary = true }: { withMarkerLibrary?: bool
     click(): void {
       this.listeners.get('click')?.({})
     }
-    contextMenu(): void {
-      this.listeners.get('contextmenu')?.({})
+    contextMenu(at?: ScreenAt): void {
+      this.listeners.get('contextmenu')?.(
+        at === undefined
+          ? {}
+          : {
+              domEvent: {
+                clientX: at.x,
+                clientY: at.y,
+                preventDefault: nativeMenu.preventDefault,
+              },
+            },
+      )
     }
   }
 
@@ -167,8 +200,18 @@ function createFakeMaps({ withMarkerLibrary = true }: { withMarkerLibrary?: bool
     click(): void {
       this.listeners.get('click')?.({})
     }
-    contextMenu(): void {
-      this.listeners.get('contextmenu')?.({})
+    contextMenu(at?: ScreenAt): void {
+      this.listeners.get('contextmenu')?.(
+        at === undefined
+          ? {}
+          : {
+              domEvent: {
+                clientX: at.x,
+                clientY: at.y,
+                preventDefault: nativeMenu.preventDefault,
+              },
+            },
+      )
     }
   }
 
@@ -202,6 +245,14 @@ function createFakeMaps({ withMarkerLibrary = true }: { withMarkerLibrary?: bool
         .filter((marker) => marker.map !== null)
         .map((marker) => marker.options['content'] as HTMLElement | undefined)
         .filter((pin) => pin?.className?.startsWith('poi') === true),
+    /** Markers standing for a trip waypoint, in the order they were placed. */
+    waypointMarkers: () =>
+      [...markers, ...legacyMarkers].filter(
+        (marker) =>
+          marker.map !== null &&
+          (marker.options['content'] as HTMLElement | undefined)?.className?.startsWith('pin ') ===
+            true,
+      ),
     /** The live drag handle, if the gesture is showing one. */
     handles: () =>
       [...markers, ...legacyMarkers].filter(
@@ -569,7 +620,11 @@ describe('MapCanvas dragging the route', () => {
     render(<MapCanvas mapId={MAP_ID} loader={fake.loader} legs={[leg(coords(3))]} />)
     await waitFor(() => expect(fake.polylines).toHaveLength(1))
 
-    expect(fake.polylines[0]?.listeners.filter((l) => !l.removed)).toHaveLength(0)
+    // Only the press matters here. The line always listens for a right-click, because that
+    // listener is cached per leg and cannot be added retroactively.
+    expect(
+      fake.polylines[0]?.listeners.filter((l) => !l.removed && l.event === 'mousedown'),
+    ).toHaveLength(0)
   })
 
   it('leaves no line listeners behind when the route is redrawn or unmounted', async () => {
@@ -943,21 +998,6 @@ describe('MapCanvas showing points of interest', () => {
     await waitFor(() => expect(fake.poiPins()).toHaveLength(2))
   })
 
-  it('reports a right-click on a place, which is how it gets added to the route', async () => {
-    const fake = createFakeMaps()
-    const onPoiAdd = vi.fn()
-    const place = poi()
-
-    render(<MapCanvas mapId={MAP_ID} loader={fake.loader} pois={[place]} onPoiAdd={onPoiAdd} />)
-    await waitFor(() => expect(fake.poiPins()).toHaveLength(1))
-
-    act(() => {
-      fake.poiMarkers()[0]?.contextMenu()
-    })
-
-    expect(onPoiAdd).toHaveBeenCalledWith(place)
-  })
-
   it('reports a plain click on a place, which opens its detail', async () => {
     const fake = createFakeMaps()
     const onPoiOpen = vi.fn()
@@ -977,7 +1017,7 @@ describe('MapCanvas showing points of interest', () => {
     // The backend refuses to pin one, so offering it would be a control that cannot work.
     // It still opens — a rider may want to read what was suggested and why.
     const fake = createFakeMaps()
-    const onPoiAdd = vi.fn()
+    const onContextMenu = vi.fn()
     const onPoiOpen = vi.fn()
     const guess = poi({ source: 'llm_suggested', place_id: null })
 
@@ -986,7 +1026,7 @@ describe('MapCanvas showing points of interest', () => {
         mapId={MAP_ID}
         loader={fake.loader}
         pois={[guess]}
-        onPoiAdd={onPoiAdd}
+        onContextMenu={onContextMenu}
         onPoiOpen={onPoiOpen}
       />,
     )
@@ -997,7 +1037,7 @@ describe('MapCanvas showing points of interest', () => {
       fake.poiMarkers()[0]?.click()
     })
 
-    expect(onPoiAdd).not.toHaveBeenCalled()
+    expect(onContextMenu).not.toHaveBeenCalled()
     expect(onPoiOpen).toHaveBeenCalledWith(guess)
   })
 
@@ -1019,5 +1059,147 @@ describe('MapCanvas showing points of interest', () => {
     unmount()
 
     expect(fake.poiPins()).toHaveLength(0)
+  })
+})
+
+/**
+ * Right-click, reported rather than acted on.
+ *
+ * Right-click already *did* things here — removed a waypoint, added a place to the route — with
+ * no label and no confirmation, so the rider who discovered it discovered it by doing it. The
+ * canvas now says what was clicked and where on screen; the caller opens a named menu over it.
+ *
+ * The screen position is the part with no obvious test elsewhere: a menu that opens in the
+ * corner instead of under the cursor is a menu about the wrong thing.
+ */
+describe('MapCanvas reporting a right-click', () => {
+  it('reports a right-clicked point with where on screen it happened', async () => {
+    const fake = createFakeMaps()
+    const onContextMenu = vi.fn()
+
+    render(
+      <MapCanvas
+        mapId={MAP_ID}
+        loader={fake.loader}
+        waypoints={[waypoint(47), waypoint(47.02)]}
+        onContextMenu={onContextMenu}
+      />,
+    )
+    await waitFor(() => expect(fake.waypointMarkers()).toHaveLength(2))
+
+    act(() => {
+      fake.waypointMarkers()[1]?.contextMenu({ x: 340, y: 210 })
+    })
+
+    expect(onContextMenu).toHaveBeenCalledWith({
+      kind: 'waypoint',
+      index: 1,
+      at: { x: 340, y: 210 },
+    })
+  })
+
+  it('reports a right-clicked place rather than adding it outright', async () => {
+    // The silent add was the discoverability problem in the other direction: nothing said it had
+    // happened, or that it could.
+    const fake = createFakeMaps()
+    const onContextMenu = vi.fn()
+    const place = placeFixture({ source: 'places', place_id: 'ChIJ123' })
+
+    render(
+      <MapCanvas
+        mapId={MAP_ID}
+        loader={fake.loader}
+        pois={[place]}
+        onContextMenu={onContextMenu}
+      />,
+    )
+    await waitFor(() => expect(fake.poiPins()).toHaveLength(1))
+
+    act(() => {
+      fake.poiMarkers()[0]?.contextMenu({ x: 80, y: 90 })
+    })
+
+    expect(onContextMenu).toHaveBeenCalledWith({ kind: 'poi', poi: place, at: { x: 80, y: 90 } })
+  })
+
+  it('reports a right-click on the line with the leg and the point on it', async () => {
+    // Both are load-bearing for "add point here": the coordinate is where the new point goes,
+    // and the leg is the one being split in two.
+    const fake = createFakeMaps()
+    const onContextMenu = vi.fn()
+
+    render(
+      <MapCanvas
+        mapId={MAP_ID}
+        loader={fake.loader}
+        waypoints={[waypoint(47), waypoint(47.02)]}
+        legs={[leg(coords(3, 47)), leg(coords(3, 48))]}
+        onContextMenu={onContextMenu}
+      />,
+    )
+    await waitFor(() => expect(fake.polylines).toHaveLength(2))
+
+    act(() => {
+      fake.polylines[1]?.rightClick({ lat: 48.01, lon: -120 }, { x: 500, y: 400 })
+    })
+
+    expect(onContextMenu).toHaveBeenCalledWith({
+      kind: 'route',
+      legIndex: 1,
+      coordinate: { lat: 48.01, lon: -120 },
+      at: { x: 500, y: 400 },
+    })
+  })
+
+  it('keeps the browser out of the way, so one menu opens rather than two', async () => {
+    // Two menus stacked is worse than the unlabelled right-click this replaces: the rider picks
+    // from whichever won the paint.
+    const fake = createFakeMaps()
+    nativeMenu.preventDefault.mockClear()
+
+    render(
+      <MapCanvas
+        mapId={MAP_ID}
+        loader={fake.loader}
+        waypoints={[waypoint(47), waypoint(47.02)]}
+        onContextMenu={vi.fn()}
+      />,
+    )
+    await waitFor(() => expect(fake.waypointMarkers()).toHaveLength(2))
+
+    act(() => {
+      fake.waypointMarkers()[0]?.contextMenu({ x: 10, y: 10 })
+    })
+
+    expect(nativeMenu.preventDefault).toHaveBeenCalled()
+  })
+
+  it('leaves no line listener behind when the route is redrawn', async () => {
+    // Every listener added per leg is one more to leak on a route that gets edited all evening.
+    const fake = createFakeMaps()
+    const view = render(
+      <MapCanvas
+        mapId={MAP_ID}
+        loader={fake.loader}
+        waypoints={[waypoint(47), waypoint(47.02)]}
+        legs={[leg(coords(3, 47))]}
+        onContextMenu={vi.fn()}
+      />,
+    )
+    await waitFor(() => expect(fake.polylines).toHaveLength(1))
+    const first = fake.polylines[0]
+
+    view.rerender(
+      <MapCanvas
+        mapId={MAP_ID}
+        loader={fake.loader}
+        waypoints={[waypoint(47), waypoint(47.02)]}
+        legs={[leg(coords(4, 47.5))]}
+        onContextMenu={vi.fn()}
+      />,
+    )
+
+    await waitFor(() => expect(fake.polylines.length).toBeGreaterThan(1))
+    expect(first?.listeners.every((listener) => listener.removed)).toBe(true)
   })
 })

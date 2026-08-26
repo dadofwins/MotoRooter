@@ -24,7 +24,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { apiClient } from './api/apiClient'
 import type { ApiClient } from './api/client'
 import type { Coordinate, GeocodeResult, LegIntent, Poi, Trip, TripLeg, Waypoint } from './api/types'
-import { MapCanvas } from './map/MapCanvas'
+import { MapCanvas, type ContextTarget } from './map/MapCanvas'
+import { ContextMenu, type ContextMenuItem } from './map/ContextMenu'
 import { MAP_ID, loadMaps } from './map/googleMaps'
 import type { GoogleMapsLoader } from './map/loadGoogleMaps'
 import { isVerified } from './map/poiPin'
@@ -32,7 +33,14 @@ import { PlaceList } from './poi/PlaceList'
 import { RouteThroughBest } from './poi/RouteThroughBest'
 import { PoiDetailPane } from './poi/PoiDetailPane'
 import { DragSession } from './routing/dragSession'
-import { addPoiToRoute, addPoisToRoute, isLegStale, type RouteEdit } from './routing/tripEdits'
+import {
+  addPoiToRoute,
+  addPoisToRoute,
+  isLegStale,
+  legWaypoints,
+  viaInsertionOffset,
+  type RouteEdit,
+} from './routing/tripEdits'
 import { replanErrorMessage, routeErrorMessage } from './trip/routeErrorMessage'
 import { SurfaceSummary } from './trip/SurfaceSummary'
 import { ChatRail } from './chat/ChatRail'
@@ -40,6 +48,7 @@ import { Landing } from './landing/Landing'
 import {
   DEFAULT_INTENT,
   legsSpanning,
+  withLegSplit,
   withWaypointAppended,
   withWaypointRemoved,
 } from './routing/legStructure'
@@ -345,6 +354,45 @@ function TripSession({
   )
 
   /**
+   * Add a point in the middle of the route, dividing the leg it landed on.
+   *
+   * A split, not a via-point, and the difference is the whole reason this exists. Dragging the
+   * line shapes one road: the leg grows a waypoint and stays one leg, because the rider is saying
+   * *go this way*. Right-clicking and asking for a point here says *this is a place I am going
+   * to* — a stop, a turnaround, the end of a day — and each side of it is then a segment with its
+   * own routing mode. Inserting a via-point would leave one picker where the rider has just
+   * described two rides.
+   *
+   * Where in the leg it lands is measured along the road rather than by proximity, the same way a
+   * drag decides: a twisty route doubles back on itself constantly, and the nearest waypoint as
+   * the crow flies is routinely on the other side of the loop.
+   */
+  const splitLegAt = useCallback(
+    (legIndex: number, coordinate: Coordinate) => {
+      change((from) => {
+        const legs = from.legs ?? legsSpanning(from.waypoints.length, DEFAULT_INTENT)
+        const leg = legs[legIndex]
+        if (leg === undefined) return {}
+        return withLegSplit(
+          { waypoints: from.waypoints, legs },
+          {
+            legIndex,
+            offsetInLeg: viaInsertionOffset({
+              legWaypoints: legWaypoints(from.waypoints, leg),
+              // An unrouted leg has no line to measure along, and the offset falls back to 1 —
+              // which is the only position a two-point leg has anyway.
+              geometry: leg.routed?.geometry ?? [],
+              dragged: coordinate,
+            }),
+            coordinate,
+          },
+        )
+      })
+    },
+    [change],
+  )
+
+  /**
    * Change one segment's routing mode.
    *
    * The mouse equivalent of the assistant's `set_leg_intent`. The geometry is left in place
@@ -468,6 +516,73 @@ function TripSession({
     )
     // The dialog is about a place that is no longer on the trip, so it closes with it.
     setOpenPoi((open) => (open?.id === poi.id ? null : open))
+  }, [])
+
+  /**
+   * What was right-clicked, and therefore what the menu is about.
+   *
+   * The canvas reports rather than acts, so every destructive right-click now has a name on it
+   * and a way out. Held here rather than in the canvas because the actions are the shell's:
+   * the map knows a pin was clicked, not what removing it means.
+   */
+  const [menuTarget, setMenuTarget] = useState<ContextTarget | null>(null)
+
+  const menuItems = useMemo<readonly ContextMenuItem[]>(() => {
+    if (menuTarget === null) return []
+    if (menuTarget.kind === 'waypoint') {
+      const { index } = menuTarget
+      return [
+        {
+          key: 'remove',
+          label: 'Remove this point',
+          destructive: true,
+          onChoose: () => {
+            removeWaypoint(index)
+          },
+        },
+      ]
+    }
+    if (menuTarget.kind === 'route') {
+      const { legIndex, coordinate } = menuTarget
+      return [
+        {
+          key: 'split',
+          label: 'Add point here',
+          onChoose: () => {
+            splitLegAt(legIndex, coordinate)
+          },
+        },
+      ]
+    }
+    const { poi } = menuTarget
+    return [
+      {
+        key: 'add',
+        label: 'Add to route',
+        onChoose: () => {
+          onPoiAdd(poi)
+        },
+      },
+      {
+        key: 'detail',
+        label: 'Show details',
+        onChoose: () => {
+          onPoiOpen(poi)
+        },
+      },
+      {
+        key: 'ignore',
+        label: 'Hide this place',
+        destructive: true,
+        onChoose: () => {
+          onPoiIgnore(poi)
+        },
+      },
+    ]
+  }, [menuTarget, removeWaypoint, splitLegAt, onPoiAdd, onPoiOpen, onPoiIgnore])
+
+  const dismissMenu = useCallback(() => {
+    setMenuTarget(null)
   }, [])
 
   /**
@@ -674,10 +789,12 @@ function TripSession({
           onLegDrop={onLegDrop}
           onLegCancel={onLegCancel}
           pois={placed}
-          onPoiAdd={onPoiAdd}
           onPoiOpen={onPoiOpen}
-          onWaypointRemove={removeWaypoint}
+          onContextMenu={setMenuTarget}
         />
+        {menuTarget !== null && (
+          <ContextMenu at={menuTarget.at} items={menuItems} onDismiss={dismissMenu} />
+        )}
       </main>
       <aside className="chat-pane" aria-label="Trip assistant">
         <div className="trip-bar">

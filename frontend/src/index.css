@@ -1826,8 +1826,67 @@ body {
   margin: 0;
 }
 
+/* The right-click menu.
+
+   Fixed rather than absolute: the position comes from the pointer event in viewport pixels, and
+   the map pane is a positioned ancestor that would otherwise offset it by the pane's own origin. */
+.context-menu {
+  position: fixed;
+  z-index: 5;
+  display: grid;
+  min-width: 11rem;
+  padding: 0.25rem;
+  background: #fff;
+  border-radius: 8px;
+  box-shadow: 0 2px 16px rgb(0 0 0 / 0.18);
+}
+
+.context-menu:focus-visible {
+  outline: 2px solid rgb(0 0 0 / 0.4);
+}
+
+.context-menu__item {
+  padding: 0.4375rem 0.625rem;
+  font: inherit;
+  text-align: left;
+  color: inherit;
+  background: none;
+  border: 0;
+  border-radius: 5px;
+  cursor: pointer;
+}
+
+.context-menu__item:hover,
+.context-menu__item:focus-visible {
+  background: rgb(0 0 0 / 0.07);
+}
+
+/* Named as well as coloured. The label already says "Remove", so the colour reinforces a word
+   rather than being the only thing that distinguishes the destructive item. */
+.context-menu__item--destructive {
+  color: #b91c1c;
+}
+
 /* Dark mode is not optional for a tool read outdoors and after dark. */
 @media (prefers-color-scheme: dark) {
+  .context-menu {
+    background: #26262a;
+    box-shadow: 0 2px 16px rgb(0 0 0 / 0.5);
+  }
+
+  .context-menu:focus-visible {
+    outline-color: rgb(255 255 255 / 0.5);
+  }
+
+  .context-menu__item:hover,
+  .context-menu__item:focus-visible {
+    background: rgb(255 255 255 / 0.1);
+  }
+
+  .context-menu__item--destructive {
+    color: #fca5a5;
+  }
+
   .map-pane,
   .map-canvas__overlay {
     background: #1c1c1e;

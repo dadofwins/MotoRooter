@@ -4,6 +4,7 @@ import type { TripLeg, Waypoint } from '../api/types'
 import {
   legsSpanning,
   withWaypointAppended,
+  withLegSplit,
   withWaypointRemoved,
 } from './legStructure'
 
@@ -234,5 +235,144 @@ describe('withWaypointRemoved', () => {
         expect(leg.start_waypoint_index).toBe(after.legs[previous]?.end_waypoint_index)
       })
     }
+  })
+})
+
+/**
+ * Dividing one segment into two.
+ *
+ * Tim: *"if you right click the route the menu has an 'add point' option which just adds a point
+ * where you clicked... the idea being you can use that to change routing options more granularly
+ * — like maybe you want to keep part of a dirt section but route via road closer to it."*
+ *
+ * That last clause is the whole request, and it rules out `insertVia`. A via *grows* a leg, so
+ * the result is one leg with one intent — exactly what he is trying to get away from. Splitting
+ * gives two legs that can carry different modes, which is what "more granularly" means.
+ *
+ * This is the inverse of the merge `withWaypointRemoved` performs, and the two should stay
+ * inverses: split at a point, remove that point, and you are back where you started.
+ */
+describe('withLegSplit', () => {
+  function routed(distanceM: number) {
+    return routeLeg({ distance_m: distanceM })
+  }
+
+  const three: readonly Waypoint[] = [
+    waypoint(47.0, -120.0),
+    waypoint(47.5, -120.5),
+    waypoint(48.0, -121.0),
+  ]
+
+  it('turns one leg into two at the new point', () => {
+    const before = {
+      waypoints: three.slice(0, 2),
+      legs: [tripLeg({ start_waypoint_index: 0, end_waypoint_index: 1, routed: routed(1000) })],
+    }
+
+    const after = withLegSplit(before, { legIndex: 0, offsetInLeg: 1, coordinate: { lat: 47.25, lon: -120.25 } })
+
+    expect(after.waypoints).toHaveLength(3)
+    expect(after.legs.map((leg) => [leg.start_waypoint_index, leg.end_waypoint_index])).toEqual([
+      [0, 1],
+      [1, 2],
+    ])
+  })
+
+  it('gives both halves the intent the original had', () => {
+    // Splitting is not choosing. The rider divides the segment and then picks a mode for one
+    // half; inventing a different mode for either would be answering a question they have not
+    // asked yet.
+    const before = {
+      waypoints: three.slice(0, 2),
+      legs: [tripLeg({ start_waypoint_index: 0, end_waypoint_index: 1, intent: 'unpaved' })],
+    }
+
+    const after = withLegSplit(before, { legIndex: 0, offsetInLeg: 1, coordinate: { lat: 47.25, lon: -120.25 } })
+
+    expect(after.legs.map((leg) => leg.intent)).toEqual(['unpaved', 'unpaved'])
+  })
+
+  it('leaves both halves needing a route', () => {
+    // One polyline cannot describe two legs, and each half is a road nobody has asked about.
+    const before = {
+      waypoints: three.slice(0, 2),
+      legs: [tripLeg({ start_waypoint_index: 0, end_waypoint_index: 1, routed: routed(1000) })],
+    }
+
+    const after = withLegSplit(before, { legIndex: 0, offsetInLeg: 1, coordinate: { lat: 47.25, lon: -120.25 } })
+
+    expect(after.legs.every((leg) => leg.routed === null)).toBe(true)
+  })
+
+  it('leaves every other leg exactly as it was', () => {
+    const legs = [
+      tripLeg({ start_waypoint_index: 0, end_waypoint_index: 1, routed: routed(1000) }),
+      tripLeg({ start_waypoint_index: 1, end_waypoint_index: 2, routed: routed(2000) }),
+    ]
+
+    const after = withLegSplit(
+      { waypoints: three, legs },
+      { legIndex: 0, offsetInLeg: 1, coordinate: { lat: 47.25, lon: -120.25 } },
+    )
+
+    expect(after.legs).toHaveLength(3)
+    // The untouched leg keeps its geometry, by identity, and shifts index only.
+    expect(after.legs[2]?.routed).toBe(legs[1]?.routed)
+    expect([after.legs[2]?.start_waypoint_index, after.legs[2]?.end_waypoint_index]).toEqual([2, 3])
+  })
+
+  it('splits a leg a drag has already grown, at the position asked for', () => {
+    // A leg spanning three waypoints has two places to divide it, and the offset says which.
+    const legs = [tripLeg({ start_waypoint_index: 0, end_waypoint_index: 2, intent: 'unpaved' })]
+
+    const after = withLegSplit(
+      { waypoints: three, legs },
+      { legIndex: 0, offsetInLeg: 2, coordinate: { lat: 47.9, lon: -120.9 } },
+    )
+
+    expect(after.legs.map((leg) => [leg.start_waypoint_index, leg.end_waypoint_index])).toEqual([
+      [0, 2],
+      [2, 3],
+    ])
+  })
+
+  it('pins the new point, because the rider placed it', () => {
+    const before = {
+      waypoints: three.slice(0, 2),
+      legs: [tripLeg({ start_waypoint_index: 0, end_waypoint_index: 1 })],
+    }
+
+    const after = withLegSplit(before, { legIndex: 0, offsetInLeg: 1, coordinate: { lat: 47.25, lon: -120.25 } })
+
+    expect(after.waypoints[1]?.pinned).toBe(true)
+  })
+
+  it('refuses an offset that would not divide anything', () => {
+    // Offset 0 is the leg's own start and the previous leg's end; splitting there produces an
+    // empty half and a trip that saves cleanly while being nonsense.
+    const before = {
+      waypoints: three.slice(0, 2),
+      legs: [tripLeg({ start_waypoint_index: 0, end_waypoint_index: 1 })],
+    }
+
+    expect(() =>
+      withLegSplit(before, { legIndex: 0, offsetInLeg: 0, coordinate: { lat: 47.1, lon: -120.1 } }),
+    ).toThrow(RangeError)
+  })
+
+  it('is the inverse of the merge that removing a point performs', () => {
+    // The property that keeps the two operations honest with each other.
+    const before = {
+      waypoints: three.slice(0, 2),
+      legs: [tripLeg({ start_waypoint_index: 0, end_waypoint_index: 1, routed: null })],
+    }
+
+    const split = withLegSplit(before, { legIndex: 0, offsetInLeg: 1, coordinate: { lat: 47.25, lon: -120.25 } })
+    const merged = withWaypointRemoved(split, 1)
+
+    expect(merged.waypoints).toEqual(before.waypoints)
+    expect(merged.legs.map((leg) => [leg.start_waypoint_index, leg.end_waypoint_index])).toEqual([
+      [0, 1],
+    ])
   })
 })

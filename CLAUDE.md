@@ -54,8 +54,16 @@ pins with add-to-route and the Places detail dialog. Surface summary. Miles by d
 km toggle, and time estimates. Trip lifecycle — save, load, share by link — and the front door:
 a per-browser recent-trips list and a create path that carries the rider's chosen name.
 
-**In review:** `be/discovery-speed` (parallelised discovery, 126s → 21s simulated; one finding
-sent), `be/road-expansion` (roads-as-leads; before/after yield still unmeasured).
+Discovery runs in **19.1 s live** (was ten minutes and stalling), and the front door
+auto-opens a returning rider's only trip with New trip always reachable.
+
+**Shelved, not rejected:** `be/road-expansion` (roads-as-leads). Measured as finding *fewer*
+POIs than baseline for 1.4–2.3× the searches — but against a funnel discarding 84% of
+candidates upstream, so the number says nothing about the mechanism, which demonstrably works.
+Re-measure after anchor naming is fixed. Do not review or merge it before then.
+
+**In flight:** `be/anchor-naming` (the Stage 0 fix — the highest-value item in the backend
+queue), `fe/multi-leg-structure`.
 
 **Stubbed with frozen schemas** (501, so the frontend builds against real shapes): GPX export,
 and the chat endpoint `POST /api/trips/{slug}/chat`.

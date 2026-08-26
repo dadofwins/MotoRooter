@@ -17,8 +17,23 @@ import type { Coordinate, Poi } from '../api/types'
  * How close two pins have to be before they are treated as one.
  *
  * A pin is 24px across with a 2px border, so two of them touch at 28px between centres and
- * genuinely obscure each other below that. Slightly wider than touching, because two pins with a
+ * obscure each other below that. Slightly wider than touching, because two pins with a
  * two-pixel gap are already unreadable and unclickable as separate targets.
+ *
+ * **Measured 2026-08-26 against a live discovery run** — WABDR 3, Ellensburg–Cashmere, 31 real
+ * places from the real pipeline. Two things came out of it, and the second is why this constant
+ * is not worth arguing about:
+ *
+ * - **The problem is far bigger than "some pins overlap".** At zoom 8, where a rider sees the
+ *   whole day, **29 of the 31 pins are obscured by another** — two are readable. Zooming in does
+ *   not fix it either: 13 still overlap at zoom 12, and 5 at zoom 14, by which point the corridor
+ *   no longer fits on screen. There is no zoom at which this route reads correctly unclustered.
+ * - **The value barely matters.** From 24px to 56px the cluster count at zoom 10 moves between
+ *   16 and 9, and at zoom 12 between 24 and 19. Nearest-neighbour separation is bimodal — 2.9px
+ *   minimum, 10.5px at the first quartile, 38.8px median, 558px maximum — so any threshold in a
+ *   wide band lands in the same empty gap, exactly as `GAP_REPORT_THRESHOLD_M` did.
+ *
+ * Largest group at the planning zoom was **12**, which is what the disclosure has to cope with.
  */
 export const CLUSTER_RADIUS_PX = 34
 

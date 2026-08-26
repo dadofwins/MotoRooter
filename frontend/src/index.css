@@ -31,6 +31,131 @@ body {
   overflow-y: auto;
 }
 
+/* The assistant. Takes the rail's remaining height so the composer sits at the bottom, which
+   is where a rider's hands already are, and the transcript grows upward into the space. */
+.chat {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  flex: 1 1 auto;
+  min-height: 12rem;
+  margin-top: 1rem;
+  padding-top: 1rem;
+  border-top: 1px solid rgb(0 0 0 / 0.12);
+}
+
+.chat__log {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  flex: 1 1 auto;
+  overflow-y: auto;
+}
+
+.chat__greeting {
+  margin: 0;
+  line-height: 1.5;
+}
+
+.chat__entry {
+  margin: 0;
+  padding: 0.4375rem 0.625rem;
+  font-size: 0.875rem;
+  line-height: 1.45;
+  border-radius: 0.5rem;
+  /* Long place names and URLs must not widen the rail past the map. */
+  overflow-wrap: anywhere;
+}
+
+/* The rider's own words, aligned to their side of the conversation. */
+.chat__entry--you {
+  align-self: flex-end;
+  max-width: 85%;
+  color: #f8fafc;
+  background: #334155;
+}
+
+.chat__entry--assistant {
+  background: rgb(0 0 0 / 0.05);
+}
+
+/* Tool activity is not the answer, so it recedes — but it is what makes a twenty-second wait
+   legible, so it is not hidden either. */
+.chat__entry--tool {
+  font-size: 0.8125rem;
+  color: rgb(0 0 0 / 0.6);
+  padding-left: 0;
+  padding-right: 0;
+}
+
+.chat__entry--tool::before {
+  content: '· ';
+}
+
+/* Kept visibly distinct: a tool that failed changed nothing, and a rider who cannot see that
+   will believe it did. */
+.chat__entry--tool-failed {
+  font-size: 0.8125rem;
+  color: #7c4a02;
+  background: rgb(245 158 11 / 0.12);
+  border-left: 3px solid #b45309;
+  border-radius: 0.25rem;
+}
+
+.chat__entry--unavailable {
+  font-size: 0.8125rem;
+  color: rgb(0 0 0 / 0.6);
+  background: rgb(0 0 0 / 0.04);
+  border: 1px dashed rgb(0 0 0 / 0.2);
+}
+
+.chat__entry--error {
+  color: #7f1d1d;
+  background: rgb(220 38 38 / 0.1);
+  border-left: 3px solid #b91c1c;
+  border-radius: 0.25rem;
+}
+
+.chat__working,
+.chat__truncated {
+  margin: 0;
+  font-size: 0.8125rem;
+  color: rgb(0 0 0 / 0.6);
+}
+
+.chat__composer {
+  display: flex;
+  gap: 0.5rem;
+  align-items: flex-end;
+  flex: none;
+}
+
+.chat__field {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+}
+
+/* The label is for screen readers; the placeholder carries it visually, and the button beside
+   it says what the box is for. */
+.chat__label {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.chat__field textarea {
+  font: inherit;
+  font-size: 0.875rem;
+  padding: 0.4375rem 0.5rem;
+  border: 1px solid rgb(0 0 0 / 0.2);
+  border-radius: 0.375rem;
+  resize: vertical;
+}
+
 /* The map fills its pane; everything else sits on top of it. */
 .map-canvas,
 .map-canvas__surface {
@@ -738,6 +863,49 @@ body {
 
   .chat-pane {
     border-left-color: rgb(255 255 255 / 0.14);
+  }
+
+  .chat {
+    border-top-color: rgb(255 255 255 / 0.14);
+  }
+
+  .chat__entry--you {
+    color: #0f172a;
+    background: #cbd5e1;
+  }
+
+  .chat__entry--assistant {
+    background: rgb(255 255 255 / 0.08);
+  }
+
+  .chat__entry--tool,
+  .chat__working,
+  .chat__truncated {
+    color: rgb(255 255 255 / 0.6);
+  }
+
+  .chat__entry--tool-failed {
+    color: #fcd34d;
+    background: rgb(245 158 11 / 0.14);
+    border-left-color: #d97706;
+  }
+
+  .chat__entry--unavailable {
+    color: rgb(255 255 255 / 0.6);
+    background: rgb(255 255 255 / 0.05);
+    border-color: rgb(255 255 255 / 0.22);
+  }
+
+  .chat__entry--error {
+    color: #fca5a5;
+    background: rgb(220 38 38 / 0.16);
+    border-left-color: #ef4444;
+  }
+
+  .chat__field textarea {
+    color: inherit;
+    background: rgb(255 255 255 / 0.06);
+    border-color: rgb(255 255 255 / 0.22);
   }
 
   .route-summary {

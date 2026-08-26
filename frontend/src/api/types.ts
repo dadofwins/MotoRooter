@@ -43,6 +43,11 @@ export type UpdateTripRequest = Schemas['UpdateTripRequest']
 export type ReplanRequest = Schemas['ReplanRequest']
 export type ReplanEvent = Schemas['ReplanEvent']
 export type PoiDetailResponse = Schemas['PoiDetailResponse']
+
+// Assistant conversation
+export type ChatRequest = Schemas['ChatRequest']
+export type ChatEvent = Schemas['ChatEvent']
+export type ChatTurn = Schemas['ChatTurn']
 export type RoutingCapabilitiesResponse = Schemas['RoutingCapabilitiesResponse']
 export type IntentRouting = Schemas['IntentRouting']
 export type ErrorResponse = Schemas['ErrorResponse']

@@ -272,3 +272,88 @@ describe('useTripDocument', () => {
     expect(signals.at(-1)?.aborted).toBe(true)
   })
 })
+
+/**
+ * Bringing a trip into existence on demand.
+ *
+ * The chat rail needs one before it can say anything: the endpoint is addressed by slug, and
+ * the app's own opening line invites the rider to describe a trip *before* placing a point. So
+ * "created on the first waypoint" is not the only trigger — it is the one the mouse uses.
+ */
+describe('useTripSave.ensure', () => {
+  it('creates a trip when there is none, and answers with its slug', async () => {
+    const client = fakeClient({ slug: 'trip-abc123' })
+    const { result } = renderHook(() => useSaving(client, []))
+
+    let slug: string | null = null
+    await act(async () => {
+      slug = await result.current.ensure()
+    })
+
+    expect(client.createTrip).toHaveBeenCalledTimes(1)
+    expect(slug).toBe('trip-abc123')
+    expect(result.current.slug).toBe('trip-abc123')
+  })
+
+  it('answers with the trip that already exists rather than making another', async () => {
+    const client = fakeClient()
+    const { result } = renderHook(() =>
+      useTripSave(client, content([]), { slug: 'wabdr-north', onConflict: () => undefined }),
+    )
+
+    let slug: string | null = null
+    await act(async () => {
+      slug = await result.current.ensure()
+    })
+
+    expect(slug).toBe('wabdr-north')
+    expect(client.createTrip).not.toHaveBeenCalled()
+  })
+
+  it('makes one trip when two things ask at once', async () => {
+    // The rider sends a chat message and places a point in the same breath. Two creations
+    // means two documents and the second silently orphans the first.
+    const client = fakeClient({ slug: 'trip-abc123' })
+    const { result } = renderHook(() => useSaving(client, []))
+
+    await act(async () => {
+      await Promise.all([result.current.ensure(), result.current.ensure()])
+    })
+
+    expect(client.createTrip).toHaveBeenCalledTimes(1)
+  })
+
+  it('carries the name the rider typed at the front door', async () => {
+    const client = fakeClient()
+    const { result } = renderHook(() =>
+      useTripSave(client, content([]), {
+        slug: null,
+        name: 'Cascades loop',
+        onConflict: () => undefined,
+      }),
+    )
+
+    await act(async () => {
+      await result.current.ensure()
+    })
+
+    expect(client.createTrip.mock.calls[0]?.[0].name).toBe('Cascades loop')
+  })
+
+  it('lets a second attempt through after a failure', async () => {
+    // A failed creation is not an answer to be remembered, or the rail is dead for the
+    // session over one dropped request.
+    const client = fakeClient()
+    client.createTrip.mockRejectedValueOnce(new Error('network'))
+    const { result } = renderHook(() => useSaving(client, []))
+
+    await act(async () => {
+      await expect(result.current.ensure()).rejects.toThrow()
+    })
+    await act(async () => {
+      await result.current.ensure()
+    })
+
+    expect(client.createTrip).toHaveBeenCalledTimes(2)
+  })
+})

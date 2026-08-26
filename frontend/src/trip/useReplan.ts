@@ -86,6 +86,10 @@ export function useReplan(client: Replanner): ReplanState {
   const [log, setLog] = useState<readonly ReplanStep[]>([])
   const [elapsedS, setElapsed] = useState(0)
   const nextId = useRef(0)
+  /** When the current run began, so elapsed time is measured rather than counted. */
+  const startedAt = useRef(0)
+  /** The last message appended, so the duplicate check happens outside the state updater. */
+  const lastMessage = useRef<string | null>(null)
 
   const running = useRef<AbortController | null>(null)
 
@@ -97,12 +101,14 @@ export function useReplan(client: Replanner): ReplanState {
   // A run outliving its component would deliver events into a dead tree.
   useEffect(() => stop, [stop])
 
-  // Counted rather than measured from a clock: a tick is what the display needs, and an
-  // interval is what a test can drive deterministically.
+  // The interval drives the *render*; the clock supplies the *number*. Counting ticks made
+  // the figure lie in exactly the case it exists for: browsers throttle `setInterval` hard in
+  // a background tab, and the complaint this answers was a wait long enough to walk away from,
+  // where five minutes displayed as barely one.
   useEffect(() => {
     if (!isRunning) return undefined
     const timer = setInterval(() => {
-      setElapsed((previous) => previous + 1)
+      setElapsed(Math.round((Date.now() - startedAt.current) / 1000))
     }, 1000)
     return () => {
       clearInterval(timer)
@@ -116,6 +122,8 @@ export function useReplan(client: Replanner): ReplanState {
 
       const controller = new AbortController()
       running.current = controller
+      startedAt.current = Date.now()
+      lastMessage.current = null
       setRunning(true)
       setFinished(false)
       setError(null)
@@ -149,13 +157,14 @@ export function useReplan(client: Replanner): ReplanState {
           const arrived = item.progress
           setProgress((previous) => (previous === null ? arrived : Math.max(previous, arrived)))
         }
-        if (item.message !== '') {
-          setLog((previous) => {
-            // Consecutive duplicates collapse: parallel steps repeat their wording.
-            if (previous[0]?.message === item.message) return previous
-            const step: ReplanStep = { id: nextId.current++, message: item.message, stage: item.stage }
-            return [step, ...previous].slice(0, MAX_LOG_STEPS)
-          })
+        // Both the duplicate check and the id are decided out here, so the updater stays
+        // pure. React may invoke an updater twice under StrictMode, and an updater that
+        // allocates an id is the same mistake as one that writes to storage.
+        if (item.message !== '' && lastMessage.current !== item.message) {
+          // Consecutive duplicates collapse: parallel steps repeat their wording.
+          lastMessage.current = item.message
+          const step: ReplanStep = { id: nextId.current++, message: item.message, stage: item.stage }
+          setLog((previous) => [step, ...previous].slice(0, MAX_LOG_STEPS))
         }
         if (item.pois !== undefined && item.pois.length > 0) {
           // Replace this stage's contribution, keep every other stage's.

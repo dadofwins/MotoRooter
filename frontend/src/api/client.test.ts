@@ -649,3 +649,69 @@ describe('typed surface', () => {
     expectTypeOf<Api['replan']>().returns.toEqualTypeOf<AsyncGenerator<ReplanEvent, void, undefined>>()
   })
 })
+
+describe('the assistant conversation', () => {
+  /**
+   * Same framing as replan — newline-delimited JSON, one event per line, `done` last — so it
+   * reuses the parser that is already tested against chunk boundaries mid-line, unterminated
+   * final lines, and lines that are not JSON at all.
+   */
+  it('streams the turn event by event', async () => {
+    const fetchMock = stubFetch(
+      ndjsonResponse([
+        '{"kind":"message","message":"Looking at your route","trip_changed":false,"truncated":false}\n',
+        '{"kind":"tool_started","message":"searching","tool":"find_camps","trip_changed":false,"truncated":false}\n',
+        '{"kind":"done","message":"","trip_changed":true,"truncated":false}\n',
+      ]),
+    )
+    const api = createApiClient({ fetch: fetchMock })
+
+    const kinds: string[] = []
+    let changed = false
+    for await (const event of api.chat('wabdr-north', { message: 'find me a camp' })) {
+      kinds.push(event.kind)
+      changed = changed || event.trip_changed
+    }
+
+    expect(kinds).toEqual(['message', 'tool_started', 'done'])
+    expect(changed).toBe(true)
+    const [url, init] = lastCall(fetchMock)
+    expect(url).toBe('/api/trips/wabdr-north/chat')
+    expect(init.method).toBe('POST')
+  })
+
+  it('sends the history the caller chose to include', async () => {
+    // The server is stateless and the client owns the transcript, so what the assistant saw
+    // is answerable from the request alone.
+    const fetchMock = stubFetch(ndjsonResponse(['{"kind":"done","message":"","trip_changed":false,"truncated":false}\n']))
+    const api = createApiClient({ fetch: fetchMock })
+
+    await api
+      .chat('wabdr-north', {
+        message: 'and somewhere for fuel',
+        history: [{ role: 'user', content: 'find me a camp' }],
+      })
+      .next()
+
+    expect(sentJson(fetchMock)['history']).toEqual([{ role: 'user', content: 'find me a camp' }])
+  })
+
+  it('raises the typed not-implemented error while the endpoint is a stub', async () => {
+    const fetchMock = stubFetch(json({ code: 'not_implemented', detail: 'chat is not implemented yet' }, 501))
+    const api = createApiClient({ fetch: fetchMock })
+
+    await expect(api.chat('x', { message: 'hello' }).next()).rejects.toBeInstanceOf(
+      ApiNotImplementedError,
+    )
+  })
+
+  it('threads the abort signal, so abandoning a turn stops the stream', async () => {
+    const fetchMock = stubFetch(ndjsonResponse(['{"kind":"done","message":"","trip_changed":false,"truncated":false}\n']))
+    const api = createApiClient({ fetch: fetchMock })
+    const controller = new AbortController()
+
+    await api.chat('x', { message: 'hello' }, { signal: controller.signal }).next()
+
+    expect(lastCall(fetchMock)[1].signal).toBe(controller.signal)
+  })
+})

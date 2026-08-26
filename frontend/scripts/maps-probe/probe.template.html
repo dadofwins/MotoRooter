@@ -154,25 +154,6 @@ async function run() {
       caught ? ('clientX=' + caught.clientX + ' clientY=' + caught.clientY) : 'not delivered');
   });
 
-  // The other generation, which `createMarker` falls back to without a Map ID.
-  await check('legacy marker events', async () => {
-    const legacy = new google.maps.Marker({ map, position: { lat: 47.52, lng: -120.52 }, title: 'legacy' });
-    const got = { click: null, contextmenu: null, rightclick: null };
-    for (const type of ['click', 'contextmenu', 'rightclick']) {
-      legacy.addListener(type, (e) => { got[type] = e ?? {}; });
-    }
-    await new Promise((r) => setTimeout(r, 600));
-    const box = document.getElementById('map').getBoundingClientRect();
-    const point = { x: Math.round(box.left + box.width / 2), y: Math.round(box.top + box.height / 2) };
-    for (const type of ['pointermove', 'mousemove', 'pointerdown', 'mousedown', 'contextmenu']) {
-      document.elementFromPoint(point.x, point.y)?.dispatchEvent(
-        new MouseEvent(type, { bubbles: true, cancelable: true, clientX: point.x, clientY: point.y, button: 2 }));
-    }
-    await new Promise((r) => setTimeout(r, 400));
-    record('legacy.contextmenu', got.contextmenu ? 'PASS' : 'INCONCLUSIVE',
-      got.contextmenu ? 'fired' : 'a synthesised right-click did not reach it');
-  });
-
   await check('polyline.contextmenu', async () => {
     const line = new google.maps.Polyline({
       map, strokeWeight: 10, strokeColor: '#c2571a',

@@ -257,9 +257,29 @@ trusted depends on the profile it ran, and that belongs in `ProviderCapabilities
 `reports_surface`, resolved per intent. Do not special-case an engine name at the call site —
 that is the mistake the whole routing architecture exists to prevent.
 
-Unresolved: reported ascent (6,400–8,800 m against the reference's 3,188 m) looks wrong.
-Either the profile takes much steeper lines or ORS elevation is noisy over gravel. Do not show
-climb figures to a user until someone checks.
+Reported ascent (6,400–8,800 m against the reference's 3,188 m) looks wrong. **Narrowed
+2026-08-26, and both benign explanations are ruled out**, computed from the reference track's
+own per-point elevations:
+
+- **Not a definitional difference.** 3,188 m is the *naive cumulative sum*, no smoothing and no
+  threshold — the same kind of number we produce. (1 m threshold → 3,163 m; 30 m → 2,560 m.)
+- **Not sampling density.** Ascent goes as roughly spacing^-0.08 here, so thinning 16× costs only
+  22%. Extrapolated to ORS's own ~29 m spacing it predicts **3,558 m** — density explains about
+  370 m of a 3,200–5,600 m gap.
+
+So ORS reports 1.8–2.5× a densely-sampled true profile of that corridor, and it is one of: the
+`cycling-mountain` profile genuinely routing a much steeper line, or ORS's elevation lookup or
+accumulation being wrong. Those differ in consequence — the first means the number is right and
+the *route* is the problem; the second is a provider bug worth reporting upstream.
+
+**The measurement that separates them:** route the same corridor, request per-point elevation,
+sum it naively. ~6,400 m means the geometry really is steeper; ~3,500 m means `ascent_m` is
+computed wrong. This cannot be done from the frontend — `Coordinate` is lat/lon only, so
+per-point elevation does not cross the contract today.
+
+**Keep the suppression.** These numbers strengthen the rule rather than lifting it: the figure is
+roughly double, and showing it would overstate a day's climbing in the direction that makes a
+rider plan too little. Do not show climb figures to a user until this is resolved.
 
 ## Discovery architecture
 

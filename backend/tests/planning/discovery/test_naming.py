@@ -192,3 +192,48 @@ class TestFailure:
             with pytest.raises(DiscoveryError) as caught:
                 await PlaceNamer(api_key="super-secret-key").name_for(ANCHOR)
         assert "super-secret-key" not in str(caught.value)
+
+
+class TestItNeverSearchesForACoordinate:
+    """A plus code is a coordinate wearing a name, and the fallback was handing them out.
+
+    Measured live: an anchor in national forest between Cle Elum and Cashmere reverse-geocodes
+    to `formatted_address: "84VX9FP2+WM"` with `types: ['plus_code']` and no other component.
+    The fallback took the first comma-separated field and searched for it — exactly what
+    `name_for`'s own docstring forbids: "a coordinate in a web query matches nothing and costs
+    a metered search to discover that".
+
+    That anchor is not nameable. `None` says so, and the pipeline already hands back the
+    search budget for an anchor it could not name.
+    """
+
+    @staticmethod
+    async def _name(body):
+        with respx.mock(assert_all_called=False) as mock:
+            mock.get(url__startswith=GEOCODE_URL).mock(return_value=httpx.Response(200, json=body))
+            return await PlaceNamer(api_key="k").name_for(ANCHOR)
+
+    async def test_a_plus_code_formatted_address_is_not_a_name(self):
+        assert await self._name(result(formatted="84VX9FP2+WM")) is None
+
+    async def test_a_plus_code_component_is_not_a_name(self):
+        """`plus_code` is not in `_NAME_TYPES`, so the component is never selected and the
+        fallback is what has to refuse it. Kept as a separate case because that reasoning is
+        a property of the type list, not of this function — reorder the list and it changes.
+        """
+        body = result(component("84VX9FP2+WM", "plus_code"), formatted="84VX9FP2+WM")
+        assert await self._name(body) is None
+
+    async def test_a_plus_code_with_a_locality_uses_the_locality(self):
+        """Google prefixes plus codes onto real addresses: "CFC5+X5 Cashmere, WA"."""
+        body = result(
+            component("CFC5+X5", "plus_code"),
+            component("Cashmere", "locality", "political"),
+            formatted="CFC5+X5 Cashmere, WA, USA",
+        )
+        assert await self._name(body) == "Cashmere"
+
+    async def test_an_ordinary_fallback_still_works(self):
+        """Only plus codes are refused. A real formatted address is still better than nothing
+        for a stretch of route with no matching component."""
+        assert await self._name(result(formatted="Blewett Pass, Washington, USA")) == "Blewett Pass"

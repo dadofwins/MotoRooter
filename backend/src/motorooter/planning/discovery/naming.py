@@ -14,6 +14,7 @@ not "what businesses are here".
 """
 
 import logging
+import re
 from typing import Any
 
 import httpx
@@ -53,6 +54,22 @@ set of pages than "camping near Chinook Pass".
 
 _REGION_TYPE = "administrative_area_level_1"
 
+_PLUS_CODE = re.compile(r"^[23456789CFGHJMPQRVWX]{4,8}\+[23456789CFGHJMPQRVWX]{2,3}$")
+"""An Open Location Code, which Google returns as a name when it has nothing else.
+
+Matched on the code's own alphabet — it deliberately omits vowels and easily-confused
+characters — rather than on "contains a plus", so a real name with a `+` in it survives.
+
+Worth refusing rather than searching: `84VX9FP2+WM` is a coordinate in eleven characters, and
+handing it to a web search buys nothing for the metered request it costs. Not hypothetical —
+one anchor per corridor came back like this on the Ellensburg-Cashmere run.
+"""
+
+
+def is_plus_code(name: str) -> bool:
+    """Whether this "name" is really a coordinate."""
+    return bool(_PLUS_CODE.match(name.strip()))
+
 
 class PlaceNamer:
     """Names anchors, caching each lookup for the life of the instance."""
@@ -88,9 +105,14 @@ class PlaceNamer:
                 if name:
                     return name
 
-        # Better a rough name than no search at all for that stretch of route.
+        # Better a rough name than no search at all for that stretch of route — but only if
+        # it is a name. A remote coordinate's `formatted_address` is often just a plus code,
+        # and searching for one is what the first line of this docstring rules out.
         formatted = found.get("formatted_address")
-        return formatted.split(",")[0].strip() if isinstance(formatted, str) else None
+        if not isinstance(formatted, str):
+            return None
+        rough = formatted.split(",")[0].strip()
+        return None if not rough or is_plus_code(rough) else rough
 
     async def region_for(self, anchor: Coordinate) -> str | None:
         """The state or province, for disambiguating names that repeat."""

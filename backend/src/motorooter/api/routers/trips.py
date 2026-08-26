@@ -24,6 +24,8 @@ from motorooter.api.schemas import (
     ErrorResponse,
     ReplanEvent,
     ReplanRequest,
+    RouteThroughBestRequest,
+    RouteThroughBestResponse,
     UpdateTripRequest,
 )
 from motorooter.chat.prompt import CHAT_SYSTEM_PROMPT
@@ -33,10 +35,11 @@ from motorooter.gpx import trip_to_gpx
 from motorooter.llm.agent import Agent
 from motorooter.llm.messages import AssistantMessage, Message, SystemMessage, UserMessage
 from motorooter.planning.discovery.pipeline import DiscoveryPipeline
+from motorooter.planning.route_through import route_through_best
 from motorooter.routing.errors import RouteIncomplete
 from motorooter.routing.models import RouteLeg
 from motorooter.trips.models import PoiCategory, Trip, TripSummary, utc_now
-from motorooter.trips.service import edit_trip
+from motorooter.trips.service import edit_trip, longest_routed_leg
 from motorooter.trips.slug import slugify, validate_slug
 
 router = APIRouter(prefix="/api/trips", tags=["trips"], responses=ERROR_RESPONSES)
@@ -106,6 +109,35 @@ async def delete_trip(slug: str, store: Trips) -> None:
 
 
 @router.post(
+    "/{slug}/route-through-best",
+    response_model=RouteThroughBestResponse,
+    summary="Reroute through the best places discovery found",
+)
+async def route_through_best_endpoint(
+    slug: str, request: RouteThroughBestRequest, store: Trips, resolver: Resolver
+) -> RouteThroughBestResponse:
+    """Add the best of the trip's saved places to its route, as via-points.
+
+    The mouse's half of a capability the assistant also has, over the same service function.
+    A checkbox on the Replan button would have made this a chat feature with an affordance
+    bolted on, and it would only have been reachable during a sixty-second search — the
+    scores are on the trip, so this needs no search at all.
+
+    Fast path: no LLM, no metered discovery, one routing request to confirm the new order
+    joins before anything is written.
+    """
+    result = await route_through_best(
+        store=store,
+        slug=validate_slug(slug),
+        router=LegRoutingService(resolver),
+        limit=request.limit,
+    )
+    return RouteThroughBestResponse(
+        trip=result.trip, added=list(result.added), left_out=list(result.left_out)
+    )
+
+
+@router.post(
     "/{slug}/replan",
     response_model=ReplanEvent,
     summary="Discover points of interest along the route",
@@ -132,7 +164,7 @@ async def replan(
     if discovery is None:
         raise NotImplementedYet("discovery (no search, model or Places credentials configured)")
 
-    leg = _longest_routed_leg(trip)
+    leg = longest_routed_leg(trip)
     if leg is None:
         raise RouteIncomplete(trip.unrouted_leg_indices or (0,))
 
@@ -140,16 +172,6 @@ async def replan(
         _stream(discovery, leg, request.categories),
         media_type=STREAMING_MEDIA_TYPE,
     )
-
-
-def _longest_routed_leg(trip: Trip) -> RouteLeg | None:
-    """The leg worth searching along.
-
-    The longest rather than the first: a trip's legs are frequently one long ride and a short
-    connector, and discovery along the connector would search the wrong half of the map.
-    """
-    routed = trip.routed_legs
-    return max(routed, key=lambda leg: leg.distance_m) if routed else None
 
 
 async def _stream(

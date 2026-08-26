@@ -24,7 +24,7 @@ the rider added one mid-conversation. That write succeeds and removes the wrong 
 list re-anchors the model after every mutation, which a prose summary does not.
 """
 
-from typing import Any, ClassVar, Protocol
+from typing import Any, ClassVar
 
 from pydantic import Field
 
@@ -39,31 +39,15 @@ from motorooter.llm.tools import (
 from motorooter.planning.discovery.errors import DiscoveryError
 from motorooter.planning.discovery.lookup import FoundPlace, PlaceLookup
 from motorooter.planning.discovery.pipeline import DiscoveryPipeline
-from motorooter.routing.errors import RoutingError
-from motorooter.routing.models import LegIntent, RouteLeg
+from motorooter.planning.route_through import LegRouter, route_through_best
+from motorooter.routing.errors import RouteIncomplete, RoutingError
+from motorooter.routing.models import LegIntent
 from motorooter.trips.models import Poi, PoiCategory, Trip, TripLeg, Waypoint
-from motorooter.trips.service import edit_trip
+from motorooter.trips.service import edit_trip, legs_for
 from motorooter.trips.store import TripStore
 
 MINIMUM_WAYPOINTS = 2
 """Below this there is no route to compute, so removing the second-to-last is refused."""
-
-
-class LegRouter(Protocol):
-    """The routing service, narrowed to what these tools need.
-
-    A protocol rather than the concrete router so a test can prove a tool routed before it
-    saved without standing up a provider registry — and so no tool reaches for a provider by
-    name, which is the thing the routing architecture exists to prevent.
-    """
-
-    async def route_waypoints(
-        self,
-        waypoints: tuple[Waypoint, ...],
-        *,
-        intent: LegIntent,
-        provider_override: str | None = None,
-    ) -> tuple[RouteLeg, ...]: ...
 
 
 def _numbered(trip: Trip) -> str:
@@ -246,7 +230,7 @@ class AddWaypoint(_TripTool):
         proposed = (*trip.waypoints, point)
         await self._route_all(trip, proposed)
         saved = await edit_trip(
-            self._store, self._slug, waypoints=proposed, legs=_legs_for(trip, proposed)
+            self._store, self._slug, waypoints=proposed, legs=legs_for(trip, proposed)
         )
         return ToolOutcome(
             content=f"Added waypoint {len(saved.waypoints) - 1}.\n{_numbered(saved)}",
@@ -288,7 +272,7 @@ class RemoveWaypoint(_TripTool):
             point for index, point in enumerate(trip.waypoints) if index != arguments.index
         )
         saved = await edit_trip(
-            self._store, self._slug, waypoints=remaining, legs=_legs_for(trip, remaining)
+            self._store, self._slug, waypoints=remaining, legs=legs_for(trip, remaining)
         )
         return ToolOutcome(
             content=f"Removed waypoint {arguments.index}.\n{_numbered(saved)}",
@@ -443,13 +427,77 @@ class AddPoiToRoute(_TripTool):
         proposed = (*trip.waypoints, point)
         await self._route_all(trip, proposed)
         saved = await edit_trip(
-            self._store, self._slug, waypoints=proposed, legs=_legs_for(trip, proposed)
+            self._store, self._slug, waypoints=proposed, legs=legs_for(trip, proposed)
         )
         return ToolOutcome(
             content=f"Routing through {match.name}.\n{_numbered(saved)}",
             found=1,
             payload={"trip_changed": True},
         )
+
+
+class RouteThroughBestArguments(ToolArguments):
+    limit: int | None = Field(
+        default=None,
+        ge=0,
+        le=20,
+        description=(
+            "How many places at most. Leave it out unless the rider asked for more or "
+            "fewer: the default is paced to the length of the ride, roughly one stop every "
+            "two hours."
+        ),
+    )
+
+
+class RouteThroughBest(_TripTool):
+    name: ClassVar[str] = "route_through_best"
+    description: ClassVar[str] = (
+        "Reroute the trip through the best of the places find_places already saved, chosen "
+        "by their scores and inserted in the order the rider will meet them. Adds via-points "
+        "only — the start and the destination stay as they are. Cheap and instant; it "
+        "searches for nothing."
+    )
+    arguments: ClassVar[type] = RouteThroughBestArguments
+
+    async def run(self, arguments: Any, on_progress: ProgressReport | None = None) -> ToolOutcome:  # noqa: ANN401 -- narrowed by base
+        """Reroute through the best places, and say plainly which and why.
+
+        The tool is thin — the selection, the bounds and the write all live in
+        `route_through_best`, which the button calls too. What is here is the telling: this
+        is an autonomous edit to a route somebody built, so a reply that says "done" is not
+        good enough. Each addition is named with the judge's own sentence, and the numbered
+        waypoint list follows so the model's indices survive the edit.
+        """
+        try:
+            result = await route_through_best(
+                store=self._store, slug=self._slug, router=self._router, limit=arguments.limit
+            )
+        except RouteIncomplete as exc:
+            msg = f"the trip has no routed geometry yet, so there is no route to add to: {exc}"
+            raise ToolCallFailed(msg) from exc
+        except RoutingError as exc:
+            msg = f"the trip could not be rerouted through those places: {exc}"
+            raise ToolCallFailed(msg) from exc
+
+        if not result.added:
+            return ToolOutcome(content=f"Nothing worth rerouting through.{_spare(result.left_out)}")
+
+        lines = [f"Routing through {len(result.added)} places:"]
+        lines += [
+            f"  {place.name} — {place.note or 'no reason recorded'}" for place in result.added
+        ]
+        return ToolOutcome(
+            content="\n".join(lines) + _spare(result.left_out) + "\n" + _numbered(result.trip),
+            found=len(result.added),
+            payload={"trip_changed": True},
+        )
+
+
+def _spare(left_out: tuple[Poi, ...]) -> str:
+    """What was good enough but did not fit, so a bound the rider cannot see is not silence."""
+    if not left_out:
+        return ""
+    return f" {len(left_out)} more scored well; ask for a higher limit to include them."
 
 
 class FindPlacesArguments(ToolArguments):
@@ -569,29 +617,6 @@ def _choose(found: tuple[FoundPlace, ...], text: str, place_id: str | None) -> F
     raise ToolCallFailed(msg)
 
 
-def _legs_for(trip: Trip, waypoints: tuple[Waypoint, ...]) -> tuple[TripLeg, ...]:
-    """Legs spanning consecutive waypoint pairs, inheriting the trip's existing intent.
-
-    Rebuilt rather than patched because indices shift: a leg recorded as 2-3 means a
-    different stretch of road once a waypoint is removed ahead of it. Geometry is dropped —
-    the leg is stale by definition — and the next route request fills it back in.
-    """
-    if len(waypoints) < MINIMUM_WAYPOINTS:
-        return ()
-    default = trip.intent_for_new_legs
-    existing = {(leg.start_waypoint_index, leg.end_waypoint_index): leg for leg in trip.legs}
-    return tuple(
-        TripLeg(
-            intent=existing[(index, index + 1)].intent
-            if (index, index + 1) in existing
-            else default,
-            start_waypoint_index=index,
-            end_waypoint_index=index + 1,
-        )
-        for index in range(len(waypoints) - 1)
-    )
-
-
 class TripTools:
     """The tools, bound to one trip and published as a registry."""
 
@@ -619,5 +644,6 @@ class TripTools:
                 build(SetRidingMode),
                 build(SetLegIntent),
                 build(AddPoiToRoute),
+                build(RouteThroughBest),
             ]
         )

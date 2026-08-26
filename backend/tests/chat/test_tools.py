@@ -24,6 +24,7 @@ from motorooter.chat.tools import (
     DescribeTrip,
     FindPlaces,
     RemoveWaypoint,
+    RouteThroughBest,
     SetLegIntent,
     SetRidingMode,
     TripTools,
@@ -489,6 +490,88 @@ class _StubDiscovery(DiscoveryPipeline):
         )
 
 
+class TestRouteThroughBest:
+    """The autonomous edit, and mostly a test of how visible and how bounded it is.
+
+    The tool is thin by design — `route_through_best` has its own tests — so what matters
+    here is that the rider is told what changed, in words, and that the model is re-anchored
+    on the new waypoint indices afterwards.
+    """
+
+    @staticmethod
+    def _found(name, score, along=0.5, note="Close lookout with excellent views."):
+        """A place sitting on the routed leg, so the detour budget is not what is on test."""
+        return Poi(
+            id=f"poi-{name}",
+            name=name,
+            category=PoiCategory.VIEWPOINT,
+            coordinate=coordinate(47.0 + 0.05 * along, -121.0 - 0.05 * along),
+            source=PoiSource.PLACES,
+            place_id=f"ChIJ-{name}",
+            score=score,
+            note=note,
+        )
+
+    async def test_it_names_what_it_added(self):
+        kit = await tools(document=trip(routed=True, pois=(self._found("Lion Rock", 0.95),)))
+        outcome = await call(kit, RouteThroughBest.name, "{}")
+        assert "Lion Rock" in outcome.content
+
+    async def test_it_gives_the_judge_s_reason_for_each_one(self):
+        """A route that changed for reasons the rider cannot see is worse than no change."""
+        kit = await tools(
+            document=trip(
+                routed=True,
+                pois=(self._found("Lion Rock", 0.95, note="Rugged unpaved approach."),),
+            )
+        )
+        outcome = await call(kit, RouteThroughBest.name, "{}")
+        assert "Rugged unpaved approach." in outcome.content
+
+    async def test_it_returns_the_numbered_waypoints_so_indices_stay_usable(self):
+        kit = await tools(document=trip(routed=True, pois=(self._found("Lion Rock", 0.95),)))
+        outcome = await call(kit, RouteThroughBest.name, "{}")
+        assert "Waypoints are now:" in outcome.content
+
+    async def test_it_tells_the_client_the_trip_changed(self):
+        kit = await tools(document=trip(routed=True, pois=(self._found("Lion Rock", 0.95),)))
+        outcome = await call(kit, RouteThroughBest.name, "{}")
+        assert outcome.payload["trip_changed"] is True
+
+    async def test_adding_nothing_says_so_rather_than_claiming_success(self):
+        kit = await tools(document=trip(routed=True, pois=(self._found("meh", 0.3),)))
+        outcome = await call(kit, RouteThroughBest.name, "{}")
+        assert "trip_changed" not in outcome.payload
+        assert "nothing" in outcome.content.lower()
+
+    async def test_it_offers_what_it_left_out_rather_than_going_quiet(self):
+        found = tuple(
+            self._found(f"p{index}", 0.9 - index / 100, along=0.2 + index / 5) for index in range(4)
+        )
+        kit = await tools(document=trip(routed=True, pois=found))
+        outcome = await call(kit, RouteThroughBest.name, '{"limit": 1}')
+        assert "3 more" in outcome.content
+
+    async def test_the_rider_can_ask_for_more_than_the_default(self):
+        found = tuple(self._found(f"p{index}", 0.9, along=0.2 + index / 5) for index in range(4))
+        kit = await tools(document=trip(routed=True, pois=found))
+        await call(kit, RouteThroughBest.name, '{"limit": 3}')
+        assert len((await kit.store.get(SLUG)).waypoints) == 5
+
+    async def test_an_unrouted_trip_is_refused_in_terms_the_model_can_act_on(self):
+        kit = await tools(document=trip(pois=(self._found("Lion Rock", 0.95),)))
+        with pytest.raises(ToolCallFailed, match="route"):
+            await call(kit, RouteThroughBest.name, "{}")
+
+    async def test_a_routing_failure_is_reported_rather_than_escaping_as_a_crash(self):
+        kit = await tools(
+            document=trip(routed=True, pois=(self._found("Lion Rock", 0.95),)),
+            router=StubRouter(error=NoRouteFound("no road")),
+        )
+        with pytest.raises(ToolCallFailed):
+            await call(kit, RouteThroughBest.name, "{}")
+
+
 class TestTheSetItself:
     async def test_every_tool_is_published(self):
         kit = await tools()
@@ -500,6 +583,7 @@ class TestTheSetItself:
             "set_riding_mode",
             "set_leg_intent",
             "add_poi_to_route",
+            "route_through_best",
         }
 
     async def test_no_tool_takes_a_free_text_search_string(self):

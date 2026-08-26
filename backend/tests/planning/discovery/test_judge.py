@@ -146,6 +146,18 @@ class TestTheEvidenceItIsGiven:
         await CandidateJudge(client).judge([resolved(snippet="washes out after spring melt")], LEG)
         assert "washes out" in str(client.conversations[-1])
 
+    async def test_the_reason_is_told_not_to_quote_a_rating_or_a_review(self):
+        """The reason is persisted on the trip; Places content may not be.
+
+        A rating is legitimately *given* to the judge as evidence, so the boundary cannot be
+        the prompt's input — it has to be what comes back. "Well-rated" is our
+        characterisation; "4.6 from 59,117 ratings" is their field with prose around it.
+        """
+        _, client = judge(says({"scores": []}))
+        await CandidateJudge(client).judge([resolved()], LEG)
+        instruction = str(client.conversations[-1])
+        assert "Do not put numeric ratings or quoted review text in the reason" in instruction
+
     async def test_an_unmeasured_signal_is_omitted_rather_than_shown_as_zero(self):
         """ "unpaved 0%" for an unsurveyed road invites reasoning about tarmac that may not
         be there."""

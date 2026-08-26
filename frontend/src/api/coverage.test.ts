@@ -48,6 +48,14 @@ const UNREAD: Record<string, string> = {
   // itself when that branch reads the field.
   default_intent: 'consumed by fe/default-intent, replacing the local DEFAULT_INTENT constant',
 
+  // STAGING — integrator, on the be/route-through-finds merge. `fe/route-through-best` consumes
+  // all three: `score` and the judge's reason are what let the button say *why* a place was
+  // added, `left_out` is what lets it say why the others were not, and `limit` is the override
+  // for a rider who wants more than the default. Expire when that branch lands.
+  score: 'consumed by fe/route-through-best — shown as why a place was chosen',
+  left_out: 'consumed by fe/route-through-best — shown as why the rest were not',
+  limit: 'written by fe/route-through-best — the override for "add more than the default"',
+
   created_at: 'the rail shows the trip name, not its age',
   schema_version: 'migrations are the backend concern; the client compiles against one shape',
 

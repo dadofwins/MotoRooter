@@ -96,6 +96,27 @@ class Poi(BaseModel):
     """Pinned into the route by the user. Requires verification; see below."""
 
     note: str | None = None
+    """Why this is here, in the judge's own words when discovery found it.
+
+    Never a quoted review and never a numeric rating — that would be caching Places content
+    through a side door. The judge is instructed accordingly; see `judge.py`.
+    """
+
+    score: float | None = Field(default=None, ge=0.0, le=1.0)
+    """What the judge made of it, or `None` if nothing judged it.
+
+    Absent rather than zero: a pin the rider dropped themselves was never scored, and
+    defaulting it to zero would rank it below every place the judge disliked.
+
+    Storable where `rating` is not, because it is a number we computed rather than a Places
+    field. It is kept so that routing through the best of them stops being welded to a
+    sixty-second search — a rider can change their mind an hour later without paying for
+    discovery twice.
+
+    Worth knowing before trusting it as an absolute: judging the same corridor twice moves
+    individual scores by up to 0.15, so the ordering is meaningful and the exact value is
+    not. Rank by it; do not draw fine distinctions with it.
+    """
 
     @property
     def is_verified(self) -> bool:

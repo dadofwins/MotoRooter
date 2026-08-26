@@ -59,6 +59,17 @@ Return only JSON:
 {"scores": [{"index": 0, "score": 0.0, "reason": "one short sentence"}]}
 
 score is 0 to 1. reason is one sentence, in your own words, saying why.
+
+Do not put numeric ratings or quoted review text in the reason. Say "well-rated", not "4.6
+from 59,117 ratings", and describe what reviewers convey rather than quoting them.
+"""
+"""The reason is kept on the trip, so it has to be ours rather than Google's.
+
+The rating is deliberately *given* to the judge — it is a fact about the place and the model
+should not be made to guess it — so the terms boundary cannot sit on the prompt's input. It
+sits on what comes back: a characterisation we wrote is ours to store, a Places field with a
+sentence around it is a cache with extra steps. "Well-rated" is more use to a rider than
+"4.6" in any case.
 """
 
 

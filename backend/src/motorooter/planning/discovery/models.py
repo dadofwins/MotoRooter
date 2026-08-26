@@ -132,12 +132,22 @@ class ResolvedCandidate(BaseModel):
     for the judge. Computing it twice would let the two copies disagree.
     """
 
-    def to_poi(self, *, poi_id: str, on_route: bool = False, note: str | None = None) -> Poi:
+    def to_poi(
+        self,
+        *,
+        poi_id: str,
+        on_route: bool = False,
+        note: str | None = None,
+        score: float | None = None,
+    ) -> Poi:
         """The verified POI this resolves to.
 
         `PoiSource.PLACES` rather than the discovering source: Places is what vouched for the
         location, and that is what `Poi.is_verified` is asking about. Recording `brave` here
         would claim a verification that a web search cannot give.
+
+        This is also the terms boundary, and it still is: `score` and `note` cross because
+        they are ours, `rating` and `user_rating_count` do not because they are Google's.
 
         Raises:
             ValueError: nothing could categorise this place. It is not pinnable — the map
@@ -159,6 +169,7 @@ class ResolvedCandidate(BaseModel):
             place_id=self.place_id,
             on_route=on_route,
             note=note,
+            score=score,
         )
 
 

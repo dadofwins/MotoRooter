@@ -16,7 +16,7 @@ Inventing a derived climb number on top of that would be worse than having none.
 
 from collections.abc import Sequence
 from itertools import pairwise
-from math import atan2, cos, degrees, radians, sin, sqrt
+from math import atan2, cos, degrees, inf, radians, sin, sqrt
 
 from motorooter.routing.geo import EARTH_RADIUS_M, haversine_m, path_length_m
 from motorooter.routing.models import Coordinate
@@ -136,11 +136,54 @@ def nearest_distance_m(geometry: Sequence[Coordinate], point: Coordinate) -> flo
     if len(geometry) == 1:
         return haversine_m(geometry[0], point)
 
-    return min(_distance_to_segment_m(start, end, point) for start, end in pairwise(geometry))
+    return min(_project_onto_segment(start, end, point)[0] for start, end in pairwise(geometry))
 
 
-def _distance_to_segment_m(start: Coordinate, end: Coordinate, point: Coordinate) -> float:
-    """Point-to-segment distance, on a local flat approximation.
+def position_along_m(geometry: Sequence[Coordinate], point: Coordinate) -> float | None:
+    """How far along the route `point` sits, measured from its start, or `None` for no route.
+
+    The companion to `nearest_distance_m`: that one says how far off the road a place is,
+    this one says how far down it. Insertion needs both — a place is worth including because
+    of the first and belongs at a particular index because of the second. Appending a
+    mid-route cafe to the end of the waypoint list makes it the destination.
+
+    Measured *along the road*, not as the crow flies, so the far end of a dogleg is the sum
+    of both legs. That is what makes the ordering agree with the order a rider meets things.
+
+    Where the route doubles back on itself the same ground has two positions, and this
+    returns the one the place is nearest to. On an out-and-back that is the return pass,
+    which is the right answer for a place on that side of the road and a coin toss for one
+    in the middle. A coin toss is acceptable here: both insertions produce a route that
+    passes the place, differing only in which pass it interrupts.
+    """
+    if not geometry:
+        return None
+    if len(geometry) == 1:
+        return 0.0
+
+    best_distance = inf
+    best_position = 0.0
+    travelled = 0.0
+    for start, end in pairwise(geometry):
+        distance, fraction = _project_onto_segment(start, end, point)
+        length = haversine_m(start, end)
+        if distance < best_distance:
+            best_distance = distance
+            best_position = travelled + fraction * length
+        travelled += length
+    return best_position
+
+
+def _project_onto_segment(
+    start: Coordinate, end: Coordinate, point: Coordinate
+) -> tuple[float, float]:
+    """Distance from `point` to the segment, and how far along it the foot of that fell.
+
+    The fraction is in [0, 1] and is what turns a distance into a position; returning both
+    from one projection keeps the two measurements from disagreeing about which segment a
+    place belongs to.
+
+    On a local flat approximation.
 
     Equirectangular rather than spherical: segments of route geometry are metres to
     hundreds of metres long, where the curvature error is far below the precision anything
@@ -162,10 +205,10 @@ def _distance_to_segment_m(start: Coordinate, end: Coordinate, point: Coordinate
     dx, dy = bx - ax, by - ay
     squared = dx * dx + dy * dy
     if squared == 0:
-        # Degenerate segment; fall back to the endpoint.
-        return sqrt((px - ax) ** 2 + (py - ay) ** 2)
+        # Degenerate segment; fall back to the endpoint, which is also its own start.
+        return sqrt((px - ax) ** 2 + (py - ay) ** 2), 0.0
 
     # Clamped, so a point beyond either end measures to that end rather than to an
     # imaginary extension of the road.
     t = max(0.0, min(1.0, ((px - ax) * dx + (py - ay) * dy) / squared))
-    return sqrt((px - (ax + t * dx)) ** 2 + (py - (ay + t * dy)) ** 2)
+    return sqrt((px - (ax + t * dx)) ** 2 + (py - (ay + t * dy)) ** 2), t

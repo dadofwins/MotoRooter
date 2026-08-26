@@ -604,12 +604,13 @@ def _unique(resolved: Sequence[ResolvedCandidate]) -> tuple[ResolvedCandidate, .
 
 
 def _to_poi(scored: ScoredCandidate) -> Poi:
-    """A pinnable POI, carrying the judge's reason as its note.
+    """A pinnable POI, carrying the judge's verdict and its reason.
 
     Not pinned to the route: discovery proposes, and putting something *on* the route is a
-    separate decision the rider makes.
+    separate decision. Carrying the score is what lets that decision be made later, by a
+    button or by the assistant, without re-running the search that produced it.
     """
-    return scored.resolved.to_poi(poi_id=str(uuid.uuid4()), note=scored.reason)
+    return scored.resolved.to_poi(poi_id=str(uuid.uuid4()), note=scored.reason, score=scored.score)
 
 
 def _names(candidates: Sequence[Candidate], limit: int = 3) -> str:

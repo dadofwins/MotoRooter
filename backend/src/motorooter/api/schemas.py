@@ -15,7 +15,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from motorooter.api.error_codes import ErrorCode
 from motorooter.routing.models import Coordinate, LegIntent, ProviderCapabilities, RouteLeg
-from motorooter.trips.models import Poi, PoiCategory, PoiDetail, TripLeg, Waypoint
+from motorooter.trips.models import Poi, PoiCategory, PoiDetail, Trip, TripLeg, Waypoint
 
 
 class ErrorResponse(BaseModel):
@@ -138,6 +138,40 @@ class UpdateTripRequest(BaseModel):
             "chat path; each leg's own intent still decides how it routes. Send it when the "
             "rider picks a mode for the whole trip rather than for one section."
         ),
+    )
+
+
+class RouteThroughBestRequest(BaseModel):
+    """Reroute through the best of the places already found. Fast, and searches nothing."""
+
+    limit: int | None = Field(
+        default=None,
+        ge=0,
+        le=20,
+        description=(
+            "How many places at most. Omit for the pace the ride implies — roughly one stop "
+            "every two hours of riding. Zero adds nothing, which is a legitimate way to ask "
+            "what would be chosen without choosing it."
+        ),
+    )
+
+
+class RouteThroughBestResponse(BaseModel):
+    """What the reroute did, in enough detail to show the rider and let them undo it."""
+
+    trip: Trip = Field(description="The saved trip, so the map can redraw without re-reading.")
+    added: list[Poi] = Field(
+        description=(
+            "Places now on the route, in the order they will be ridden. Each carries the "
+            "reason it was chosen in `note` — a route that changed for reasons the rider "
+            "cannot see is worse than a route that did not change."
+        )
+    )
+    left_out: list[Poi] = Field(
+        description=(
+            "Places good enough to add that the count or the detour budget had no room for. "
+            "Offer them; a bound the rider cannot see reads as having found nothing."
+        )
     )
 
 

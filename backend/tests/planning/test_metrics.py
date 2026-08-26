@@ -20,6 +20,7 @@ from motorooter.planning.metrics import (
     bearing_deg,
     detour_ratio,
     nearest_distance_m,
+    position_along_m,
     twistiness_deg_per_km,
 )
 from motorooter.routing.geo import EARTH_RADIUS_M
@@ -225,3 +226,63 @@ class TestNearestDistance:
 
     def test_a_single_point_route_still_measures(self):
         assert nearest_distance_m((north(0),), north(1000)) == pytest.approx(1000.0, rel=0.02)
+
+
+class TestPositionAlong:
+    """*Where* along the route a place sits, which is what decides insertion order.
+
+    `nearest_distance_m` says how far off the line a place is; this says how far along it.
+    Appending a mid-route cafe to the end of the waypoint list makes it the destination, so
+    routing through several found places needs the ordering as well as the distance.
+    """
+
+    def test_a_point_at_the_start_is_at_zero(self):
+        assert position_along_m(straight(10_000, 11), north(0)) == pytest.approx(0.0, abs=1.0)
+
+    def test_a_point_at_the_end_is_the_whole_length(self):
+        assert position_along_m(straight(10_000, 11), north(10_000)) == pytest.approx(
+            10_000.0, rel=0.01
+        )
+
+    def test_a_point_halfway_along_is_halfway(self):
+        assert position_along_m(straight(10_000, 11), north(5000)) == pytest.approx(
+            5000.0, rel=0.01
+        )
+
+    def test_it_measures_along_the_road_not_as_the_crow_flies(self):
+        """A dogleg's far end is two legs away, not one hypotenuse away."""
+        dogleg = (north(0), north(10_000), north(10_000, east=10_000))
+        assert position_along_m(dogleg, north(10_000, east=10_000)) == pytest.approx(
+            20_000.0, rel=0.01
+        )
+
+    def test_a_place_beside_the_middle_of_a_segment_projects_onto_it(self):
+        """Vertex-only would round a place to whichever end of a long straight is nearer."""
+        route = (north(0), north(10_000))
+        assert position_along_m(route, north(3000, east=200)) == pytest.approx(3000.0, rel=0.02)
+
+    def test_two_places_on_the_same_stretch_order_by_position(self):
+        route = straight(10_000, 11)
+        early = position_along_m(route, north(2000, east=400))
+        late = position_along_m(route, north(8000, east=400))
+        assert early is not None
+        assert late is not None
+        assert early < late
+
+    def test_a_place_beyond_the_end_clamps_to_the_end(self):
+        """Off the end of the route is still last, not first and not off the scale."""
+        route = (north(0), north(1000))
+        assert position_along_m(route, north(5000)) == pytest.approx(1000.0, rel=0.02)
+
+    def test_it_picks_the_nearest_pass_when_the_route_doubles_back(self):
+        """An out-and-back passes the same ground twice; the near one is the one meant."""
+        out_and_back = (north(0), north(10_000), north(0, east=50))
+        assert position_along_m(out_and_back, north(1000, east=60)) == pytest.approx(
+            19_000.0, rel=0.02
+        )
+
+    def test_an_empty_route_has_no_position(self):
+        assert position_along_m((), north(0)) is None
+
+    def test_a_single_point_route_is_all_at_zero(self):
+        assert position_along_m((north(0),), north(1000)) == pytest.approx(0.0, abs=1.0)

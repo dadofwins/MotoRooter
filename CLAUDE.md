@@ -92,7 +92,15 @@ a small discontinuity" but "the two engines picked different roads", which for a
 waypoint far from anything both can use. The warning wording is a product decision and has not
 been changed.
 
-None except the Garmin limit blocks anything, and all of them fail safely. Fix a number here rather
+None except the Garmin limit blocks anything, and all of them fail safely.
+
+**Light mode has not been examined by eye.** The rail was rendered and inspected in dark mode
+only; a faithful light render was attempted and abandoned, because `:root` declares
+`color-scheme: light dark` and a harness can strip the dark stylesheet without changing the UA
+preference — producing a state that cannot occur in reality. The reasoning holds without the
+screenshot (media query and UA preference derive from the same `prefers-color-scheme`, so they
+always agree), and four of the five defects found in dark mode were scheme-independent. But
+reasoned-about is not looked-at, and that distinction is the whole point of having rendered it. Fix a number here rather
 than an algorithm when one turns out wrong — that is why each is a single constant.
 
 ## Stack

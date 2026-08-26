@@ -172,6 +172,28 @@ Never edit anything under `backend/`.
   verified in dark mode has not been verified. Nine muted classes failed WCAG AA that way, after
   the dark figures had been computed and found fine.
 
+- **What the real Maps API actually does, checked 2026-08-26.**
+
+  Every map behaviour here is tested against fakes we wrote, and a fake confirms the assumptions
+  it encodes. `frontend/scripts/maps-probe/run.py` is the only thing that asks the API itself. It
+  cannot be a test — no test touches a live API — so this table is the record. Re-run it before
+  trusting a new assumption, and add the answer here.
+
+  | belief | verdict |
+  |---|---|
+  | `AdvancedMarkerElement` emits `contextmenu` | **FALSE.** It emits `click` and not `contextmenu`, with and without `gmpClickable`. Right-click is taken from the pin's DOM node instead — see `onPinContextMenu`. |
+  | the pin is hit-testable at its own screen position | true; `elementFromPoint` lands inside the content |
+  | a right-click there carries usable coordinates | true; `clientX`/`clientY` intact |
+  | `Polyline` emits `contextmenu` with a `domEvent` | true |
+  | `fitBounds` fires `zoom_changed` | true; one event, zoom 12 → 8 |
+  | `map.getZoom()` returns a number | true |
+  | `marker.position = …` is cheap enough for frame rate | true; 0.008 ms, so a whole eight-pin fan costs 0.7 ms |
+  | `google.maps.Marker` (no Map ID) emits `contextmenu` | **unverified** — a synthesised right-click never reached one. Documented by Google; not checked here, and written down as unchecked rather than assumed. |
+
+  The first row is the one that matters: the entire right-click menu was correct, tested, green
+  and did nothing wherever a Map ID is set, which is production. A fake that emitted the event
+  hid it, and no diff could have shown it.
+
 - **Verify with the exit code, never by reading the output.** `make check` prints ruff's
   "All checks passed!" from the backend step and can still exit non-zero on the frontend
   lint that follows. `make check; echo $?` is the only honest check, and piping it through

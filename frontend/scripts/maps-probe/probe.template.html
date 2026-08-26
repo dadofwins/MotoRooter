@@ -1,0 +1,204 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>pending</title>
+<style>html,body,#map{height:100%;margin:0}#out{position:fixed;inset:auto 0 0 0;background:#fff;font:12px monospace;white-space:pre;padding:8px;z-index:9}</style>
+</head><body>
+<div id="map"></div><div id="out">running…</div>
+<script>
+const results = [];
+const record = (name, verdict, detail) => results.push(name + '\t' + verdict + '\t' + (detail ?? ''));
+// Each check runs in its own try. The ranking says the silent failure is worth more than the loud
+// ones, and a loud one throwing must not take the quiet answer down with it.
+const check = async (name, body) => {
+  try { await body() } catch (e) { record(name, 'ERROR', String(e)) }
+};
+const finish = () => {
+  const text = results.join('\n');
+  document.getElementById('out').textContent = text;
+  document.title = 'done';
+  // Posted back rather than left in the DOM: --dump-dom returns when the page loads, and the
+  // answers arrive seconds later. Waiting for the file removes the guess about when to look.
+  void fetch('/report', { method: 'POST', body: text });
+};
+window.__probeFailed = (why) => { record('LOADER', 'FAIL', why); finish(); };
+window.gm_authFailure = () => window.__probeFailed('gm_authFailure: key rejected for this referrer');
+setTimeout(() => { if (document.title !== 'done') { record('TIMEOUT', 'FAIL', 'no answer in 40s'); finish(); } }, 40000);
+
+async function run() {
+  const { Map } = await google.maps.importLibrary('maps');
+  const { AdvancedMarkerElement } = await google.maps.importLibrary('marker');
+  record('load', 'PASS', 'maps + marker libraries resolved');
+  // Everything downstream depends on the map actually rendering, and a Map ID means a *vector*
+  // map, which means WebGL. Recorded first so a run without it is read as inconclusive rather
+  // than as six failures.
+  const gl = document.createElement('canvas').getContext('webgl2') ?? document.createElement('canvas').getContext('webgl');
+  record('webgl', gl ? 'PASS' : 'FAIL', gl ? String(gl.getParameter(gl.VERSION)) : 'no context: a vector map cannot draw');
+
+  const map = new Map(document.getElementById('map'), {
+    center: { lat: 47.5, lng: -120.5 }, zoom: 12, mapId: '__MAP_ID__',
+  });
+  // Raced against a cap. Whether `idle` ever fires headless is itself worth recording, and a
+  // probe that hangs waiting for it answers none of the six questions it exists to ask.
+  const idle = await Promise.race([
+    new Promise((r) => google.maps.event.addListenerOnce(map, 'idle', () => r('idle'))),
+    new Promise((r) => setTimeout(() => r('timeout'), 6000)),
+  ]);
+  record('map idle', idle === 'idle' ? 'PASS' : 'INCONCLUSIVE', String(idle));
+
+  // Ordered by how quietly each failure would go, not by how the code is arranged. A wrong
+  // belief that produces a plausible picture costs more than one that produces an obvious break.
+
+  // SILENT — if fitBounds does not announce the zoom it chose, a loaded trip sits at the opening
+  // camera with everything in one group, and that looks like clustering working rather than
+  // clustering never running.
+  await check('fitBounds -> zoom_changed', async () => {
+    let zoomFired = 0;
+    const zoomListener = map.addListener('zoom_changed', () => { zoomFired += 1; });
+    const before = map.getZoom();
+    const bounds = new google.maps.LatLngBounds();
+    bounds.extend({ lat: 46.9, lng: -121.4 });
+    bounds.extend({ lat: 48.1, lng: -119.6 });
+    map.fitBounds(bounds);
+    await new Promise((r) => setTimeout(r, 1200));
+    const after = map.getZoom();
+    google.maps.event.removeListener(zoomListener);
+    record('fitBounds -> zoom_changed',
+      zoomFired > 0 ? 'PASS' : (before === after ? 'INCONCLUSIVE' : 'FAIL'),
+      'fired=' + zoomFired + '  zoom ' + before + ' -> ' + after);
+  });
+
+  // LOUD — the right-click menu rests entirely on these.
+  //
+  // `click` is registered alongside `contextmenu` on the same marker deliberately. If both fail
+  // the marker is not receiving pointer events at all, which is a configuration answer; if click
+  // works and contextmenu does not, the API does not emit it and a shipped feature is dead. One
+  // of those is a finding and the other is my harness, and only running both tells them apart.
+  const advanced = async (clickable) => {
+    const content = document.createElement('div');
+    content.textContent = 'x';
+    content.style.cssText = 'width:24px;height:24px;background:#6d28d9;color:#fff';
+    const options = { map, position: map.getCenter(), content };
+    if (clickable) options.gmpClickable = true;
+    const marker = new AdvancedMarkerElement(options);
+    const got = { click: null, contextmenu: null };
+    marker.addListener('click', (e) => { got.click = e ?? {}; });
+    marker.addListener('contextmenu', (e) => { got.contextmenu = e ?? {}; });
+    await new Promise((r) => setTimeout(r, 600));
+    const native = {};
+    for (const type of ['click', 'contextmenu']) {
+      native[type] = new MouseEvent(type, { bubbles: true, cancelable: true, clientX: 321, clientY: 234 });
+      content.dispatchEvent(native[type]);
+    }
+    await new Promise((r) => setTimeout(r, 300));
+    return { marker, got, native, content };
+  };
+
+  let movable = null;
+  await check('advanced marker events', async () => {
+    for (const clickable of [false, true]) {
+      const { marker, got, native, content } = await advanced(clickable);
+      movable ??= marker;
+      const label = clickable ? 'advanced[gmpClickable]' : 'advanced';
+      record(label + '.click', got.click ? 'PASS' : 'FAIL', got.click ? 'fired' : 'not delivered');
+      record(label + '.contextmenu', got.contextmenu ? 'PASS' : 'FAIL',
+        got.contextmenu ? 'fired' : 'not delivered');
+      record(label + '.inDom', content.isConnected ? 'PASS' : 'FAIL',
+        'content attached=' + content.isConnected);
+      if (got.contextmenu) {
+        const dom = got.contextmenu.domEvent;
+        record(label + '.domEvent', dom ? 'PASS' : 'FAIL',
+          dom ? ('clientX=' + dom.clientX + ' clientY=' + dom.clientY) : 'absent');
+        if (dom?.preventDefault) {
+          dom.preventDefault();
+          record(label + '.preventDefault', native.contextmenu.defaultPrevented ? 'PASS' : 'FAIL',
+            'defaultPrevented=' + native.contextmenu.defaultPrevented);
+        }
+      }
+    }
+  });
+
+  // Does a DOM listener on the content catch what the Maps listener misses — and does a real
+  // right-click at the pin's own screen position reach that element at all? The second half is
+  // the one that matters: dispatching on the node proves nothing about where a rider clicks.
+  await check('content-level contextmenu', async () => {
+    const content = document.createElement('div');
+    content.textContent = 'y';
+    content.style.cssText = 'width:28px;height:28px;background:#0f766e;color:#fff';
+    let caught = null;
+    content.addEventListener('contextmenu', (e) => { caught = e; });
+    new AdvancedMarkerElement({ map, position: map.getCenter(), content, gmpClickable: true });
+    await new Promise((r) => setTimeout(r, 700));
+
+    const box = content.getBoundingClientRect();
+    record('content.rect', box.width > 0 ? 'PASS' : 'FAIL',
+      'w=' + Math.round(box.width) + ' h=' + Math.round(box.height) +
+      ' at ' + Math.round(box.left) + ',' + Math.round(box.top));
+    const x = Math.round(box.left + box.width / 2), y = Math.round(box.top + box.height / 2);
+    const hit = document.elementFromPoint(x, y);
+    record('pin is hit-testable', hit !== null && content.contains(hit) ? 'PASS' : 'FAIL',
+      'elementFromPoint -> ' + (hit ? hit.tagName + '.' + (hit.className || '(none)') : 'null'));
+
+    hit?.dispatchEvent(new MouseEvent('contextmenu', {
+      bubbles: true, cancelable: true, clientX: x, clientY: y, button: 2,
+    }));
+    await new Promise((r) => setTimeout(r, 250));
+    record('content.contextmenu at the pin', caught ? 'PASS' : 'FAIL',
+      caught ? ('clientX=' + caught.clientX + ' clientY=' + caught.clientY) : 'not delivered');
+  });
+
+  // The other generation, which `createMarker` falls back to without a Map ID.
+  await check('legacy marker events', async () => {
+    const legacy = new google.maps.Marker({ map, position: { lat: 47.52, lng: -120.52 }, title: 'legacy' });
+    const got = { click: null, contextmenu: null, rightclick: null };
+    for (const type of ['click', 'contextmenu', 'rightclick']) {
+      legacy.addListener(type, (e) => { got[type] = e ?? {}; });
+    }
+    await new Promise((r) => setTimeout(r, 600));
+    const box = document.getElementById('map').getBoundingClientRect();
+    const point = { x: Math.round(box.left + box.width / 2), y: Math.round(box.top + box.height / 2) };
+    for (const type of ['pointermove', 'mousemove', 'pointerdown', 'mousedown', 'contextmenu']) {
+      document.elementFromPoint(point.x, point.y)?.dispatchEvent(
+        new MouseEvent(type, { bubbles: true, cancelable: true, clientX: point.x, clientY: point.y, button: 2 }));
+    }
+    await new Promise((r) => setTimeout(r, 400));
+    record('legacy.contextmenu', got.contextmenu ? 'PASS' : 'INCONCLUSIVE',
+      got.contextmenu ? 'fired' : 'a synthesised right-click did not reach it');
+  });
+
+  await check('polyline.contextmenu', async () => {
+    const line = new google.maps.Polyline({
+      map, strokeWeight: 10, strokeColor: '#c2571a',
+      path: [{ lat: 47.45, lng: -120.6 }, { lat: 47.55, lng: -120.4 }],
+    });
+    let lineSeen = null;
+    line.addListener('contextmenu', (e) => { lineSeen = e; });
+    await new Promise((r) => setTimeout(r, 700));
+    const box = document.getElementById('map').getBoundingClientRect();
+    const cx = Math.round(box.left + box.width / 2), cy = Math.round(box.top + box.height / 2);
+    for (const type of ['pointermove', 'mousemove', 'pointerdown', 'mousedown', 'contextmenu']) {
+      document.elementFromPoint(cx, cy)?.dispatchEvent(
+        new MouseEvent(type, { bubbles: true, cancelable: true, clientX: cx, clientY: cy, button: 2 }));
+    }
+    await new Promise((r) => setTimeout(r, 500));
+    record('polyline.contextmenu', lineSeen ? 'PASS' : 'INCONCLUSIVE',
+      lineSeen ? ('domEvent=' + !!lineSeen.domEvent) : 'a synthesised right-click on the line did not arrive');
+  });
+
+  // DEGRADING — wrong means jank rather than breakage.
+  await check('marker.position cost', async () => {
+    const t0 = performance.now();
+    for (let i = 0; i < 660; i += 1) {
+      (movable ?? { }).position = { lat: 47.5 + (i % 60) * 0.00002, lng: -120.5 };
+    }
+    const per = (performance.now() - t0) / 660;
+    record('marker.position cost', per < 1 ? 'PASS' : 'SLOW',
+      per.toFixed(3) + ' ms per assignment; 8 pins x 11 frames = ' + (per * 88).toFixed(1) + ' ms total');
+  });
+
+  record('getZoom type', typeof map.getZoom(), '');
+  finish();
+}
+
+window.__start = () => { run().catch((e) => window.__probeFailed(String(e))); };
+</script>
+<script async src="https://maps.googleapis.com/maps/api/js?key=__BROWSER_KEY__&v=weekly&loading=async&callback=__start"></script>
+</body></html>

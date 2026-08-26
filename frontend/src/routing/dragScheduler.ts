@@ -17,7 +17,13 @@
  */
 
 export interface DragSchedulerOptions<Req, Res> {
-  /** Minimum gap between live updates, or `null` for preview-only. */
+  /**
+   * Minimum gap between live updates, or `null` for preview-only.
+   *
+   * The starting value only. Cadence belongs to the engine serving the leg being dragged, and
+   * a trip's legs no longer share one engine, so it is re-resolved per gesture — see
+   * `setIntervalMs`.
+   */
   intervalMs: number | null
   route: (request: Req, signal: AbortSignal) => Promise<Res>
   /** Provisional mid-drag geometry. Never persisted, never added to undo history. */
@@ -34,6 +40,8 @@ function isAbortError(error: unknown): boolean {
 export class DragScheduler<Req, Res> {
   readonly #options: DragSchedulerOptions<Req, Res>
 
+  #intervalMs: number | null
+
   #sequence = 0
   /** Highest sequence whose result has been delivered; anything older is stale. */
   #latestDelivered = -1
@@ -45,16 +53,28 @@ export class DragScheduler<Req, Res> {
 
   constructor(options: DragSchedulerOptions<Req, Res>) {
     this.#options = options
+    this.#intervalMs = options.intervalMs
+  }
+
+  /**
+   * Set the cadence for the next gesture.
+   *
+   * Called between gestures rather than during one: which engine is being metered depends on
+   * which leg the rider grabbed, and a trip's legs can be served by different engines. Changing
+   * it mid-gesture would be a cadence the rider's current drag never agreed to.
+   */
+  setIntervalMs(intervalMs: number | null): void {
+    this.#intervalMs = intervalMs
   }
 
   /** Report a new drag position. Subject to the throttle. */
   update(request: Req): void {
-    if (this.#options.intervalMs === null) return // preview-only provider
+    if (this.#intervalMs === null) return // preview-only provider
 
     const now = Date.now()
     const elapsed = this.#lastDispatchAt === null ? Infinity : now - this.#lastDispatchAt
 
-    if (elapsed >= this.#options.intervalMs) {
+    if (elapsed >= this.#intervalMs) {
       this.#dispatch(request, false)
       return
     }
@@ -67,7 +87,7 @@ export class DragScheduler<Req, Res> {
         const queued = this.#queued
         this.#queued = null
         if (queued !== null) this.#dispatch(queued, false)
-      }, this.#options.intervalMs - elapsed)
+      }, this.#intervalMs - elapsed)
     }
   }
 

@@ -156,12 +156,15 @@ def _surface_line(trip: Trip) -> str:
     if not routed:
         return "Surface: not yet routed, so nothing is known about it."
 
-    total = sum(leg.distance_m for leg in routed)
+    # The domain computes all three, and computes `unknown` as the remainder rather than
+    # summing UNKNOWN spans — geometry no span covers is exactly as unsurveyed as geometry
+    # tagged unsurveyed. Recomputing it here got it wrong once already.
+    total = sum(leg.geometry_length_m for leg in routed)
     if total <= 0:
         return "Surface: unknown."
-    unpaved = sum(leg.distance_m * leg.unpaved_fraction for leg in routed)
-    known_paved = sum(leg.distance_m * getattr(leg, "paved_fraction", 0.0) for leg in routed)
-    unknown = max(total - unpaved - known_paved, 0.0)
+    unpaved = sum(leg.unpaved_distance_m for leg in routed)
+    known_paved = sum(leg.paved_distance_m for leg in routed)
+    unknown = sum(leg.unknown_distance_m for leg in routed)
     return (
         f"Total {total / 1000:.1f} km: {unpaved / total:.0%} unpaved, "
         f"{known_paved / total:.0%} paved, {unknown / total:.0%} unsurveyed. "
@@ -244,6 +247,59 @@ class RemoveWaypoint(_TripTool):
         )
         return ToolOutcome(
             content=f"Removed waypoint {arguments.index}.\n{_numbered(saved)}",
+            payload={"trip_changed": True},
+        )
+
+
+class SetLegIntentArguments(ToolArguments):
+    leg_index: int = Field(ge=0, description="Which leg, from describe_trip.")
+    intent: str = Field(
+        description=(
+            "Riding mode. 'highway_connector' is Fast, 'twisty_paved' is Twisties, "
+            "'unpaved' is Offroad. Only 'unpaved' reports what the road is made of."
+        )
+    )
+
+
+class SetLegIntent(_TripTool):
+    name: ClassVar[str] = "set_leg_intent"
+    description: ClassVar[str] = (
+        "Change how one leg is routed and re-route it. Mode is per leg, not per trip, so a "
+        "rider can have dirt in the middle of a paved day."
+    )
+    arguments: ClassVar[type] = SetLegIntentArguments
+
+    async def run(self, arguments: Any) -> ToolOutcome:  # noqa: ANN401 -- narrowed by base
+        trip = await self._trip()
+        try:
+            intent = LegIntent(arguments.intent)
+        except ValueError as exc:
+            available = ", ".join(sorted(item.value for item in LegIntent))
+            msg = f"no riding mode named {arguments.intent!r}. Available modes: {available}"
+            raise ToolCallFailed(msg) from exc
+
+        if arguments.leg_index >= len(trip.legs):
+            msg = (
+                f"there is no leg {arguments.leg_index}; the trip has {len(trip.legs)}. "
+                "Call describe_trip for the current list."
+            )
+            raise ToolCallFailed(msg)
+
+        leg = trip.legs[arguments.leg_index]
+        span = trip.waypoints[leg.start_waypoint_index : leg.end_waypoint_index + 1]
+        try:
+            routed = await self._router.route_waypoints(tuple(span), intent=intent)
+        except RoutingError as exc:
+            msg = f"that leg cannot be routed as {intent.value}: {exc}"
+            raise ToolCallFailed(msg) from exc
+
+        legs = list(trip.legs)
+        legs[arguments.leg_index] = leg.model_copy(
+            update={"intent": intent, "routed": routed[0] if routed else None}
+        )
+        await edit_trip(self._store, self._slug, legs=tuple(legs))
+        return ToolOutcome(
+            content=f"Leg {arguments.leg_index} is now {intent.value}.",
             payload={"trip_changed": True},
         )
 
@@ -401,6 +457,7 @@ class TripTools:
                 build(FindPlaces),
                 build(AddWaypoint),
                 build(RemoveWaypoint),
+                build(SetLegIntent),
                 build(AddPoiToRoute),
             ]
         )

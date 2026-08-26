@@ -212,6 +212,15 @@ function TripSession({
     [stored, fromStored],
   )
 
+  /**
+   * The mode a new segment starts on: the trip's own answer, or the fallback for a trip with none.
+   *
+   * One authoritative home for a question that used to have three constants answering it, two of
+   * them on the far side of the contract — which is how a request for "as much fun offroad as
+   * possible" came back paved.
+   */
+  const newLegIntent = stored?.default_intent ?? DEFAULT_INTENT
+
   const capabilities = useRoutingCapabilities(client)
   /**
    * The lookup, not a resolved number.
@@ -240,9 +249,9 @@ function TripSession({
     // at all: no line, no distance, no time, and nothing reporting an error.
     () =>
       live.legs === null || live.legs.length === 0
-        ? legsSpanning(waypoints.length, DEFAULT_INTENT)
+        ? legsSpanning(waypoints.length, newLegIntent)
         : live.legs,
-    [live.legs, waypoints.length],
+    [live.legs, waypoints.length, newLegIntent],
   )
 
   const {
@@ -285,14 +294,14 @@ function TripSession({
         withWaypointAppended(
           {
             waypoints: from.waypoints,
-            legs: from.legs ?? legsSpanning(from.waypoints.length, DEFAULT_INTENT),
+            legs: from.legs ?? legsSpanning(from.waypoints.length, newLegIntent),
           },
           { coordinate: place.coordinate, name: place.name, pinned: true },
-          DEFAULT_INTENT,
+          newLegIntent,
         ),
       )
     },
-    [change],
+    [change, newLegIntent],
   )
 
   const addWaypoint = useCallback(
@@ -301,14 +310,14 @@ function TripSession({
         // One new leg to reach it; every existing leg keeps the geometry it already has. This
         // used to discard all of it, so each click re-routed the whole trip.
         withWaypointAppended(
-          { waypoints: from.waypoints, legs: from.legs ?? legsSpanning(from.waypoints.length, DEFAULT_INTENT) },
+          { waypoints: from.waypoints, legs: from.legs ?? legsSpanning(from.waypoints.length, newLegIntent) },
           // Pinned: the rider placed it by hand, so a later replan must not move or drop it.
           { coordinate, name: null, pinned: true },
-          DEFAULT_INTENT,
+          newLegIntent,
         ),
       )
     },
-    [change],
+    [change, newLegIntent],
   )
 
   /**
@@ -326,13 +335,13 @@ function TripSession({
         return withWaypointRemoved(
           {
             waypoints: from.waypoints,
-            legs: from.legs ?? legsSpanning(from.waypoints.length, DEFAULT_INTENT),
+            legs: from.legs ?? legsSpanning(from.waypoints.length, newLegIntent),
           },
           index,
         )
       })
     },
-    [change],
+    [change, newLegIntent],
   )
 
   /**
@@ -346,14 +355,14 @@ function TripSession({
   const setLegIntent = useCallback(
     (legIndex: number, intent: LegIntent) => {
       change((from) => {
-        const current = from.legs ?? legsSpanning(from.waypoints.length, DEFAULT_INTENT)
+        const current = from.legs ?? legsSpanning(from.waypoints.length, newLegIntent)
         if (current[legIndex] === undefined) return {}
         return {
           legs: current.map((leg, index) => (index === legIndex ? { ...leg, intent } : leg)),
         }
       })
     },
-    [change],
+    [change, newLegIntent],
   )
 
   const drag = useMemo(
@@ -474,14 +483,14 @@ function TripSession({
         const added = addPoisToRoute(
           {
             waypoints: from.waypoints,
-            legs: from.legs ?? legsSpanning(from.waypoints.length, DEFAULT_INTENT),
+            legs: from.legs ?? legsSpanning(from.waypoints.length, newLegIntent),
           },
           chosen,
         )
         return added === null ? {} : added
       })
     },
-    [change],
+    [change, newLegIntent],
   )
 
   /**

@@ -41,14 +41,6 @@ const UNREAD: Record<string, string> = {
   max_waypoints: 'no path can exceed it: legs span two waypoints plus any vias',
   prefers_unpaved: 'the mode picker states the intent, not the engine behind it',
 
-  // Trip metadata with no place in the UI.
-  // STAGING — integrator, on the be/offroad-means-offroad merge. `fe/default-intent` consumes it:
-  // legStructure.ts holds its own DEFAULT_INTENT, which was the *right value* and the wrong
-  // place — the second answer to a question the trip document now answers once. Expires by
-  // itself when that branch reads the field.
-  default_intent: 'consumed by fe/default-intent, replacing the local DEFAULT_INTENT constant',
-
-
   created_at: 'the rail shows the trip name, not its age',
   schema_version: 'migrations are the backend concern; the client compiles against one shape',
 

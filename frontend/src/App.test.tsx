@@ -1255,6 +1255,79 @@ describe('App arriving', () => {
   })
 })
 
+describe('the mode a new segment starts on', () => {
+  /**
+   * `Trip.default_intent` replaces a constant that was one of three answers to one question —
+   * two of them on the far side of the contract, which is why "as much fun offroad as possible"
+   * came back paved.
+   *
+   * The frontend's value won: dirt is the point of an adventure planner, and backend took
+   * `unpaved` over their own `twisty_paved`. So the constant survives as the fallback for a trip
+   * that has no default, which is a genuine default rather than a competing opinion.
+   */
+  async function tripWithDefault(defaultIntent: 'unpaved' | 'twisty_paved' | null) {
+    window.history.replaceState(null, '', '/?trip=wabdr-north')
+    const fake = createFakeMaps()
+    const router = fakeRouter()
+    router.getTrip.mockResolvedValue(
+      tripFixture({
+        slug: 'wabdr-north',
+        name: 'Loop',
+        waypoints: [waypointFixture(47, -120)],
+        legs: [],
+        default_intent: defaultIntent,
+      }),
+    )
+    render(<App mapLoader={fake.loader} mapId="motorooter-test-vector" client={router} />)
+    await mapReady(fake)
+    return { fake, router }
+  }
+
+  it('starts a new segment on the mode the trip asks for', async () => {
+    const { fake, router } = await tripWithDefault('twisty_paved')
+    await waitFor(() => expect(router.getTrip).toHaveBeenCalled())
+
+    fake.clickMap(48, -120.5)
+
+    await waitFor(() => expect(router.routeLeg).toHaveBeenCalled())
+    expect(router.routeLeg.mock.calls[0]?.[0].intent).toBe('twisty_paved')
+  })
+
+  it('falls back to dirt for a trip that has no default', async () => {
+    // The constant, doing the job it should have been doing all along: a default rather than a
+    // second opinion. Dirt because that is the point of an adventure planner.
+    const { fake, router } = await tripWithDefault(null)
+    await waitFor(() => expect(router.getTrip).toHaveBeenCalled())
+
+    fake.clickMap(48, -120.5)
+
+    await waitFor(() => expect(router.routeLeg).toHaveBeenCalled())
+    expect(router.routeLeg.mock.calls[0]?.[0].intent).toBe('unpaved')
+  })
+
+  it('uses the trip default for legs derived from a document that has none', async () => {
+    // A trip whose waypoints arrived without leg structure — which is what a chat-built trip
+    // looks like before this side completes it.
+    window.history.replaceState(null, '', '/?trip=wabdr-north')
+    const fake = createFakeMaps()
+    const router = fakeRouter()
+    router.getTrip.mockResolvedValue(
+      tripFixture({
+        slug: 'wabdr-north',
+        name: 'Loop',
+        waypoints: [waypointFixture(47, -120), waypointFixture(48, -120)],
+        legs: [],
+        default_intent: 'twisty_paved',
+      }),
+    )
+    render(<App mapLoader={fake.loader} mapId="motorooter-test-vector" client={router} />)
+    await mapReady(fake)
+
+    await waitFor(() => expect(router.routeLeg).toHaveBeenCalled())
+    expect(router.routeLeg.mock.calls[0]?.[0].intent).toBe('twisty_paved')
+  })
+})
+
 describe('a trip the assistant built', () => {
   /**
    * The join nobody had exercised.

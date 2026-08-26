@@ -454,6 +454,25 @@ on it — measured as finding *fewer* POIs than baseline for 1.4–2.3× the sea
 mechanism was not at fault. It was pouring more candidates into a funnel already discarding
 five of six upstream.
 
+### "0 worth showing" is where three different bugs went to hide
+
+An empty corridor and a collapsed stage produce the same sentence, and that has now hidden three
+separate faults:
+
+| stage | fault | what a rider saw |
+|---|---|---|
+| judge | one misplaced quote made `json.loads` discard a whole batch of good scores | 0 worth showing |
+| resolve | one rate-limited lookup out of forty discarded the thirty-nine that succeeded | 0 worth showing |
+| classify | over ~150 names the single call exceeds its budget, and the exception collapses the stage | 0 worth showing |
+
+Each was found separately and each took hours, because the symptom is indistinguishable from the
+honest answer. **When a stage returns nothing, say whether it found nothing or failed** — the
+counts and the failure line exist for this and every new stage owes them the same courtesy.
+
+The classify cliff is worth knowing numerically since it is a live limit rather than history:
+roughly 0.09 s per name against a 15 s budget, so 100 names in 10.3 s and 150 names times out.
+Batched at sixty and run concurrently, 150 candidates categorise in 7.5 s.
+
 ### Solved: the judge scored nothing because one quote was misplaced
 
 For most of a day this was a live unknown — at worst three runs in four returned no scores for a

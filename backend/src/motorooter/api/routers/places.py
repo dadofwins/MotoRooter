@@ -25,6 +25,20 @@ from motorooter.trips.models import Poi, PoiCategory, PoiDetail, PoiSource
 
 router = APIRouter(prefix="/api/places", tags=["places"], responses=ERROR_RESPONSES)
 
+MAX_PHOTOS = 3
+"""How many photo URLs to hand a client per place.
+
+Each one costs a request when the browser loads it, every time the dialog opens, and Places
+returns up to ten. Three is enough for a dialog and cheap enough not to think about — the
+same reasoning that kept photos out of the field mask entirely, applied to the count rather
+than to the feature.
+"""
+
+PHOTO_MEDIA_URL = "https://places.googleapis.com/v1"
+PHOTO_MAX_WIDTH_PX = 800
+"""Wide enough for a dialog on a high-density screen, narrow enough not to ship a 3000 px
+original to a phone in a car park."""
+
 
 @router.get(
     "/{place_id}",
@@ -96,6 +110,7 @@ async def get_place_detail(
             opening_hours=strings_in(
                 hours.get("weekdayDescriptions") if isinstance(hours, dict) else None
             ),
+            photo_urls=_photo_urls(body.get("photos"), key=places.api_key),
         )
     )
 
@@ -115,6 +130,40 @@ def _count(value: object) -> int | None:
 
 def _text(value: object) -> str | None:
     return value.strip() if isinstance(value, str) and value.strip() else None
+
+
+def _photo_urls(value: object, *, key: str) -> tuple[str, ...]:
+    """Photo references as URLs a browser can load directly.
+
+    A resolved media URL, not a reference and not a URL the client has to complete. The
+    alternatives were the question frontend asked, and both are worse: handing over a bare
+    reference makes the client construct Google URLs, and handing over a URL needing a key
+    appended means publishing the server key to an unauthenticated page.
+
+    This URL carries the key, so it is as public as the Maps JS key already is — restrict it
+    by referrer and by API, and keep it distinct from the search-side keys. That constraint
+    is not new; it is the one CLAUDE.md already states for the browser key.
+
+    Not cached anywhere: Google's terms permit storing `place_id` and little else, so these
+    are rebuilt per request like every other field on `PoiDetail`.
+    """
+    if not isinstance(value, list):
+        return ()
+    urls = []
+    # Filtered before capped, not after: slicing first lets malformed entries spend the
+    # budget, so a place whose first three photos were junk would show none at all.
+    for entry in value:
+        if not isinstance(entry, dict):
+            continue
+        name = entry.get("name")
+        if not isinstance(name, str) or not name.strip():
+            continue
+        urls.append(
+            f"{PHOTO_MEDIA_URL}/{name.strip()}/media?maxWidthPx={PHOTO_MAX_WIDTH_PX}&key={key}"
+        )
+        if len(urls) == MAX_PHOTOS:
+            break
+    return tuple(urls)
 
 
 def _reviews(value: object) -> tuple[str, ...]:

@@ -29,7 +29,8 @@ PLACE_DETAILS_URL = "https://places.googleapis.com/v1/places"
 
 DETAIL_FIELD_MASK = (
     "id,displayName,location,types,rating,userRatingCount,"
-    "websiteUri,nationalPhoneNumber,regularOpeningHours.weekdayDescriptions,reviews.text"
+    "websiteUri,nationalPhoneNumber,regularOpeningHours.weekdayDescriptions,reviews.text,"
+    "photos.name"
 )
 """Everything the dialog shows, and nothing else.
 
@@ -37,11 +38,26 @@ Wider than the resolve mask on purpose: this is the one place the extra fields a
 displayed, so this is the one place worth paying the higher tier for. Photos are omitted
 until something renders them — Places photos need a second request per image to turn a
 reference into bytes, which is a cost with no current benefit.
+
+Photos are in now, because something renders them. Only `photos.name`: the reference is all
+that is needed to build a media URL, and the rest of the photo object is attribution and
+dimensions nothing reads.
 """
 
 
 class PlaceDetails:
     """One place, as Places currently describes it."""
+
+    @property
+    def api_key(self) -> str:
+        """Readable because photo URLs must carry it.
+
+        A Places photo is fetched from a URL with the key in the query string, so the
+        boundary that builds those URLs needs it. Exposed deliberately rather than reached
+        for privately: this is the key that ends up in a browser, and that fact should be
+        visible at the call site rather than buried.
+        """
+        return self._api_key
 
     def __init__(
         self,

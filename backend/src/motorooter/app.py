@@ -16,10 +16,8 @@ from fastapi.staticfiles import StaticFiles
 from motorooter.api.exception_handlers import register_exception_handlers
 from motorooter.api.routers import places, routing, trips
 from motorooter.api.schemas import HealthResponse
+from motorooter.api.services import build_optional_services
 from motorooter.api.streaming import apply_streaming_media_types
-from motorooter.chat.factory import build_chat_model
-from motorooter.planning.discovery.factory import build_discovery
-from motorooter.planning.discovery.factory import settings_from_env as discovery_from_env
 from motorooter.routing.factory import RoutingSettings, build_routing
 from motorooter.trips.factory import TripStorageSettings, build_trip_store
 from motorooter.trips.factory import settings_from_env as storage_settings_from_env
@@ -68,16 +66,13 @@ def create_app(
         storage_settings or _storage_settings_for(routing_config)
     )
 
-    # `None` when the credentials are absent. Replan answers 501 and everything else works:
-    # discovery needs four keys, and refusing to boot without them would take the whole
-    # backend down for a feature most requests never touch.
-    discovery_config = discovery_from_env()
-    app.state.discovery = None if routing_config.offline else build_discovery(discovery_config)
-
-    # Same rule as discovery, and the same reason: chat needs a credential most requests
-    # never touch, so its absence disables one endpoint rather than the deployment. Pinned
-    # from config — which model answers is a deploy decision, never an inline default.
-    app.state.chat_model = None if routing_config.offline else build_chat_model(discovery_config)
+    # Assigned in a loop from one place, because three hand-written assignments is how
+    # `PlaceDetails` came to be fully implemented, fully tested, and constructed nowhere:
+    # the endpoint read `app.state.places`, found nothing, and answered 501 forever while
+    # every test wired the attribute itself. A missing service now fails a test that
+    # enumerates `OPTIONAL_SERVICES` rather than failing silently in production.
+    for name, service in build_optional_services(routing_config).items():
+        setattr(app.state, name, service)
 
     register_exception_handlers(app)
 

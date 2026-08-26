@@ -83,7 +83,7 @@ queue rather than as footnotes.
 | Constant | Where | Status |
 |---|---|---|
 | `GARMIN_TRACK_POINT_LIMIT = 10_000` | `gpx.py` | **Blocking M2.** Commonly documented for modern units; older handhelds cut at 500 per segment. Needs Tim's device. |
-| `RidingSpeeds` 80/40/55 km/h | `speeds.py` | Original guess. Now applied only to legs whose provider is not trusted on duration, so its blast radius shrank rather than its accuracy improving. |
+| `RidingSpeeds` 80/40/55 km/h | `speeds.py` | **Original guess, and it now governs almost every trip.** An earlier version of this line said its blast radius had shrunk to untrusted-duration legs only — that stopped being true the moment `DEFAULT_INTENT` became `unpaved`, because every trip stating no mode routes through ORS and ORS is the untrusted one. Needs a real ride and a clock. See below. |
 | ~~`GAP_REPORT_THRESHOLD_M = 25.0`~~ | leg stitching | **Measured 2026-08-26.** Value unchanged, now known safe rather than hoped. Engine disagreement is bimodal: single-digit metres while both snap to the same road (1.8–5.2 m across a Google/ORS handover, up to 400 m off-road), then hundreds once they choose different roads. 25 sits in an empty band, so anything from ~10 m to ~400 m behaves identically — which is why a guess worked. |
 | discovery cost weights | `pipeline.py` | From one live corridor. Being wrong skews the progress bar rather than breaking it, which is why it is tolerable. |
 
@@ -91,6 +91,23 @@ A reported gap does not mean what the threshold implies, incidentally: it is not
 a small discontinuity" but "the two engines picked different roads", which for a rider means a
 waypoint far from anything both can use. The warning wording is a product decision and has not
 been changed.
+
+**Two things measured about `RidingSpeeds` (2026-08-26), neither of them the number itself:**
+
+- **`paved_kmh = 80` never applies.** Google returns zero surface spans, so every metre of a
+  Google leg is `UNKNOWN`; the only paved distance in the system comes from ORS. Worth knowing
+  before someone tunes that constant and wonders why nothing moves.
+- **`unknown` means two different things and is priced once.** On a Google leg it means "this
+  engine does not report surface" — a paved highway, measured at 81–99 km/h. On an ORS leg it
+  means "nobody has tagged this road", sitting beside 16–34% real dirt. Both are charged
+  55 km/h. `reports_surface` already exists to split on, so this would be a capability
+  distinction rather than an engine name — the shape the routing layer wants.
+
+The OSM audit above implies untagged distance on WABDR 3 behaves like roughly 68 km/h rather
+than 55, which would mean we **over-state** trip time — the same direction as the M0 duration
+error, where 3 h 33 was shown as 4 h 56. One audited section is not a measurement, and replacing
+a guess with a better-argued guess only moves where the next person has to look. This is a
+rider-facing figure and it wants a real ride and a clock, alongside the Garmin limit.
 
 None except the Garmin limit blocks anything, and all of them fail safely.
 

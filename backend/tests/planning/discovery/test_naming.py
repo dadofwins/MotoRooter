@@ -237,3 +237,71 @@ class TestItNeverSearchesForACoordinate:
         """Only plus codes are refused. A real formatted address is still better than nothing
         for a stretch of route with no matching component."""
         assert await self._name(result(formatted="Blewett Pass, Washington, USA")) == "Blewett Pass"
+
+
+class TestAGenericStreetIsNotASearchTerm:
+    """`route` above `locality` is right on a mountain and wrong in a valley.
+
+    The ordering was chosen because Chinook Pass reverse-geocodes to `Mather Memorial
+    Parkway` with `Enumclaw` fifty kilometres away over a mountain, and the road is the
+    better search term. In a valley the same rule yields `West Davis Street` and `Cottage
+    Avenue` — streets that exist in every town in America, so search returns pages about
+    anywhere and the distance filter throws all of them away.
+
+    Measured on two corridors, counting candidates that survived the corridor filter:
+
+        rule                        Chinook   Ellensburg-Cashmere
+        route above locality              8                     1
+        locality above route              4                     5
+        distinctive routes only           7                     6
+
+    So the distinction is not route-versus-locality, it is whether the road has a name worth
+    searching. Falling through to the locality when it does not keeps the mountain case and
+    fixes the valley one.
+    """
+
+    @staticmethod
+    def _road(name: str, *, locality: str | None = "Cle Elum"):
+        parts = [component(name, "route")]
+        if locality is not None:
+            parts.append(component(locality, "locality", "political"))
+        return result(*parts, formatted=f"{name}, {locality}, WA, USA")
+
+    async def _name(self, body):
+        with respx.mock(assert_all_called=False) as mock:
+            mock.get(url__startswith=GEOCODE_URL).mock(return_value=httpx.Response(200, json=body))
+            return await PlaceNamer(api_key="k").name_for(ANCHOR)
+
+    # Every one of these came out of a live corridor survey.
+    @pytest.mark.parametrize(
+        "road",
+        [
+            "Mather Memorial Parkway",
+            "Washington 123",
+            "U.S. 12",
+            "State Route 20",
+            "Chinook Pass to Tipsoo Lake Trail",
+        ],
+    )
+    async def test_a_designated_road_is_still_preferred(self, road):
+        """The Chinook case, which is the reason `route` outranks `locality` at all."""
+        assert await self._name(self._road(road)) == road
+
+    @pytest.mark.parametrize(
+        "road",
+        [
+            "West Davis Street",
+            "Cottage Avenue",
+            "Smith Road",
+            "Kehoe Road",
+            "Ballard Road West",
+            "Twisp Avenue",
+        ],
+    )
+    async def test_a_generic_street_falls_through_to_the_locality(self, road):
+        assert await self._name(self._road(road)) == "Cle Elum"
+
+    async def test_a_generic_street_is_better_than_nothing(self):
+        """Degrading to no name at all would cost the stretch its searches entirely, and a
+        street name is a poor search term rather than a harmful one."""
+        assert await self._name(self._road("Smith Road", locality=None)) == "Smith Road"

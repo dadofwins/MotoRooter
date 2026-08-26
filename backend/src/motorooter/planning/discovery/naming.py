@@ -48,6 +48,20 @@ on it produced leads around the wrong town, which the distance filter then corre
 away. The road at the coordinate is both nearer and a better search term: "viewpoint on
 Mather Memorial Parkway" is the query a rider would type.
 
+**But only when the road has a name worth searching**, which is why `route` is qualified by
+`is_distinctive_road` rather than taken outright. The same ordering unqualified produced
+`West Davis Street` and `Cottage Avenue` in a valley, and a street name that exists in every
+town in America returns pages about anywhere. Measured over two corridors, counting
+candidates that survived the distance filter:
+
+    rule                        Chinook   Ellensburg-Cashmere
+    route above locality              8                     1
+    locality above route              4                     5
+    distinctive routes only           7                     6
+
+Inverting the order is not the fix — it trades one corridor for the other, exactly as the
+Enumclaw reasoning predicts. Qualifying the road keeps both.
+
 A county is never useful — "camping near Yakima County" returns a different and much worse
 set of pages than "camping near Chinook Pass".
 """
@@ -69,6 +83,42 @@ one anchor per corridor came back like this on the Ellensburg-Cashmere run.
 def is_plus_code(name: str) -> bool:
     """Whether this "name" is really a coordinate."""
     return bool(_PLUS_CODE.match(name.strip()))
+
+
+_DESIGNATED_ROAD = re.compile(
+    r"\b(parkway|pkwy|highway|hwy|freeway|expressway|pass|byway|scenic|trail|route|road)\s*\d",
+    re.I,
+)
+_NAMED_ROAD_WORDS = re.compile(
+    r"\b(parkway|pkwy|highway|hwy|freeway|expressway|turnpike|pass|byway|scenic|trail|"
+    r"forest|canyon|ridge|creek\s+road|river\s+road|loop)\b",
+    re.I,
+)
+
+
+def is_distinctive_road(name: str) -> bool:
+    """Whether a road name is worth searching for, or is just somebody's street.
+
+    Two signals, and the first does most of the work. **A number makes a road a designation**
+    — `U.S. 12`, `Washington 123`, `State Route 20` — and numbering highways is close to
+    universal, so this half carries over to countries whose street words we do not know.
+
+    The word list is the English-only half, for roads that are named rather than numbered:
+    `Mather Memorial Parkway`, `Chinook Pass to Tipsoo Lake Trail`. It is a supplement, not
+    the mechanism, and its failure is graceful in a way a street-suffix denylist would not
+    be: an unrecognised name falls through to the locality, which is a usable search term.
+    A denylist that failed to recognise `Rue` or `Strasse` would instead keep searching for
+    it, which is the bug being fixed.
+
+    So a false negative costs precision and a false positive costs a corridor. This errs
+    towards the locality on purpose.
+    """
+    stripped = name.strip()
+    if not stripped:
+        return False
+    if any(character.isdigit() for character in stripped):
+        return True
+    return bool(_DESIGNATED_ROAD.search(stripped) or _NAMED_ROAD_WORDS.search(stripped))
 
 
 class PlaceNamer:
@@ -98,12 +148,24 @@ class PlaceNamer:
         if found is None:
             return None
 
+        generic_road: str | None = None
         components = found.get("address_components")
         if isinstance(components, list):
             for wanted in _NAME_TYPES:
                 name = _component(components, wanted)
-                if name:
-                    return name
+                if not name:
+                    continue
+                # A road only outranks the town it is in when it has a name worth searching.
+                # `Mather Memorial Parkway` does; `Cottage Avenue` does not, and anchoring a
+                # corridor on one returned leads a median of 279 km away.
+                if wanted == "route" and not is_distinctive_road(name):
+                    generic_road = name
+                    continue
+                return name
+            # Nothing better turned up, so the street is what there is. A weak search term
+            # beats losing the stretch's searches altogether.
+            if generic_road is not None:
+                return generic_road
 
         # Better a rough name than no search at all for that stretch of route — but only if
         # it is a name. A remote coordinate's `formatted_address` is often just a plus code,

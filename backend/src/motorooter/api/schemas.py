@@ -144,13 +144,6 @@ class ReplanRequest(BaseModel):
         default=None,
         description="Free-text steer from the chat bar, e.g. 'prefer hot springs'.",
     )
-    preserve_pinned: bool = Field(
-        default=True,
-        description=(
-            "Keep POIs the user pinned and legs they have not touched, rather than "
-            "discarding the whole plan."
-        ),
-    )
 
 
 class ReplanEvent(BaseModel):

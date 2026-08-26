@@ -590,12 +590,6 @@
             "title": "Categories",
             "type": "array"
           },
-          "preserve_pinned": {
-            "default": true,
-            "description": "Keep POIs the user pinned and legs they have not touched, rather than discarding the whole plan.",
-            "title": "Preserve Pinned",
-            "type": "boolean"
-          },
           "prompt": {
             "anyOf": [
               {

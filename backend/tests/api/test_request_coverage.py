@@ -6,10 +6,12 @@ for a response and meaningless for a request: a request field is written by the 
 read by us. So the same class of bug — a field in the contract that nothing consumes — hides
 on this side of the boundary with nothing watching.
 
-It found two immediately. `ReplanRequest.prompt` and `ReplanRequest.preserve_pinned` are in
-the generated TypeScript, so a client can send a rider's "prefer hot springs" or ask to keep
-their pinned camps, and the server discards both without a word. There is no way to discover
-that short of reading our source.
+It found two immediately, and they resolved in opposite directions — which is the point.
+`ReplanRequest.preserve_pinned` had no honest server-side implementation, because replan
+streams and never writes, so it was removed from the contract. `ReplanRequest.prompt` is a
+real feature nobody has asked for yet, so it stays with the constraint on how it must
+eventually be built recorded below. Both had been in the generated TypeScript, discardable by
+the server without a word, and undiscoverable short of reading our source.
 
 **This cannot know whether a field *should* be read.** It insists the answer is written down,
 which turns "nobody noticed" into "somebody decided" — and makes an expired reason visible,
@@ -35,12 +37,6 @@ DELIBERATELY_UNREAD: dict[str, str] = {
         "where it is scoring evidence rather than a search term and every candidate stays "
         "Places-verified before anything can prefer it. Agreed with the integrator "
         "2026-08-26; revisit if Tim asks for it."
-    ),
-    "ReplanRequest.preserve_pinned": (
-        "Possibly meaningless server-side: replan streams and never writes, so the merge "
-        "happens on the client and preserving pinned POIs is already client-side. If that "
-        "holds, the honest fix is removing it from the contract rather than implementing "
-        "it, which needs integrator sign-off. Raised 2026-08-26, awaiting a decision."
     ),
 }
 

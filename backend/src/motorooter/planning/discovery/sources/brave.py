@@ -17,6 +17,7 @@ that reaching the map.
 
 import html
 import re
+from collections.abc import Mapping
 from typing import Any
 
 import httpx
@@ -107,7 +108,7 @@ class BraveSearchSource:
 
         if status == 429:
             msg = "Brave rate limit reached (HTTP 429)"
-            raise DiscoveryRateLimited(msg)
+            raise DiscoveryRateLimited(msg, retry_after_s=_retry_after_s(response.headers))
         if status == 402:
             # Plan exhausted. Retrying spends nothing and gains nothing.
             msg = "Brave search plan exhausted (HTTP 402)"
@@ -184,3 +185,37 @@ def _clean(text: str) -> str:
     a real tag and then remove it, which silently deletes text a page actually contained.
     """
     return html.unescape(_TAG.sub("", text)).strip()
+
+
+def _retry_after_s(headers: Mapping[str, str]) -> float | None:
+    """How long Brave says to wait, in seconds, or `None` if it did not say usably.
+
+    `x-ratelimit-reset` carries one value per quota window, comma-separated, matching the
+    windows in `x-ratelimit-policy`. Our key reports `1, 515820`: one second for the
+    per-second window and about six days for the monthly one. **The shortest wins** — the
+    request is almost always blocked by the short window, and honouring the long one would
+    hang a rider's replan for a week over a limit that clears immediately.
+
+    Falls back to `retry-after` in case a proxy or a future plan sends the standard header
+    instead. Anything unparseable is `None` rather than a guess: this is upstream input, and
+    a header that is not a number must not become a delay.
+    """
+    for header in ("x-ratelimit-reset", "retry-after"):
+        raw = headers.get(header)
+        if not raw:
+            continue
+        seconds = [
+            value
+            for value in (_as_float(part) for part in raw.split(","))
+            if value is not None and value > 0
+        ]
+        if seconds:
+            return min(seconds)
+    return None
+
+
+def _as_float(text: str) -> float | None:
+    try:
+        return float(text.strip())
+    except ValueError:
+        return None

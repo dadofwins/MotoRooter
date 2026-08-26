@@ -40,7 +40,15 @@ CATEGORIES = [PoiCategory.WILD_CAMP]
 
 
 class StubNamer(PlaceNamer):
-    def __init__(self, *, name: str | None = "Chinook Pass", error: Exception | None = None):
+    """Names each anchor distinctly by default.
+
+    A namer that returned one name for every anchor was accidentally degenerate once
+    duplicate queries stopped being issued twice: tests meaning "one search per anchor" were
+    really measuring "one search per distinct place name", and passed only because nothing
+    collapsed them. Pass an explicit `name` to get the repeated case on purpose.
+    """
+
+    def __init__(self, *, name: str | None = None, error: Exception | None = None):
         super().__init__(api_key="unused")
         self._name = name
         self._error = error
@@ -48,7 +56,9 @@ class StubNamer(PlaceNamer):
     async def name_for(self, anchor):
         if self._error:
             raise self._error
-        return self._name
+        if self._name is not None:
+            return self._name
+        return f"Place at {anchor.lat:.4f}"
 
     async def region_for(self, anchor):
         return "Washington"
@@ -620,3 +630,49 @@ class TestTheBarTracksTimeNotSteps:
         events = await self._events()
         messages = " ".join(e.message for e in events).lower()
         assert "scoring" in messages
+
+
+class TestDuplicateQueriesAreNotPaidForTwice:
+    """Anchors that name the same place should search it once.
+
+    Measured on two corridors: three anchors on Ellensburg-Cashmere all reverse-geocoded to
+    "Liberty", two on Chinook Pass to "Mather Memorial Parkway". On a road-shaped corridor
+    every anchor gets the same name, and each duplicate is a metered request for an answer
+    already in hand.
+
+    Deduplicated per run rather than cached, because Brave's terms permit only "transient
+    storage required for operation" — so the next replan asks again.
+    """
+
+    async def test_anchors_with_the_same_name_search_once(self):
+        source = FakeSearchSource()
+        await collect(
+            pipeline(namer=StubNamer(name="Liberty"), source=source),
+            max_anchors=4,
+            spacing_m=1000,
+        )
+        # Four anchors, all named "Liberty", one category: one search rather than four.
+        assert len(source.queries) == len(CATEGORIES)
+
+    async def test_distinct_names_still_search_separately(self):
+        """The saving must not come from asking fewer real questions."""
+        names = iter(["Liberty", "Cashmere", "Cle Elum", "Blewett Pass"])
+
+        class Varying(StubNamer):
+            async def name_for(self, anchor):
+                return next(names, "Elsewhere")
+
+        source = FakeSearchSource()
+        await collect(pipeline(namer=Varying(), source=source), max_anchors=4, spacing_m=1000)
+        assert len(source.queries) == 4 * len(CATEGORIES)
+
+    async def test_a_later_run_asks_again(self):
+        """Per run, not per process. Results may not outlive the run that fetched them."""
+        source = FakeSearchSource()
+        for _ in range(2):
+            await collect(
+                pipeline(namer=StubNamer(name="Liberty"), source=source),
+                max_anchors=2,
+                spacing_m=1000,
+            )
+        assert len(source.queries) == 2 * len(CATEGORIES)

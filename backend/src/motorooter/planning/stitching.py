@@ -46,16 +46,32 @@ COINCIDENT_TOLERANCE_M = 1.0
 GAP_REPORT_THRESHOLD_M = 25.0
 """Above this, a boundary mismatch is worth telling someone about.
 
-Engines snapping to different nodes on the same road disagree by a few metres constantly;
-warning about that would be noise. Twenty-five metres is more than a lane and less than a
-missed turn.
+Measured, having been a guess. A four-leg corridor with alternating intents, so every
+boundary is a Google-to-ORS handover, then the shared waypoint nudged progressively off the
+road:
 
-Provisional, and derived from first principles rather than data — which is the wrong way
-round. It is a paved-world number, and the boundary that matters here is a paved leg
-meeting a forest road, where OSM track geometry and a bicycle-profile snap can disagree by
-more than this routinely. Tune it by stitching a real BDR route end to end and counting how
-many gaps it reports; a warning that fires on boundaries a rider would not notice is a
-warning that gets ignored.
+    waypoint nudged     google end     ors start     boundary gap
+              0 m           0.0 m         1.8 m           1.8 m
+             25 m          22.9 m        21.2 m           1.9 m
+            100 m          94.2 m        91.6 m           5.1 m
+            400 m         390.4 m       385.9 m           5.2 m
+           1600 m         724.4 m         1.5 m         725.8 m
+
+**The distribution is bimodal and 25 sits in the empty middle.** Up to 400 m off, both
+engines snap to the same road and disagree by single-digit metres. Past that they choose
+*different* roads and disagree by hundreds. Nothing observed lands anywhere near the
+threshold, so any value from roughly 10 m to 400 m would behave identically — which is why
+the number could be guessed and still be right.
+
+Two things this corrects. The fear recorded here was that "a paved leg meeting a forest road,
+where OSM track geometry and a bicycle-profile snap can disagree by more than this routinely"
+would make 25 too tight; measured across exactly that handover it is 1.8-5.2 m. And a
+reported gap does not mean the engines disagree slightly — it means they picked different
+roads, which for a rider means a waypoint far from anything both can use. That is worth
+saying differently in a warning than "the route has a small discontinuity".
+
+One corridor, one boundary, five offsets. Enough to place 25 in an empty band; not enough to
+claim the band's edges.
 """
 
 

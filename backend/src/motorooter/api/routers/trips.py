@@ -11,7 +11,7 @@ shapes before the backend implementation lands.
 import logging
 from collections.abc import AsyncIterator, Sequence
 
-from fastapi import APIRouter, status
+from fastapi import APIRouter, Response, status
 from fastapi.responses import StreamingResponse
 
 from motorooter.api.deps import ChatModel, Discovery, Resolver, Trips
@@ -29,6 +29,7 @@ from motorooter.api.schemas import (
 from motorooter.chat.prompt import CHAT_SYSTEM_PROMPT
 from motorooter.chat.routing import LegRoutingService
 from motorooter.chat.tools import TripTools
+from motorooter.gpx import trip_to_gpx
 from motorooter.llm.agent import Agent
 from motorooter.llm.messages import AssistantMessage, Message, SystemMessage, UserMessage
 from motorooter.planning.discovery.pipeline import DiscoveryPipeline
@@ -44,6 +45,8 @@ NOT_IMPLEMENTED = status.HTTP_501_NOT_IMPLEMENTED
 
 logger = logging.getLogger(__name__)
 
+
+GPX_MEDIA_TYPE = "application/gpx+xml"
 
 STREAMING_MEDIA_TYPE = "application/x-ndjson"
 """Wire format for the replan stream. Applied to the document by `api.streaming`."""
@@ -286,18 +289,25 @@ def _conversation(request: ChatRequest, trip_name: str) -> list[Message]:
 
 @router.get(
     "/{slug}/gpx",
-    status_code=NOT_IMPLEMENTED,
-    summary="Export GPX (not yet implemented)",
+    summary="Export GPX",
     description=(
-        "Returns a GPX file containing a track plus ordered waypoints, targeted at "
-        "motorcycle GPS units."
+        "A GPX 1.1 file containing one track — one segment per leg — plus ordered "
+        "waypoints, targeted at motorcycle GPS units. Discovered POIs travel as waypoints "
+        "carrying their category, which on the device is most of the value.\n\n"
+        "Long routes are **decimated, never truncated**: the whole route is kept and the "
+        "point budget is spent on the corners, because a truncated track hands a rider the "
+        "first part of their day with nothing to say the rest is missing."
     ),
-    responses={
-        200: {"description": "GPX file.", "content": {"application/gpx+xml": {}}},
-        501: {"model": ErrorResponse},
-    },
+    response_class=Response,
+    responses={200: {"description": "GPX file.", "content": {GPX_MEDIA_TYPE: {}}}},
 )
-async def export_gpx(slug: str, store: Trips) -> None:
-    """Reserved. Owned by the backend engineer."""
-    await store.get(validate_slug(slug))
-    raise NotImplementedYet("GPX export")
+async def export_gpx(slug: str, store: Trips) -> Response:
+    """The trip as a GPX file.
+
+    No parameters: the trip document is already what the rider curated, and a second filter
+    here would be a second thing to keep in step with it. A trip with no routed geometry
+    still exports — its waypoints are worth having, and refusing would be a worse answer
+    than a file with no track in it.
+    """
+    trip = await store.get(validate_slug(slug))
+    return Response(content=trip_to_gpx(trip), media_type=GPX_MEDIA_TYPE)

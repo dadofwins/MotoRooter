@@ -337,9 +337,6 @@ class TestReservedEndpoints:
     def test_replan_on_a_missing_trip_is_404_not_501(self, client):
         assert client.post("/api/trips/no-such-trip/replan", json={}).status_code == 404
 
-    def test_gpx_export_is_501(self, client, trip):
-        assert client.get(f"/api/trips/{trip['slug']}/gpx").status_code == 501
-
     def test_place_detail_is_501(self, client):
         assert client.get("/api/places/ChIJ_example").status_code == 501
 
@@ -475,3 +472,63 @@ class TestALegCarriesTheRequestItCameFrom:
         moved = {**body, "waypoints": [body["waypoints"][0], {"lat": 46.0, "lon": -121.0}]}
         second = client.post("/api/routing/leg", json=moved).json()["leg"]["routed_from"]
         assert first != second
+
+
+class TestGpxExport:
+    """`GET /trips/{slug}/gpx`. Frontend's download has been waiting on this."""
+
+    @staticmethod
+    def _routed(client, trip):
+        slug = trip["slug"]
+        leg = client.post(
+            "/api/routing/leg",
+            json={
+                "waypoints": [{"lat": 46.97, "lon": -121.53}, {"lat": 46.87, "lon": -121.52}],
+                "intent": "unpaved",
+            },
+        ).json()["leg"]
+        client.put(
+            f"/api/trips/{slug}",
+            json={
+                "waypoints": [
+                    {"coordinate": {"lat": 46.97, "lon": -121.53}, "name": "Start"},
+                    {"coordinate": {"lat": 46.87, "lon": -121.52}, "name": "End"},
+                ],
+                "legs": [
+                    {
+                        "intent": "unpaved",
+                        "start_waypoint_index": 0,
+                        "end_waypoint_index": 1,
+                        "routed": leg,
+                    }
+                ],
+            },
+        )
+        return slug
+
+    def test_it_answers_ok(self, client, trip):
+        slug = self._routed(client, trip)
+        assert client.get(f"/api/trips/{slug}/gpx").status_code == 200
+
+    def test_the_content_type_is_gpx(self, client, trip):
+        """Declared so a browser and a desktop tool both know what they have."""
+        slug = self._routed(client, trip)
+        response = client.get(f"/api/trips/{slug}/gpx")
+        assert response.headers["content-type"].startswith("application/gpx+xml")
+
+    def test_the_body_is_a_gpx_document(self, client, trip):
+        import xml.etree.ElementTree as ElementTree
+
+        slug = self._routed(client, trip)
+        root = ElementTree.fromstring(client.get(f"/api/trips/{slug}/gpx").text)
+        assert root.tag.endswith("gpx")
+        assert root.findall(".//{http://www.topografix.com/GPX/1/1}trkpt")
+
+    def test_an_unknown_trip_is_404(self, client):
+        assert client.get("/api/trips/no-such-trip/gpx").status_code == 404
+
+    def test_an_unrouted_trip_still_exports(self, client, trip):
+        """A rider who has placed points but not routed them gets their waypoints. Refusing
+        would be a worse answer than a file with no track in it."""
+        response = client.get(f"/api/trips/{trip['slug']}/gpx")
+        assert response.status_code == 200

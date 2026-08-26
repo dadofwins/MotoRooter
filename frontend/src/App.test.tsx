@@ -1250,6 +1250,114 @@ describe('App arriving', () => {
   })
 })
 
+describe('a trip the assistant built', () => {
+  /**
+   * The join nobody had exercised.
+   *
+   * A chat turn builds a trip server-side and writes legs with `routed: null` — routing happens
+   * on this side, so the document arrives with structure and no geometry. That is correct, and it
+   * means the headline feature only works if the client completes it. The integrator read a real
+   * six-point loop back from chat and got five legs and 0.0 mi, which is expected but had never
+   * been checked from the browser end.
+   *
+   * If this were broken, Tim would type his trip, see six pins and no line, and conclude the
+   * whole thing was.
+   */
+  function unrouted(count: number) {
+    const waypoints = Array.from({ length: count + 1 }, (_u, i) => waypointFixture(47 + i * 0.2, -120 - i * 0.2))
+    return {
+      waypoints,
+      legs: Array.from({ length: count }, (_u, i) =>
+        tripLeg({ start_waypoint_index: i, end_waypoint_index: i + 1, routed: null }),
+      ),
+    }
+  }
+
+  it('routes and draws a trip that arrives with structure and no geometry', async () => {
+    window.history.replaceState(null, '', '/?trip=wabdr-north')
+    const fake = createFakeMaps()
+    const router = fakeRouter()
+    const { waypoints, legs } = unrouted(5)
+    router.getTrip.mockResolvedValue(tripFixture({ slug: 'wabdr-north', name: 'Loop', waypoints, legs }))
+    render(<App mapLoader={fake.loader} mapId="motorooter-test-vector" client={router} />)
+    await mapReady(fake)
+
+    // One request per leg, and a line on the map for each.
+    await waitFor(() => {
+      expect(router.routeLeg).toHaveBeenCalledTimes(5)
+    })
+    await waitFor(() => {
+      expect(fake.polylines.filter((line) => line.map !== null).length).toBeGreaterThanOrEqual(5)
+    })
+  })
+
+  it('asks for every leg at once rather than one after another', async () => {
+    // Six legs at ~900 ms each is the difference between a blink and a five-second wait, and it
+    // is the whole of what a rider experiences between "pins appear" and "route appears".
+    window.history.replaceState(null, '', '/?trip=wabdr-north')
+    const fake = createFakeMaps()
+    const router = fakeRouter()
+    let inFlight = 0
+    let peak = 0
+    router.routeLeg.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          inFlight += 1
+          peak = Math.max(peak, inFlight)
+          setTimeout(() => {
+            inFlight -= 1
+            resolve(ROUTE_RESPONSE)
+          }, 20)
+        }),
+    )
+    const { waypoints, legs } = unrouted(5)
+    router.getTrip.mockResolvedValue(tripFixture({ slug: 'wabdr-north', name: 'Loop', waypoints, legs }))
+    render(<App mapLoader={fake.loader} mapId="motorooter-test-vector" client={router} />)
+    await mapReady(fake)
+
+    await waitFor(() => {
+      expect(router.routeLeg).toHaveBeenCalledTimes(5)
+    })
+    // Sequential would peak at one. Wall clock is then one leg, not five.
+    expect(peak).toBe(5)
+  })
+
+  it('routes a trip the assistant builds mid-session, which is the real path', async () => {
+    // `trip_changed` tells the rail to re-read rather than reconstruct, and the re-read brings
+    // legs with no geometry. Nothing routes them unless the same path that handles a loaded trip
+    // also handles a replaced one.
+    window.history.replaceState(null, '', '/?trip=wabdr-north')
+    const fake = createFakeMaps()
+    const router = fakeRouter()
+    router.getTrip.mockResolvedValue(tripFixture({ slug: 'wabdr-north', name: 'Loop', waypoints: [], legs: [] }))
+    render(<App mapLoader={fake.loader} mapId="motorooter-test-vector" client={router} />)
+    await mapReady(fake)
+    await waitFor(() => expect(router.getTrip).toHaveBeenCalled())
+    expect(router.routeLeg).not.toHaveBeenCalled()
+
+    // The assistant builds the trip and says so.
+    const { waypoints, legs } = unrouted(3)
+    router.getTrip.mockResolvedValue(tripFixture({ slug: 'wabdr-north', name: 'Loop', waypoints, legs }))
+    router.chat.mockImplementation(
+      // eslint-disable-next-line @typescript-eslint/require-await
+      async function* () {
+        yield { kind: 'done' as const, message: '', tool: null, trip_changed: true, truncated: false, progress: null }
+      },
+    )
+    fireEvent.change(screen.getByRole('textbox', { name: /ask the assistant/i }), {
+      target: { value: 'three days of dirt out of Woodinville' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }))
+
+    await waitFor(() => {
+      expect(router.routeLeg).toHaveBeenCalledTimes(3)
+    })
+    await waitFor(() => {
+      expect(screen.getByText(/4 points placed/)).toBeInTheDocument()
+    })
+  })
+})
+
 describe('adding a point by typing its name', () => {
   /**
    * The half of the original trip-creation spec that never shipped — "type a starting and ending

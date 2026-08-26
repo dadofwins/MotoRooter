@@ -1,0 +1,58 @@
+#!/usr/bin/env bash
+# Merge a reviewed branch into main, verify, push, and tell its author.
+#
+# The last step is why this exists. Merging and then not saying so left an engineer idle
+# three times in one evening — once after they had explicitly asked to be told. The notify
+# is the step a human forgets, so it belongs in the same command as the merge rather than
+# in a habit.
+#
+#   scripts/land be/gpx-export "one line for the author, optional"
+#
+# Refuses on a dirty tree, and refuses to push if `make check` fails, so a red main cannot
+# come out of this. The merge is left in place on failure for inspection rather than being
+# rolled back silently.
+set -euo pipefail
+
+branch=${1:?usage: scripts/land <branch> [note]}
+note=${2:-}
+
+cd "$(git rev-parse --show-toplevel)"
+
+[ -z "$(git status --porcelain)" ] || { echo "refusing: working tree is dirty"; exit 1; }
+[ "$(git rev-parse --abbrev-ref HEAD)" = main ] || { echo "refusing: not on main"; exit 1; }
+
+git fetch -q origin
+ref=$(git rev-parse --verify -q "origin/$branch" >/dev/null && echo "origin/$branch" || echo "$branch")
+git rev-parse --verify -q "$ref" >/dev/null || { echo "refusing: no such branch: $branch"; exit 1; }
+
+# Role from the branch prefix, the same way the mailbox infers it everywhere else.
+case "$branch" in
+  be/*) role=backend ;;
+  fe/*) role=frontend ;;
+  *)    role="" ;;
+esac
+
+echo "==> merging $ref"
+git merge --no-ff --no-edit "$ref"
+
+echo "==> make check"
+if ! make check; then
+  echo
+  echo "check FAILED. The merge is still here so you can look at it:"
+  echo "    git reset --hard HEAD^   # to undo"
+  exit 1
+fi
+
+echo "==> pushing main"
+git push origin main
+
+if [ -n "$role" ]; then
+  { echo "$branch is merged into main and pushed. \`make check\` green here."
+    [ -n "$note" ] && { echo; echo "$note"; }
+    echo
+    echo "Rebase whatever you have in flight onto current main."
+  } | scripts/mail send "$role" "merged: $branch"
+  echo "==> told $role"
+else
+  echo "==> no role inferred from '$branch'; nobody notified"
+fi

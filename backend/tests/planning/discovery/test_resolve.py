@@ -483,3 +483,33 @@ class TestOneFailedLookupDoesNotDiscardTheRest:
             mock.post(PLACES_SEARCH_URL).mock(return_value=httpx.Response(429, json={}))
             with pytest.raises(DiscoveryRateLimited):
                 await resolver().resolve([candidate(), candidate()])
+
+    async def test_a_mixed_outage_raises_rather_than_looking_empty(self):
+        """Failures plus legitimate no-matches, and nothing resolved.
+
+        The case a "did every candidate fail?" check misses: half the corridor is
+        rate-limited and the other half genuinely has nothing, so the counts do not match
+        and the run would report an empty map with no explanation. Whether anything survived
+        is the question; how many failed is not.
+        """
+        answers = iter([429, 200, 429, 200])
+
+        async def respond(request):
+            status = next(answers)
+            if status == 429:
+                return httpx.Response(429, json={"error": {"message": "slow down"}})
+            # A real answer with no match: not a failure, just nothing there.
+            return httpx.Response(200, json=body())
+
+        with respx.mock(assert_all_called=False) as mock:
+            mock.post(PLACES_SEARCH_URL).mock(side_effect=respond)
+            with pytest.raises(DiscoveryRateLimited):
+                await resolver().resolve(
+                    [candidate(name=f"Place {i}") for i in range(4)], concurrency=1
+                )
+
+    async def test_an_honestly_empty_corridor_stays_quiet(self):
+        """No failures and no matches is not an error — it is the answer."""
+        with respx.mock(assert_all_called=False) as mock:
+            mock.post(PLACES_SEARCH_URL).mock(return_value=httpx.Response(200, json=body()))
+            assert await resolver().resolve([candidate(), candidate()]) == ()

@@ -185,7 +185,13 @@ class PlacesResolver:
         # the same silent-empty-map bug in a different place: the caller cannot tell "Places
         # rate-limited us" from "this corridor has nothing on it", and only one of those is
         # worth telling a rider about. One survivor is enough to prefer the results.
-        if failures and not resolved and len(failures) == len(candidates):
+        #
+        # `not resolved` is the whole rule. An earlier version also required every candidate
+        # to have failed, which reopened the hole for a mixed outage: twenty rate-limited and
+        # twenty legitimately unmatched left nothing resolved, nothing raised, and nothing
+        # said. The honest "this corridor is empty" case is still silent, because it produces
+        # no failures at all — that, not the count, is what distinguishes the two.
+        if failures and not resolved:
             raise failures[0]
         return tuple(resolved)
 

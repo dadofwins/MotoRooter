@@ -25,6 +25,7 @@ import type { ChatEvent, ChatTurn } from '../api/types'
 
 export type ChatClient = Pick<ApiClient, 'chat'>
 
+
 export interface ChatRailProps {
   readonly client: ChatClient
   /**
@@ -99,6 +100,14 @@ export function ChatRail({ client, resolveSlug, onTripChanged }: ChatRailProps):
    * side changed one.
    */
   const [activity, setActivity] = useState<string | null>(null)
+  /**
+   * How far through the *current tool* the run is, or null when nothing can say.
+   *
+   * Not the highest seen, which is the replan rail's rule and would be wrong here: there a
+   * retreating figure meant events arriving out of order, here it means a second tool started.
+   * Cleared whenever a tool begins or ends, so a bar never describes work that is over.
+   */
+  const [toolProgress, setToolProgress] = useState<number | null>(null)
   const [elapsedS, setElapsedS] = useState(0)
   /** When this turn began, so the wait is measured rather than counted — see `useReplan`. */
   const startedAt = useRef(0)
@@ -165,6 +174,7 @@ export function ChatRail({ client, resolveSlug, onTripChanged }: ChatRailProps):
       setRunning(true)
       setTruncated(false)
       setActivity(null)
+      setToolProgress(null)
       startedAt.current = Date.now()
       setElapsedS(0)
       setDraft('')
@@ -205,8 +215,20 @@ export function ChatRail({ client, resolveSlug, onTripChanged }: ChatRailProps):
             // the other is what happened.
             if (item.message !== '') setActivity(item.message)
             if (item.message !== '') append('tool', item.message)
+            // A new tool has its own scale, and does not inherit the last one's figure.
+            setToolProgress(null)
+            break
+          case 'tool_progress':
+            // Replaces itself and never reaches the transcript. That distinction is why this is
+            // a separate kind: twenty lines of "scoring 3/41" sitting under the answer is worse
+            // than the silence it replaces.
+            if (item.message !== '') setActivity(item.message)
+            // Null is unknown rather than zero — not every tool can say, and a determinate bar
+            // at nothing reads as stuck.
+            setToolProgress(item.progress ?? null)
             break
           case 'tool_finished':
+            setToolProgress(null)
             // Named while it runs. "Thinking…" for twenty seconds is indistinguishable from a
             // hang, and discovery genuinely takes that long.
             if (item.message !== '') append('tool', item.message)
@@ -290,11 +312,28 @@ export function ChatRail({ client, resolveSlug, onTripChanged }: ChatRailProps):
                 claiming progress it has not made — the same choice as the replan meter before
                 it has a percentage, and it becomes determinate with no structural change here
                 once backend adds progress inside a turn. */}
+            {/* Determinate where a tool reports a figure, indeterminate where none does. Reaching
+                the end means *that tool* finished rather than the assistant being done, which is
+                why it can drop back to a sweep and start again. */}
             <div className="progress__meter">
               <div
-                className="progress__bar progress__bar--indeterminate"
+                className={[
+                  'progress__bar',
+                  toolProgress === null ? 'progress__bar--indeterminate' : '',
+                  'progress__bar--working',
+                ]
+                  .filter(Boolean)
+                  .join(' ')}
                 role="progressbar"
                 aria-label="Assistant working"
+                {...(toolProgress === null
+                  ? {}
+                  : {
+                      'aria-valuenow': Math.round(toolProgress * 100),
+                      'aria-valuemin': 0,
+                      'aria-valuemax': 100,
+                      style: { width: `${String(Math.round(toolProgress * 100))}%` },
+                    })}
               />
             </div>
           </div>

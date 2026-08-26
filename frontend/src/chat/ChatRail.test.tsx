@@ -1,6 +1,8 @@
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
 import { ChatRail } from './ChatRail'
+import { HANDLED_KINDS } from './chatEvents'
+import spec from '../../../shared/openapi.json'
 import { ApiNetworkError, ApiNotImplementedError } from '../api/errors'
 import type { RequestOptions } from '../api/client'
 import type { ChatEvent, ChatRequest } from '../api/types'
@@ -560,5 +562,154 @@ describe('ChatRail elapsed time', () => {
     } finally {
       vi.useRealTimers()
     }
+  })
+})
+
+/**
+ * Progress inside a tool, which is the part item 2 could not answer until now.
+ *
+ * Three properties, and the second is the one that would be easy to get wrong by copying the
+ * replan rail:
+ *
+ * **Progress replaces itself; messages accumulate.** That distinction is why backend chose a new
+ * kind rather than reusing `message` — twenty lines of "scoring 3/41" left in the transcript
+ * after the answer arrives is worse than the silence it replaces.
+ *
+ * **The fraction is within the tool, not the turn.** So it legitimately goes back to nothing and
+ * starts again when a second tool runs. The replan rail's highest-seen rule is right there and
+ * wrong here: there, a retreating bar meant events arriving out of order; here it means a new
+ * tool.
+ *
+ * **Null means unknown, not zero.** Not every tool can say, and a bar at 0% reads as stuck.
+ */
+describe('ChatRail progress inside a tool', () => {
+  function turn(events: readonly ChatEvent[]) {
+    const chat = vi.fn(
+       
+      async function* (_slug: string, _request: ChatRequest, _options?: RequestOptions) {
+        for (const item of events) yield item
+        await new Promise(() => undefined)
+      },
+    )
+    render(
+      <ChatRail
+        client={{ chat }}
+        resolveSlug={() => Promise.resolve('wabdr-north')}
+        onTripChanged={vi.fn()}
+      />,
+    )
+  }
+
+  it('shows the figure the tool reports', async () => {
+    turn([
+      event({ kind: 'tool_started', message: 'Searching for camps', tool: 'find_places' }),
+      event({ kind: 'tool_progress', message: 'scoring 12/41 places', tool: 'find_places', progress: 0.29 }),
+    ])
+
+    await send('find camps')
+
+    const meter = await screen.findByRole('progressbar', { name: /assistant/i })
+    await waitFor(() => {
+      expect(meter).toHaveAttribute('aria-valuenow', '29')
+    })
+  })
+
+  it('does not leave the progress notes in the conversation', async () => {
+    // The whole reason for a separate kind. The transcript is what was said; progress is what is
+    // happening, and only one of those is worth keeping once the answer arrives.
+    turn([
+      event({ kind: 'tool_progress', message: 'scoring 3/41 places', tool: 'find_places', progress: 0.07 }),
+      event({ kind: 'tool_progress', message: 'scoring 12/41 places', tool: 'find_places', progress: 0.29 }),
+      event({ kind: 'tool_progress', message: 'scoring 39/41 places', tool: 'find_places', progress: 0.95 }),
+    ])
+
+    await send('find camps')
+    await waitFor(() => {
+      expect(screen.getByTestId('chat-activity').textContent ?? '').toMatch(/39\/41/)
+    })
+
+    // One line, replaced three times — not three lines.
+    expect(screen.queryAllByText(/scoring \d+\/41/)).toHaveLength(1)
+  })
+
+  it('lets the figure start again when a second tool runs', async () => {
+    // Within the tool, not the turn. Carrying the highest seen across tools would show a bar
+    // stuck near the end of the first tool while the second one is barely started.
+    //
+    // No `tool_started` between them, deliberately. With one, the reset it performs hides
+    // whether the figure itself is highest-seen — I wrote it that way first and a
+    // highest-seen mutation passed, because the two are indistinguishable once something else
+    // clears the value. The tool changing is the signal being tested here.
+    turn([
+      event({ kind: 'tool_progress', message: 'scoring 39/41', tool: 'find_places', progress: 0.95 }),
+      event({ kind: 'tool_progress', message: 'adding 1/8', tool: 'add_poi_to_route', progress: 0.12 }),
+    ])
+
+    await send('add the good ones')
+
+    await waitFor(() => {
+      expect(screen.getByRole('progressbar', { name: /assistant/i })).toHaveAttribute(
+        'aria-valuenow',
+        '12',
+      )
+    })
+  })
+
+  it('goes back to a moving bar when a tool cannot say how far along it is', async () => {
+    // Null is unknown, not zero. A determinate bar at 0% reads as stuck, which is the thing the
+    // indeterminate sweep exists to avoid.
+    //
+    // The null arrives on a `tool_progress` rather than via a `tool_started` reset, because the
+    // reset would prove nothing about how a null *figure* is read — which is exactly what a
+    // surviving `?? 0` mutation showed when this test went through `tool_started`.
+    turn([
+      event({ kind: 'tool_progress', message: 'scoring 12/41', tool: 'find_places', progress: 0.29 }),
+      event({ kind: 'tool_progress', message: 'still working', tool: 'find_places', progress: null }),
+    ])
+
+    await send('what have we got')
+
+    await waitFor(() => {
+      expect(screen.getByRole('progressbar', { name: /assistant/i })).not.toHaveAttribute(
+        'aria-valuenow',
+      )
+    })
+  })
+
+  it('stops claiming a figure once the tool has finished', async () => {
+    turn([
+      event({ kind: 'tool_progress', message: 'scoring 39/41', tool: 'find_places', progress: 0.95 }),
+      event({ kind: 'tool_finished', message: 'Found 29 places', tool: 'find_places' }),
+    ])
+
+    await send('find camps')
+
+    await waitFor(() => {
+      expect(screen.getByRole('progressbar', { name: /assistant/i })).not.toHaveAttribute(
+        'aria-valuenow',
+      )
+    })
+  })
+})
+
+describe('every event kind the contract declares', () => {
+  /**
+   * A tripwire rather than an exhaustive `switch` with a `never` default.
+   *
+   * The integrator hoped the new kind would break my build. It would have, with a `never`
+   * assertion — and I decided against one, because it makes an *additive* contract change red on
+   * this side before anything can be done about it. That is the coupling the `Omit` bridge existed
+   * to avoid on a field removal, and there is no equivalent trick for a union member.
+   *
+   * A test gives the same information — it names the kind and points at the file — without
+   * blocking backend from landing an additive change. It fails in CI rather than in their build,
+   * which is where an unhandled kind is this side's problem to fix.
+   */
+  it('is handled here', () => {
+    const declared = new Set(
+      (spec.components.schemas.ChatEvent.properties.kind.enum ?? []),
+    )
+
+    expect([...HANDLED_KINDS].sort()).toEqual([...declared].sort())
   })
 })

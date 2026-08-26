@@ -303,6 +303,50 @@ the detour worth it for this rider, does the ride report say it washes out in sp
 receives the computed metrics and the search snippets and returns a score with a reason —
 never a coordinate it invented, and never a number it could have been given.
 
+### Stage 0: naming the anchor. This is where discovery quality is decided.
+
+Before anything can be searched, a coordinate has to become a *search term*. That prerequisite
+stage turns out to govern everything downstream, and it was measured (2026-08-25,
+Ellensburg–Cashmere, 85.6 km) doing enormous damage:
+
+**21 of 25 named candidates were dropped for distance. Median 169 km off route, minimum 59 km.
+Not one was within 30 km of the 15 km corridor filter.** Snoqualmie Falls and Bull Run came
+back for a route on the other side of the Cascades. The filter was not too tight — nothing was
+close. The pipeline was searching the wrong area entirely, and no amount of tuning downstream
+recovers from that.
+
+The cause is what a reverse geocode returns for a point on a road:
+
+    (47.1946,-120.9559)  'West Davis Street'
+    (47.3873,-120.5483)  '84VX9FP2+WM'
+    (47.5210,-120.4630)  'Cottage Avenue'
+
+Two distinct failures, and the second is the general one:
+
+1. **A Plus Code was being handed to web search.** `name_for` fell through to
+   `formatted_address.split(",")[0]`, and for a remote point Google returns a plus code with
+   `types: ['plus_code']` and nothing else. The function's own docstring already forbade this
+   — *"a coordinate in a web query matches nothing and costs a metered search to discover
+   that"* — and a plus code is a coordinate.
+
+2. **The real distinction is *distinctive* versus *generic*, not route versus locality.** A
+   named pass, parkway, byway or forest road is a genuine search term. "Cottage Avenue" exists
+   in every town in America, so search returns pages about anywhere. Preferring `route` over
+   `locality` is right on a mountain — `Mather Memorial Parkway` beats `Enumclaw` 50 km away —
+   and actively harmful in a valley. It is also why two adjacent anchors on a corridor that
+   *is* one long road both came back "Mather Memorial Parkway".
+
+Prune generic names deterministically and fall through to locality; do not ask a model to
+judge it. Prefer the Geocoding API's own `types` over string matching on suffixes where you
+can — Google already labels a `plus_code`, a `natural_feature` and a `route`, and a suffix
+denylist built from English street names will not travel.
+
+**The lesson for anything built on top of discovery:** measure *where candidates are lost*
+before optimising how many are generated. Road expansion — following a road to find the places
+on it — measured as finding *fewer* POIs than baseline for 1.4–2.3× the search volume, and the
+mechanism was not at fault. It was pouring more candidates into a funnel already discarding
+five of six upstream.
+
 ### Reasoning effort is per-stage, and it is measured
 
 The rule above has a corollary that cost a day to find: **when you do ask the model, ask for

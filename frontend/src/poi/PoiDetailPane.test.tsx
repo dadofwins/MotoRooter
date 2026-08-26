@@ -441,3 +441,21 @@ describe('PoiDetailPane as a separate pane', () => {
     expect(screen.getByRole('complementary')).toHaveFocus()
   })
 })
+
+describe('PoiDetailPane and the pin it came from', () => {
+  it('shows the place\u2019s own mark beside what kind it is', () => {
+    // The pane is opened *by clicking a pin*, and then says "Campground" in words with nothing
+    // connecting it back to the shape that was clicked. One object, drawn the same way twice.
+    render(
+      <PoiDetailPane
+        poi={poi({ name: 'Lone Fir', category: 'campground' })}
+        client={{ placeDetail: () => new Promise(() => undefined) }}
+        onClose={vi.fn()}
+      />,
+    )
+
+    const mark = screen.getByRole('complementary').querySelector('.poi')
+    expect(mark?.className).toContain('poi--stay')
+    expect(mark?.getAttribute('aria-hidden')).toBe('true')
+  })
+})

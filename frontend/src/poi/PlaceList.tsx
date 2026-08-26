@@ -15,7 +15,8 @@
  * Grouped by the same three groups the pins use, so the list and the map agree about what a
  * thing is — a rider matching one to the other should not have to do a puzzle.
  */
-import { isVerified, poiGlyph, poiGroup, poiLabel, type PoiGroup } from '../map/poiPin'
+import { isVerified, poiGroup, poiLabel, type PoiGroup } from '../map/poiPin'
+import { PoiMark } from './PoiMark'
 import type { Poi } from '../api/types'
 
 export interface PlaceListProps {
@@ -116,9 +117,10 @@ export function PlaceList({
                     className="places__open"
                     onClick={() => onOpen(poi)}
                   >
-                    <span className="places__glyph" aria-hidden="true">
-                      {poiGlyph(poi.category)}
-                    </span>
+                    {/* The pin itself, shrunk. A row and a pin should be recognisably the same
+                        object without reading either — the rail and the map are looked at
+                        together, thirty places at a time. */}
+                    <PoiMark category={poi.category} />
                     <span className="places__body">
                       <span className="places__name">{poi.name}</span>
                       <span className="places__meta">

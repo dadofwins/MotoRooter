@@ -20,6 +20,7 @@ import type { ApiClient } from '../api/client'
 import { isNotImplemented } from '../api/errors'
 import type { Poi, PoiDetail } from '../api/types'
 import { isVerified, poiLabel } from '../map/poiPin'
+import { PoiMark } from './PoiMark'
 import { placeErrorMessage } from '../trip/routeErrorMessage'
 
 export type PlaceReader = Pick<ApiClient, 'placeDetail'>
@@ -154,7 +155,12 @@ export function PoiDetailPane({
         </button>
         {/* Known without asking anyone: showing it immediately makes the click feel answered. */}
         <h2 className="poi-pane__name">{poi.name}</h2>
-        <p className="poi-pane__kind">{poiLabel(poi.category)}</p>
+        <p className="poi-pane__kind">
+          {/* The pin that was clicked to get here. Words alone left the pane and the map looking
+              like two different things. */}
+          <PoiMark category={poi.category} />
+          {poiLabel(poi.category)}
+        </p>
       </header>
 
       {poi.note !== null && poi.note !== undefined && <p className="poi-pane__note">{poi.note}</p>}

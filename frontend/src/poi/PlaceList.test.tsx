@@ -328,3 +328,21 @@ describe('PlaceList', () => {
     expect(within(screen.getByRole('region', { name: /places/i })).getByText(/2 places/i)).toBeInTheDocument()
   })
 })
+
+describe('PlaceList marks', () => {
+  it('leads a row with the pin that place has on the map', () => {
+    // A bare glyph is not the pin: the pin is a coloured shape with a glyph in it, and matching
+    // only the character leaves a rider with thirty rows translating prose into shapes.
+    render(
+      <PlaceList
+        pois={[poiFixture({ id: 'a', name: 'Lone Fir', category: 'campground' })]}
+        onOpen={vi.fn()}
+        onIgnore={vi.fn()}
+      />,
+    )
+
+    const mark = screen.getByRole('listitem').querySelector('.poi')
+    expect(mark?.className).toContain('poi--stay')
+    expect(mark?.getAttribute('aria-hidden')).toBe('true')
+  })
+})

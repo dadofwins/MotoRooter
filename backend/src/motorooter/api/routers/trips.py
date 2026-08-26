@@ -29,8 +29,8 @@ from motorooter.api.schemas import (
 from motorooter.planning.discovery.pipeline import DiscoveryPipeline
 from motorooter.routing.errors import RouteIncomplete
 from motorooter.routing.models import RouteLeg
-from motorooter.trips.errors import TripModifiedConcurrently
 from motorooter.trips.models import PoiCategory, Trip, TripSummary, utc_now
+from motorooter.trips.service import edit_trip
 from motorooter.trips.slug import slugify, validate_slug
 
 router = APIRouter(prefix="/api/trips", tags=["trips"], responses=ERROR_RESPONSES)
@@ -66,41 +66,6 @@ async def get_trip(slug: str, store: Trips) -> Trip:
     return await store.get(validate_slug(slug))
 
 
-MAX_UPDATE_ATTEMPTS = 2
-"""Read-merge-write tries twice before reporting a conflict.
-
-One retry resolves the ordinary case — two riders editing different fields of the same
-shared trip — because re-merging a partial request onto the newer document yields the union
-of both edits. A writer that loses twice is contending with sustained traffic, and looping
-further would spend requests without converging.
-"""
-
-
-def _merge(existing: Trip, request: UpdateTripRequest) -> Trip:
-    """Apply a partial update to a trip.
-
-    `edited_at` advances only when geometry actually changes, since it drives the replan
-    staleness flag — bumping it on a rename would spuriously mark discovery stale.
-    """
-    geometry_changed = (
-        request.waypoints is not None and tuple(request.waypoints) != existing.waypoints
-    ) or (request.legs is not None and tuple(request.legs) != existing.legs)
-
-    updated = existing.model_copy(
-        update={
-            "name": request.name if request.name is not None else existing.name,
-            "waypoints": tuple(request.waypoints)
-            if request.waypoints is not None
-            else existing.waypoints,
-            "legs": tuple(request.legs) if request.legs is not None else existing.legs,
-            "pois": tuple(request.pois) if request.pois is not None else existing.pois,
-            "edited_at": utc_now() if geometry_changed else existing.edited_at,
-        }
-    )
-    # Revalidate: model_copy skips validators, and leg/waypoint consistency lives there.
-    return Trip.model_validate(updated.model_dump())
-
-
 @router.put("/{slug}", response_model=Trip)
 async def update_trip(slug: str, request: UpdateTripRequest, store: Trips) -> Trip:
     """Apply a partial update, refusing to clobber a concurrent edit.
@@ -116,17 +81,14 @@ async def update_trip(slug: str, request: UpdateTripRequest, store: Trips) -> Tr
         TripNotFound: no such trip, including one deleted mid-update — writing anyway would
             resurrect something somebody chose to remove.
     """
-    slug = validate_slug(slug)
-
-    for attempt in range(1, MAX_UPDATE_ATTEMPTS + 1):
-        versioned = await store.get_versioned(slug)
-        merged = _merge(versioned.trip, request)
-        try:
-            return await store.put(merged, if_version=versioned.version)
-        except TripModifiedConcurrently:
-            if attempt == MAX_UPDATE_ATTEMPTS:
-                raise
-    raise AssertionError("unreachable: the loop either returns or raises")  # pragma: no cover
+    return await edit_trip(
+        store,
+        validate_slug(slug),
+        name=request.name,
+        waypoints=request.waypoints,
+        legs=request.legs,
+        pois=request.pois,
+    )
 
 
 @router.delete("/{slug}", status_code=status.HTTP_204_NO_CONTENT)

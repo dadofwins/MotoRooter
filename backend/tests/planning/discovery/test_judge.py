@@ -232,6 +232,101 @@ class TestAMisbehavingModel:
         assert client.call_count == 0
 
 
+class TestOneBadEntryDoesNotCostTheBatch:
+    """The judge-zero cause, caught by the logging rather than by reproduction.
+
+    Two live captures, both the same shape — a quote in the wrong place in a key:
+
+        {"index:3","score":0.50,"reason":"..."}
+        {"index:2,"score":0.7,"reason":"..."}
+
+    One of those in a reply makes `json.loads` fail on the *whole* thing, so twenty
+    perfectly good scores were thrown away and the batch asked again. The retry is why this
+    only ever showed as slowness. Salvaging the well-formed entries is the fix; repairing the
+    broken one is not, because the damaged field is the index, and an index guessed wrong
+    attaches a score to a different place — which is exactly the plausible-and-wrong failure
+    every other stage here refuses.
+    """
+
+    @staticmethod
+    def _reply(broken: str) -> AssistantMessage:
+        return AssistantMessage(
+            content=(
+                '{"scores":['
+                '{"index":0,"score":0.9,"reason":"first"},'
+                f"{broken},"
+                '{"index":2,"score":0.7,"reason":"third"}'
+                "]}"
+            )
+        )
+
+    @pytest.mark.parametrize(
+        "broken",
+        [
+            '{"index:1","score":0.5,"reason":"quote after the colon"}',
+            '{"index:1,"score":0.5,"reason":"quote swallowed the colon"}',
+        ],
+        ids=["captured-1", "captured-2"],
+    )
+    async def test_the_good_scores_in_a_broken_reply_survive(self, broken):
+        scorer, _ = judge(self._reply(broken))
+        scored = await scorer.judge([resolved("A"), resolved("B"), resolved("C")], LEG)
+        assert [item.score for item in scored] == [0.9, 0.7]
+
+    async def test_the_place_whose_entry_was_broken_is_simply_unscored(self):
+        scorer, _ = judge(self._reply('{"index:1","score":0.5,"reason":"broken"}'))
+        scored = await scorer.judge([resolved("A"), resolved("B"), resolved("C")], LEG)
+        assert "B" not in [item.resolved.candidate.name for item in scored]
+
+    async def test_it_does_not_ask_again_when_it_salvaged_something(self):
+        """The retry exists for a reply that yielded nothing. Two good scores is not that."""
+        scorer, client = judge(self._reply('{"index:1","score":0.5,"reason":"broken"}'))
+        await scorer.judge([resolved("A"), resolved("B"), resolved("C")], LEG)
+        assert len(client.conversations) == 1
+
+    async def test_a_reply_that_is_not_json_at_all_still_yields_nothing(self):
+        """Salvage must not turn prose into scores by finding braces in it."""
+        scorer, _ = judge(
+            AssistantMessage(content="I think the campsite {sic} is probably quite nice."),
+            AssistantMessage(content="Still prose, I am afraid."),
+        )
+        assert await scorer.judge([resolved()], LEG) == ()
+
+    async def test_a_well_formed_reply_is_read_without_salvage(self):
+        """The fast path stays the path: whole-reply parse first, scan only on failure."""
+        scorer, _ = judge(says({"scores": [{"index": 0, "score": 0.8, "reason": "great"}]}))
+        assert (await scorer.judge([resolved()], LEG))[0].score == pytest.approx(0.8)
+
+    async def test_a_brace_inside_a_reason_does_not_split_an_entry(self):
+        scorer, _ = judge(
+            AssistantMessage(
+                content=(
+                    '{"scores":['
+                    '{"index":0,"score":0.9,"reason":"worth the detour {sic}"},'
+                    '{"index:1","score":0.5,"reason":"broken"}'
+                    "]}"
+                )
+            )
+        )
+        scored = await scorer.judge([resolved("A"), resolved("B")], LEG)
+        assert [item.reason for item in scored] == ["worth the detour {sic}"]
+
+    async def test_a_truncated_reply_keeps_the_entries_that_arrived(self):
+        """A cut-off stream is the same problem: the last object is broken, the rest are not."""
+        scorer, _ = judge(
+            AssistantMessage(
+                content=(
+                    '{"scores":['
+                    '{"index":0,"score":0.9,"reason":"first"},'
+                    '{"index":1,"score":0.8,"reason":"second"},'
+                    '{"index":2,"score":0.7,"rea'
+                )
+            )
+        )
+        scored = await scorer.judge([resolved("A"), resolved("B"), resolved("C")], LEG)
+        assert [item.score for item in scored] == [0.9, 0.8]
+
+
 class TestAnUnusableReplyIsRetried:
     """The judge intermittently returns nothing usable, and it is expensive when it does.
 

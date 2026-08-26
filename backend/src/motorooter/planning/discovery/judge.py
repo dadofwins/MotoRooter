@@ -254,21 +254,60 @@ def _bounded(value: object) -> float | None:
 
 
 def _scores_in(content: str | None) -> list[dict[str, object]]:
+    """Score objects from a reply, whether or not the reply as a whole is valid JSON."""
     if not content:
         return []
     match = _JSON_OBJECT.search(content)
-    if match is None:
-        return []
-    try:
-        body = json.loads(match.group())
-    except ValueError:
-        return []
-    if not isinstance(body, dict):
-        return []
-    scores = body.get("scores")
-    if not isinstance(scores, list):
-        return []
-    return [entry for entry in scores if isinstance(entry, dict)]
+    if match is not None:
+        try:
+            body = json.loads(match.group())
+        except ValueError:
+            pass
+        else:
+            if isinstance(body, dict) and isinstance(body.get("scores"), list):
+                return [entry for entry in body["scores"] if isinstance(entry, dict)]
+    return _salvaged(content)
+
+
+def _salvaged(content: str) -> list[dict[str, object]]:
+    """Whatever score objects can still be read out of a reply that will not parse.
+
+    The judge-zero cause, and it cost whole batches. Two live captures, both a quote in the
+    wrong place in a key:
+
+        {"index:3","score":0.50,"reason":"..."}
+        {"index:2,"score":0.7,"reason":"..."}
+
+    One of those makes `json.loads` fail on the *entire* reply, so twenty perfectly good
+    scores were discarded and the batch asked again. The retry is why this only ever showed
+    up as slowness rather than as an error.
+
+    `raw_decode` from every `{` rather than a brace-counting scan, because the second capture
+    has an *odd* number of quotes: any parser tracking string state itself is left inside a
+    string for the rest of the reply and loses every later entry too. Looking for a literal
+    brace and asking the real decoder whether a value starts there has no state to corrupt —
+    a `{` inside prose, or inside a reason, simply fails to decode and is stepped over.
+
+    Nothing is repaired. The damaged field in both captures is the index, which is the only
+    thing tying a score to a place, so a guess would attach a judgement to a different
+    campsite — the plausible-and-wrong failure every other stage of discovery refuses.
+    """
+    decoder = json.JSONDecoder()
+    found: list[dict[str, object]] = []
+    position = 0
+    while (start := content.find("{", position)) != -1:
+        try:
+            value, end = decoder.raw_decode(content, start)
+        except ValueError:
+            position = start + 1
+            continue
+        position = end
+        if isinstance(value, dict):
+            # Not filtered to things that look like scores: `_parse` already requires a
+            # usable index, score and reason, so a stray object is dropped one step later
+            # and a second guard here would be a condition no test could reach.
+            found.append(value)
+    return found
 
 
 def _completed_entries(partial: str) -> int:

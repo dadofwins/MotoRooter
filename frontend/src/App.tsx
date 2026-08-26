@@ -28,6 +28,7 @@ import { MapCanvas } from './map/MapCanvas'
 import { MAP_ID, loadMaps } from './map/googleMaps'
 import type { GoogleMapsLoader } from './map/loadGoogleMaps'
 import { isVerified } from './map/poiPin'
+import { PlaceList } from './poi/PlaceList'
 import { PoiDetailDialog } from './poi/PoiDetailDialog'
 import { DragSession } from './routing/dragSession'
 import { addPoiToRoute, isLegStale, type RouteEdit } from './routing/tripEdits'
@@ -371,6 +372,22 @@ function TripSession({
   /** What the rider last asked about. */
   const [openPoi, setOpenPoi] = useState<Poi | null>(null)
 
+  /**
+   * Places the rider has decided against.
+   *
+   * A filter rather than a deletion, and it is the same filter twice over. `placed` feeds both
+   * the map and the save, so filtering here takes the place off the trip document on the next
+   * write — which it has to, because discovered places are persisted and merely hiding one would
+   * bring it straight back on the next load. And because the replan stream unions into the same
+   * value, an ignored place stays gone when a later run finds it again.
+   *
+   * The whole POI is kept, not just its id, so a mis-click has a way back that is not "run
+   * discovery again". Undo is session-scoped by construction: once the save has landed and the
+   * page is reloaded, the place is genuinely gone. That asymmetry is the honest one — ignoring
+   * is a decision about the trip, undo is a correction to a click.
+   */
+  const [ignored, setIgnored] = useState<readonly Poi[]>([])
+
   const onPoiAdd = useCallback(
     (poi: Poi) => {
       change((from) => {
@@ -386,6 +403,18 @@ function TripSession({
 
   const onPoiOpen = useCallback((poi: Poi) => {
     setOpenPoi(poi)
+  }, [])
+
+  const onPoiIgnore = useCallback((poi: Poi) => {
+    setIgnored((previous) =>
+      previous.some((each) => each.id === poi.id) ? previous : [...previous, poi],
+    )
+    // The dialog is about a place that is no longer on the trip, so it closes with it.
+    setOpenPoi((open) => (open?.id === poi.id ? null : open))
+  }, [])
+
+  const undoIgnore = useCallback(() => {
+    setIgnored((previous) => previous.slice(0, -1))
   }, [])
 
   /**
@@ -409,11 +438,17 @@ function TripSession({
    * inside an effect watching it, which cascades renders; deriving gives pins that appear as
    * they resolve and still get saved, because this is what the save is fed.
    */
+
   const placed = useMemo(() => {
-    if (replan.pois.length === 0) return live.pois
-    const known = new Set(live.pois.map((poi) => poi.id))
-    return [...live.pois, ...replan.pois.filter((found) => !known.has(found.id))]
-  }, [live.pois, replan.pois])
+    const refused = new Set(ignored.map((poi) => poi.id))
+    const kept = live.pois.filter((poi) => !refused.has(poi.id))
+    if (replan.pois.length === 0) return kept
+    const known = new Set(kept.map((poi) => poi.id))
+    return [
+      ...kept,
+      ...replan.pois.filter((found) => !known.has(found.id) && !refused.has(found.id)),
+    ]
+  }, [live.pois, replan.pois, ignored])
 
   /**
    * Saving: created on the first waypoint, written on a debounce, addressed by a slug in the
@@ -549,6 +584,19 @@ function TripSession({
           onIntentChange={setLegIntent}
         />
 
+        {/* Where a rider decides. Twenty-nine pins on a map is a haystack, and this is the
+            second entry point into the same dialog the pins open. */}
+        <PlaceList pois={placed} onOpen={onPoiOpen} onIgnore={onPoiIgnore} />
+
+        {ignored.length > 0 && (
+          <p className="places__undo" role="status">
+            {`Ignored ${ignored[ignored.length - 1]?.name ?? 'a place'}.`}{' '}
+            <button type="button" onClick={undoIgnore}>
+              Undo
+            </button>
+          </p>
+        )}
+
         <SurfaceSummary legs={shownLegs} unit={unit} />
 
         {save.slug !== null && (
@@ -632,6 +680,7 @@ function TripSession({
           <PoiDetailDialog
             poi={openPoi}
             client={client}
+            onIgnore={onPoiIgnore}
             onClose={() => setOpenPoi(null)}
             // Absent for an unconfirmed suggestion, so the dialog shows no control that could
             // not work.

@@ -69,6 +69,21 @@ const LABELS: Record<PoiCategory, string> = {
   mechanic: 'Mechanic',
 }
 
+/**
+ * The glyph for a category, for anywhere that is not a map pin.
+ *
+ * Exported rather than duplicated: the list in the rail and the pin on the map have to agree
+ * about what a thing looks like, or a rider matching one to the other is doing a puzzle.
+ */
+export function poiGlyph(category: PoiCategory): string {
+  return GLYPHS[category]
+}
+
+/** The rider-facing name for a category. One table, so the dialog and the list cannot drift. */
+export function poiLabel(category: PoiCategory): string {
+  return LABELS[category]
+}
+
 export function poiGroup(category: PoiCategory): PoiGroup {
   return GROUPS[category]
 }

@@ -57,4 +57,12 @@ export default tseslint.config(
     extends: [tseslint.configs.disableTypeChecked],
     languageOptions: { globals: globals.node },
   },
+  {
+    // Manual tooling under scripts/: Node rather than browser, and outside tsconfig, so the
+    // type-aware rules have nothing to work from. Linted rather than ignored — `fetch` and
+    // `process` being undefined is a config answer, not a licence to skip the file.
+    files: ['scripts/**/*.{js,mjs,ts}'],
+    extends: [tseslint.configs.disableTypeChecked],
+    languageOptions: { globals: globals.node },
+  },
 )

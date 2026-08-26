@@ -27,6 +27,7 @@ clustering working hard rather than clustering never running.
 from __future__ import annotations
 
 import http.server
+import json
 import pathlib
 import socketserver
 import subprocess
@@ -37,6 +38,7 @@ import time
 HERE = pathlib.Path(__file__).parent
 FRONTEND = HERE.parent.parent
 PORT = 8199
+DEBUG_PORT = 9223
 CHROME = "google-chrome-stable"
 
 
@@ -69,13 +71,20 @@ def main() -> None:
         page.replace("__BROWSER_KEY__", key).replace("__MAP_ID__", map_id)
     )
 
+    ready = work / "ready.json"
+    ready.unlink(missing_ok=True)
+
     class Handler(http.server.SimpleHTTPRequestHandler):
         def __init__(self, *a, **kw):
             super().__init__(*a, directory=str(work), **kw)
 
         def do_POST(self):  # noqa: N802 -- the base class spells it this way
             length = int(self.headers.get("content-length", 0))
-            result.write_bytes(self.rfile.read(length))
+            body = self.rfile.read(length)
+            # `/ready` hands out where to click; `/report` is the answer. The page asks to be
+            # driven because the gesture has to be *trusted* input, which only the protocol can
+            # produce — a synthesised MouseEvent reaches no Map-level listener at all.
+            (ready if self.path == "/ready" else result).write_bytes(body)
             self.send_response(204)
             self.end_headers()
 
@@ -95,16 +104,37 @@ def main() -> None:
                 "--window-size=1100,800",
                 "--no-first-run",
                 f"--user-data-dir={work / 'chrome'}",
+                f"--remote-debugging-port={DEBUG_PORT}",
                 f"http://127.0.0.1:{PORT}/probe.html",
             ],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
         )
         try:
-            for _ in range(60):
+            # The page asks for as many gestures as it needs; each request is consumed here so
+            # the next one is distinguishable from the last.
+            for _ in range(90):
+                if ready.exists():
+                    at = json.loads(ready.read_text())
+                    ready.unlink(missing_ok=True)
+                    delivered = subprocess.run(  # noqa: S603
+                        [
+                            "node",
+                            str(HERE / "trusted-input.mjs"),
+                            str(DEBUG_PORT),
+                            str(at["x"]),
+                            str(at["y"]),
+                            str(at.get("gesture", "drag")),
+                        ],
+                        capture_output=True,
+                        text=True,
+                        check=False,
+                    )
+                    if delivered.returncode != 0:
+                        print(f"gesture not delivered: {delivered.stderr.strip()}", file=sys.stderr)
                 if result.exists():
                     break
-                time.sleep(2)
+                time.sleep(1)
         finally:
             browser.terminate()
         server.shutdown()

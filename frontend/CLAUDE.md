@@ -191,11 +191,13 @@ Never edit anything under `backend/`.
   | `google.maps.Marker` (no Map ID) emits `contextmenu` | true. It renders as an `AREA` element, which is why the first attempt — dispatching at a guessed pixel — missed it. |
   | `Polyline` emits `mousedown` with a `latLng` | true; the drag gesture can start |
   | `map.setOptions({ draggable: false })` stops panning | true; the option round-trips |
-  | `map` emits `mousemove` / `mouseup`, and a `click` after a drag | **unverified, and not for want of trying.** Synthetic `MouseEvent`s reach a `Polyline`'s listeners and reach **no** Map-level listener at all — not even `mousedown`, which certainly exists. That control is in the probe, and it is what makes this row "the harness cannot ask" rather than "the API does not deliver". Answering it needs trusted input via `Input.dispatchMouseEvent` over the DevTools protocol. |
+  | `map` emits `mousemove` and `mouseup` during a drag | true — **but only with panning off**, which is what the canvas does on grab. With panning on, Maps reads a press-and-move as a pan and consumes the moves itself; a probe that skipped that step recorded a failure that was its own. |
+  | `map` emits a `click` after a drag | **FALSE.** A trusted press-release that stays put does emit one; a press-move-release does not. Both halves measured, because the absence means nothing without the control. |
 
-  The last row matters more than it looks: the canvas *compensates* for the click Google emits
-  after a drag, swallowing exactly one so that releasing the line does not also drop a waypoint.
-  If that click never comes, the compensation eats the rider's next deliberate click instead.
+  That last row was a live defect. The canvas armed a flag at drag-end to swallow the click it
+  expected, so it waited for something that never came and swallowed the rider's *next
+  deliberate* click instead — one lost waypoint per drag, silently. It is a timestamp with a
+  250 ms window now, which is correct whichever way the API behaves.
 
   The first row is the one that matters: the entire right-click menu was correct, tested, green
   and did nothing wherever a Map ID is set, which is production. A fake that emitted the event

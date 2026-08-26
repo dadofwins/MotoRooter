@@ -607,36 +607,6 @@ function TripSession({
           </div>
         )}
 
-        {/* The mouse's reach over the route, point by point. Right-click on a pin is the fast
-            path; this is the discoverable and keyboard-reachable one. */}
-        <RoutePoints
-          waypoints={waypoints}
-          onRemove={removeWaypoint}
-          legs={structure}
-          reportsSurface={capabilities.reportsSurface}
-          onIntentChange={setLegIntent}
-        />
-
-        {/* Where a rider decides. Twenty-nine pins on a map is a haystack, and this is the
-            second entry point into the same dialog the pins open. */}
-        <PlaceList
-          pois={placed}
-          onOpen={onPoiOpen}
-          onIgnore={onPoiIgnore}
-          onRouteThrough={onRouteThrough}
-        />
-
-        {ignored.length > 0 && (
-          <p className="places__undo" role="status">
-            {`Ignored ${ignored[ignored.length - 1]?.name ?? 'a place'}.`}{' '}
-            <button type="button" onClick={undoIgnore}>
-              Undo
-            </button>
-          </p>
-        )}
-
-        <SurfaceSummary legs={shownLegs} unit={unit} />
-
         {save.slug !== null && (
           <div className="replan">
             <button
@@ -716,6 +686,42 @@ function TripSession({
           placeCount={placed.length}
         />
 
+        {/* The accelerator, not the requirement. It sits below the route it talks about, and
+            everything it can do is reachable with the mouse above it. `reload` rather than a
+            local merge: the assistant edited the document, so the document wins — replaying
+            events into state here would make two models of one trip. */}
+        <ChatRail client={client} resolveSlug={save.ensure} onTripChanged={reload} />
+
+        {/* The mouse's reach over the route, point by point. Right-click on a pin is the fast
+            path; this is the discoverable and keyboard-reachable one. */}
+        <RoutePoints
+          waypoints={waypoints}
+          onRemove={removeWaypoint}
+          legs={structure}
+          reportsSurface={capabilities.reportsSurface}
+          onIntentChange={setLegIntent}
+        />
+
+        {/* Where a rider decides. Twenty-nine pins on a map is a haystack, and this is the
+            second entry point into the same dialog the pins open. */}
+        <PlaceList
+          pois={placed}
+          onOpen={onPoiOpen}
+          onIgnore={onPoiIgnore}
+          onRouteThrough={onRouteThrough}
+        />
+
+        {ignored.length > 0 && (
+          <p className="places__undo" role="status">
+            {`Ignored ${ignored[ignored.length - 1]?.name ?? 'a place'}.`}{' '}
+            <button type="button" onClick={undoIgnore}>
+              Undo
+            </button>
+          </p>
+        )}
+
+        <SurfaceSummary legs={shownLegs} unit={unit} />
+
         <div className="units">
           {/* A preference, so it sits with the numbers it changes rather than in a settings
               screen nobody opens. */}
@@ -726,12 +732,6 @@ function TripSession({
             Kilometres
           </button>
         </div>
-
-        {/* The accelerator, not the requirement. It sits below the route it talks about, and
-            everything it can do is reachable with the mouse above it. `reload` rather than a
-            local merge: the assistant edited the document, so the document wins — replaying
-            events into state here would make two models of one trip. */}
-        <ChatRail client={client} resolveSlug={save.ensure} onTripChanged={reload} />
 
         {openPoi !== null && (
           <PoiDetailDialog

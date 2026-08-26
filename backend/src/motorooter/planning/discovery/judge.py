@@ -32,6 +32,14 @@ from motorooter.routing.models import RouteLeg
 
 logger = logging.getLogger(__name__)
 
+MAX_LOGGED_REPLY_CHARS = 2000
+"""How much of an unusable reply to record.
+
+Enough to see whether the model answered with prose, truncated JSON, or nothing at all —
+which is the distinction that would explain this — and not so much that a model answering
+with an essay fills the log with it.
+"""
+
 _JSON_OBJECT = re.compile(r"\{.*\}", re.DOTALL)
 
 SYSTEM_PROMPT = """\
@@ -92,7 +100,20 @@ class CandidateJudge:
         for attempt in (1, 2):
             reply = await self._client.complete(conversation, [])
             scored = self._parse(reply.content, resolved, evidence)
-            if scored or attempt == 2:
+            if scored:
+                return scored
+            # Recorded every time, not only when someone is watching. This has resisted
+            # reproduction, so waiting to catch one is the expensive order — logging it
+            # means the next occurrence diagnoses itself. Server-side only: the raw reply
+            # is logged here and never travels back to the model or to a client.
+            logger.warning(
+                "judge scored none of %d places on attempt %d; reply was: %.*s",
+                len(resolved),
+                attempt,
+                MAX_LOGGED_REPLY_CHARS,
+                reply.content or "<empty>",
+            )
+            if attempt == 2:
                 return scored
         raise AssertionError("unreachable: the loop returns on both attempts")  # pragma: no cover
 

@@ -419,3 +419,67 @@ class TestItResolvesConcurrently:
                 [candidate(name=name) for name in names], concurrency=6
             )
         assert [item.candidate.name for item in resolved] == names
+
+
+class TestOneFailedLookupDoesNotDiscardTheRest:
+    """The failure parallelism makes likely, and the worst shape a failure can take.
+
+    Six concurrent lookups against a per-minute ceiling is exactly the burst that earns a
+    429. If one raising discards the thirty-nine that resolved, the run still *succeeds* —
+    it reports nothing found, and the rider sees an empty map with no error to explain it.
+
+    Same principle as the stage-level handling: a failure costs those results, not the run.
+    """
+
+    @staticmethod
+    def _one_bad_apple(mock):
+        """The third lookup rate-limits; the rest are fine."""
+        seen = {"n": 0}
+
+        async def respond(request):
+            seen["n"] += 1
+            if seen["n"] == 3:
+                return httpx.Response(429, json={"error": {"message": "slow down"}})
+            asked = json.loads(request.content)["textQuery"]
+            return httpx.Response(200, json=body(place(place_id=f"ChIJ_{asked}")))
+
+        mock.post(PLACES_SEARCH_URL).mock(side_effect=respond)
+
+    async def test_the_survivors_are_returned(self):
+        with respx.mock(assert_all_called=False) as mock:
+            self._one_bad_apple(mock)
+            resolved = await resolver().resolve(
+                [candidate(name=f"Place {i}") for i in range(6)], concurrency=1
+            )
+        assert len(resolved) == 5
+
+    async def test_it_does_not_raise(self):
+        """Raising is what discarded the batch: resolve() aborted and the caller's
+        stage-level handler turned forty results into zero."""
+        with respx.mock(assert_all_called=False) as mock:
+            self._one_bad_apple(mock)
+            await resolver().resolve(
+                [candidate(name=f"Place {i}") for i in range(6)], concurrency=1
+            )
+
+    async def test_every_lookup_still_happens(self):
+        """One failure must not cancel the lookups queued behind it."""
+        with respx.mock(assert_all_called=False) as mock:
+            self._one_bad_apple(mock)
+            await resolver().resolve(
+                [candidate(name=f"Place {i}") for i in range(6)], concurrency=2
+            )
+            assert len(mock.calls) == 6
+
+    async def test_everything_failing_still_raises(self):
+        """Partial failure degrades; total failure raises.
+
+        Swallowing every failure would be the same silent-empty-map bug relocated: the
+        caller could not tell "Places rate-limited us" from "this corridor has nothing on
+        it", and only one of those is worth telling a rider. One survivor is enough to
+        prefer the results, which is what the tests above cover.
+        """
+        with respx.mock(assert_all_called=False) as mock:
+            mock.post(PLACES_SEARCH_URL).mock(return_value=httpx.Response(429, json={}))
+            with pytest.raises(DiscoveryRateLimited):
+                await resolver().resolve([candidate(), candidate()])

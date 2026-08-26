@@ -163,7 +163,14 @@ async def main() -> int:
     print(
         "\nThe serial figure is the check on the model: the live run took just over two "
         "minutes,\nso a simulation landing near it is evidence the latencies are shaped "
-        "right and the\nparallel prediction is worth something."
+        "right."
+    )
+    print(
+        "\nSince confirmed live at 19.1s over the Chinook Pass corridor, against the ~21s "
+        "predicted\nhere — but only after two live bugs this simulation could not have "
+        "found: extraction\ntimed out on every anchor and yielded nothing, and a lone 429 "
+        "would have discarded a\nwhole batch of resolutions. Wall clock was the easy part "
+        "to model and the least of it."
     )
     print(
         "\nTwo separate wins, and the table only shows one of them. Both rows are the new "

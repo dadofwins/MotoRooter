@@ -31,6 +31,7 @@ import httpx
 from motorooter.planning.discovery.category import from_places_types
 from motorooter.planning.discovery.concurrency import DEFAULT_CONCURRENCY
 from motorooter.planning.discovery.errors import (
+    DiscoveryError,
     DiscoveryQuotaExceeded,
     DiscoveryRateLimited,
     DiscoveryRefused,
@@ -158,8 +159,35 @@ class PlacesResolver:
 
         # gather rather than as-completed: it preserves input order for free, and there is
         # nothing to stream to — the caller wants the whole set before judging.
-        settled = await asyncio.gather(*(resolve_one(candidate) for candidate in candidates))
-        return tuple(item for item in settled if item is not None)
+        #
+        # return_exceptions, because one lookup must not discard the rest. Without it a
+        # single 429 out of forty propagates, the caller's stage handler turns it into an
+        # empty result, and the run *succeeds* while reporting nothing found — a rider sees
+        # an empty map and no error. Concurrency is what makes that likely: six in flight
+        # against a per-minute ceiling is the burst that earns the 429 in the first place.
+        settled = await asyncio.gather(
+            *(resolve_one(candidate) for candidate in candidates), return_exceptions=True
+        )
+
+        resolved: list[ResolvedCandidate] = []
+        failures: list[DiscoveryError] = []
+        for candidate, outcome in zip(candidates, settled, strict=True):
+            if isinstance(outcome, BaseException):
+                if not isinstance(outcome, DiscoveryError):
+                    raise outcome
+                logger.warning("lookup failed for %r: %s", candidate.name, outcome)
+                failures.append(outcome)
+                continue
+            if outcome is not None:
+                resolved.append(outcome)
+
+        # Partial failure degrades; total failure raises. Swallowing *everything* would be
+        # the same silent-empty-map bug in a different place: the caller cannot tell "Places
+        # rate-limited us" from "this corridor has nothing on it", and only one of those is
+        # worth telling a rider about. One survivor is enough to prefer the results.
+        if failures and not resolved and len(failures) == len(candidates):
+            raise failures[0]
+        return tuple(resolved)
 
     async def _lookup(self, candidate: Candidate) -> _Place | None:
         payload: dict[str, Any] = {

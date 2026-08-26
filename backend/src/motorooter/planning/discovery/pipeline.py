@@ -161,9 +161,10 @@ class DiscoveryPipeline:
 
         counts = _Counts()
         # Planned units: a lookup per anchor, a search per anchor and category, one
-        # extraction per anchor, and the enrichment at the end. Counting units rather than
-        # anchors is what keeps the percentage meaningful once things overlap.
-        work = _Work(total=len(placed) * (2 + len(wanted)) + 1)
+        # extraction per anchor, and three for enrichment — resolve, judge, and the tally.
+        # Counting units rather than anchors is what keeps the percentage meaningful once
+        # things overlap.
+        work = _Work(total=len(placed) * (2 + len(wanted)) + 3)
         updates: asyncio.Queue[DiscoveryProgress | None] = asyncio.Queue()
         found: list[Candidate] = []
 
@@ -212,9 +213,17 @@ class DiscoveryPipeline:
             # a response nobody will read.
             producer.cancel()
 
+        # Three metered stages, three events. Behind one event this was fifteen seconds of
+        # silence at 99% on a live corridor — the moment a rider is most likely to decide it
+        # has hung, and the last place left where the bar stops describing anything.
         yield work.step(ENRICH_STAGE, f"checking {len(found)} places are real")
-        scored = await self._enrich(found, leg, counts, concurrency)
+        resolved = await self._resolve(found, leg, counts, concurrency)
+
+        yield work.step(ENRICH_STAGE, f"{len(resolved)} are real and on the route")
+        scored = await self._score(resolved, leg, counts)
+
         pois = tuple(_to_poi(item) for item in scored if item.resolved.category is not None)
+        yield work.step(ENRICH_STAGE, f"scored {len(scored)}")
 
         yield DiscoveryProgress(
             stage=DONE_STAGE,
@@ -272,13 +281,14 @@ class DiscoveryPipeline:
         counts.named += len(extracted)
         return extracted
 
-    async def _enrich(
+    async def _resolve(
         self,
         candidates: Sequence[Candidate],
         leg: RouteLeg,
         counts: _Counts,
         concurrency: int = DEFAULT_CONCURRENCY,
-    ) -> tuple[ScoredCandidate, ...]:
+    ) -> tuple[ResolvedCandidate, ...]:
+        """Claims become facts, or they are dropped."""
         if not candidates:
             return ()
         try:
@@ -292,6 +302,16 @@ class DiscoveryPipeline:
 
         resolved = _unique(resolved)
         counts.resolved = len(resolved)
+        return resolved
+
+    async def _score(
+        self,
+        resolved: Sequence[ResolvedCandidate],
+        leg: RouteLeg,
+        counts: _Counts,
+    ) -> tuple[ScoredCandidate, ...]:
+        if not resolved:
+            return ()
         try:
             return await self._judge.judge(resolved, leg)
         except (DiscoveryError, LlmError) as exc:

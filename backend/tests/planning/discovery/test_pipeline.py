@@ -366,9 +366,67 @@ class TestAStageFailureCostsTheStageNotTheRun:
         assert events[-1].stage == "done"
         assert "failure" in events[-1].message
 
-    async def test_the_timeout_is_above_normal_latency(self):
-        """Eight seconds was measured timing out on ordinary calls. A limit below normal
-        latency does not fail fast, it fails always."""
+    async def test_the_timeout_leaves_room_above_measured_latency(self):
+        """A limit below normal latency does not fail fast, it fails always.
+
+        Two numbers were set before either was measured, and both timed out on ordinary
+        calls. Live, a batch of fifteen snippets at `EXTRACT_EFFORT` takes 2.9-3.4s, so the
+        budget wants to be several times that rather than a round number near it.
+        """
         from motorooter.planning.discovery.factory import EXTRACT_TIMEOUT_S
 
-        assert EXTRACT_TIMEOUT_S >= 15.0
+        measured_worst_s = 3.4
+        assert 3 * measured_worst_s <= EXTRACT_TIMEOUT_S
+
+
+class TestEnrichmentReportsProgressToo:
+    """The silence that was left after the searches were made fast.
+
+    A live corridor: searching and naming finished at 9.6s with steady updates, then the bar
+    sat at 99% for fifteen seconds saying "checking 15 places are real" while resolve,
+    classification and judging ran. Three metered stages behind one event, at the exact
+    moment a rider is most likely to conclude it has hung.
+    """
+
+    @staticmethod
+    def _one_real_place():
+        return ResolvedCandidate(
+            candidate=Candidate(
+                name="First",
+                category=PoiCategory.WILD_CAMP,
+                found_near=Coordinate(lat=0.01, lon=-121.0),
+                source="brave",
+            ),
+            place_id="ChIJ_first",
+            coordinate=Coordinate(lat=0.01, lon=-121.0),
+            category=PoiCategory.WILD_CAMP,
+        )
+
+    async def _events(self):
+        runner = DiscoveryPipeline(
+            namer=StubNamer(),
+            source=FakeSearchSource(),
+            extractor=PlaceExtractor(
+                llm('{"places": [{"result_index": 0, "place_name": "First"}]}')
+            ),
+            resolver=StubResolver(resolved=(self._one_real_place(),)),
+            classifier=CategoryClassifier(llm('{"categories": []}')),
+            judge=CandidateJudge(llm('{"scores": [{"index": 0, "score": 0.8, "reason": "ok"}]}')),
+        )
+        return [e async for e in runner.run(LEG, CATEGORIES, max_anchors=2, spacing_m=1000)]
+
+    async def test_enrichment_is_more_than_one_event(self):
+        events = await self._events()
+        enriching = [e for e in events if e.stage == "enrichment"]
+        assert len(enriching) > 1, "the slowest stretch of the run reports once"
+
+    async def test_it_says_what_it_is_doing_in_each_step(self):
+        """ "Checking 15 places are real" covers three different metered stages."""
+        events = await self._events()
+        said = " ".join(e.message for e in events if e.stage == "enrichment").lower()
+        assert "scor" in said or "judg" in said
+
+    async def test_progress_still_only_reaches_one_at_the_end(self):
+        events = await self._events()
+        assert [e.progress for e in events].count(1.0) == 1
+        assert events[-1].progress == 1.0

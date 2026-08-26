@@ -133,6 +133,13 @@ export interface MapCanvasProps {
    * Never called for an unconfirmed suggestion — the backend refuses to pin one, so offering
    * it would be a control that cannot work.
    */
+  /**
+   * Right-click a route point to take it off the route.
+   *
+   * The same idiom as right-clicking a POI to add it, and the fast path for what the route list
+   * in the rail does discoverably.
+   */
+  readonly onWaypointRemove?: (index: number) => void
   readonly onPoiAdd?: (poi: Poi) => void
   /** A place was clicked. Opens its detail, whatever its provenance. */
   readonly onPoiOpen?: (poi: Poi) => void
@@ -166,6 +173,7 @@ export function MapCanvas({
   onLegDrag,
   onLegDrop,
   onLegCancel,
+  onWaypointRemove,
   onPoiAdd,
   onPoiOpen,
 }: MapCanvasProps): React.JSX.Element {
@@ -215,6 +223,11 @@ export function MapCanvas({
   useEffect(() => {
     poiHandlers.current = { onPoiAdd, onPoiOpen }
   }, [onPoiAdd, onPoiOpen])
+
+  const waypointHandler = useRef(onWaypointRemove)
+  useEffect(() => {
+    waypointHandler.current = onWaypointRemove
+  }, [onWaypointRemove])
 
   /**
    * The gesture in progress, if any.
@@ -453,8 +466,8 @@ export function MapCanvas({
     const map = mapRef.current
     if (maps === null || map === null) return undefined
 
-    const markers = waypoints.map((waypoint, index) =>
-      createMarker(maps, {
+    const pins = waypoints.map((waypoint, index) => {
+      const marker = createMarker(maps, {
         map,
         position: toLatLng(waypoint.coordinate),
         pin: createWaypointPin({
@@ -463,10 +476,19 @@ export function MapCanvas({
           ...(waypoint.name === null ? {} : { name: waypoint.name }),
         }),
         advanced: hasMapId,
-      }),
-    )
+      })
+      // Read through the ref so a new handler identity does not tear down and rebuild every
+      // pin on the route — which on a long trip is a visible flicker on every render.
+      const listener = marker.on('contextmenu', () => {
+        waypointHandler.current?.(index)
+      })
+      return { marker, listener }
+    })
     return () => {
-      for (const marker of markers) marker.detach()
+      for (const { marker, listener } of pins) {
+        listener?.remove()
+        marker.detach()
+      }
     }
   }, [maps, waypoints, hasMapId])
 

@@ -42,6 +42,7 @@ import {
   withWaypointRemoved,
 } from './routing/legStructure'
 import { ReplanProgress } from './trip/ReplanProgress'
+import { RoutePoints } from './trip/RoutePoints'
 import { needsReplan, useReplan } from './trip/useReplan'
 import { useRouteLegs } from './trip/useRouteLegs'
 import { useRoutingCapabilities } from './trip/useRoutingCapabilities'
@@ -261,15 +262,29 @@ function TripSession({
     [change],
   )
 
-  const removeLastWaypoint = useCallback(() => {
-    change((from) => {
-      if (from.waypoints.length === 0) return {}
-      return withWaypointRemoved(
-        { waypoints: from.waypoints, legs: from.legs ?? legsSpanning(from.waypoints.length, DEFAULT_INTENT) },
-        from.waypoints.length - 1,
-      )
-    })
-  }, [change])
+  /**
+   * Remove any point, not just the last one.
+   *
+   * `withWaypointRemoved` has always accepted an arbitrary index; until now nothing in the UI
+   * could reach one. That mattered as soon as the assistant was given `remove_waypoint`: chat
+   * would have been the only way to take a via-point out of the middle of a route, which is the
+   * one thing the accelerator rule forbids.
+   */
+  const removeWaypoint = useCallback(
+    (index: number) => {
+      change((from) => {
+        if (index < 0 || index >= from.waypoints.length) return {}
+        return withWaypointRemoved(
+          {
+            waypoints: from.waypoints,
+            legs: from.legs ?? legsSpanning(from.waypoints.length, DEFAULT_INTENT),
+          },
+          index,
+        )
+      })
+    },
+    [change],
+  )
 
   const drag = useMemo(
     () =>
@@ -459,6 +474,7 @@ function TripSession({
           pois={placed}
           onPoiAdd={onPoiAdd}
           onPoiOpen={onPoiOpen}
+          onWaypointRemove={removeWaypoint}
         />
       </main>
       <aside className="chat-pane" aria-label="Trip assistant">
@@ -492,11 +508,12 @@ function TripSession({
               {shownDurationS !== null && ` · ${formatDuration(shownDurationS)}`}
               {isRouting && ' · routing…'}
             </p>
-            <button type="button" onClick={removeLastWaypoint}>
-              Remove last point
-            </button>
           </div>
         )}
+
+        {/* The mouse's reach over the route, point by point. Right-click on a pin is the fast
+            path; this is the discoverable and keyboard-reachable one. */}
+        <RoutePoints waypoints={waypoints} onRemove={removeWaypoint} />
 
         <SurfaceSummary legs={shownLegs} unit={unit} />
 

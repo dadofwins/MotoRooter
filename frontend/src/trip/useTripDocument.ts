@@ -221,6 +221,23 @@ export function useTripSave(
    */
   const creating = useRef<Promise<string> | null>(null)
 
+  /**
+   * Whether this session is still on screen.
+   *
+   * `ensure` deliberately takes no abort signal — it is shared between chat and the debounced
+   * save, and cancelling it for one would cancel it for the other. But its continuation writes
+   * the slug to the URL, which is a global side effect that outlives the component: a creation
+   * in flight when the rider presses New trip would write the old slug back over a URL that had
+   * just been cleared, leaving the front door on screen while the URL named a trip.
+   */
+  const onScreen = useRef(true)
+  useEffect(
+    () => () => {
+      onScreen.current = false
+    },
+    [],
+  )
+
   const ensure = useCallback((): Promise<string> => {
     if (slug !== null) return Promise.resolve(slug)
     if (creating.current !== null) return creating.current
@@ -228,8 +245,13 @@ export function useTripSave(
     const started = client
       .createTrip({ name: options.name ?? DEFAULT_TRIP_NAME, slug: generateSlug() })
       .then((trip) => {
-        setCreated({ slug: trip.slug, name: trip.name })
-        writeSlugToUrl(trip.slug)
+        // The trip exists either way, so the slug is still the honest answer to whoever asked.
+        // Only the side effects are withheld — an orphaned trip costs a bucket object; a URL
+        // pointing at a trip the rider has left costs them their next reload.
+        if (onScreen.current) {
+          setCreated({ slug: trip.slug, name: trip.name })
+          writeSlugToUrl(trip.slug)
+        }
         return trip.slug
       })
     creating.current = started

@@ -77,9 +77,10 @@ describe('ChatRail', () => {
     expect(await screen.findByText(/campground at Lone Fir/)).toBeInTheDocument()
   })
 
-  it('names the tool it is using while it is using it', async () => {
-    // The slow path can take a while, and "thinking…" for twenty seconds is indistinguishable
-    // from a hang. Saying which tool is running is the difference.
+  it('keeps what a tool did, not that it began', async () => {
+    // Both used to land in the transcript. Starting is what is *happening* and lives on the
+    // activity line, which is gone by the time the turn ends; what happened is worth keeping.
+    // Two lines per tool would turn a six-tool turn into the log Tim asked to have folded away.
     const client = fakeClient([
       event({ kind: 'tool_started', message: 'Searching for camps', tool: 'find_camps' }),
       event({ kind: 'tool_finished', message: 'Found 3 camps', tool: 'find_camps' }),
@@ -89,8 +90,8 @@ describe('ChatRail', () => {
 
     await send('find camps')
 
-    expect(await screen.findByText(/Searching for camps/)).toBeInTheDocument()
     expect(await screen.findByText(/Found 3 camps/)).toBeInTheDocument()
+    expect(screen.queryByText(/Searching for camps/)).not.toBeInTheDocument()
   })
 
   it('marks a failed tool as failed rather than folding it into the answer', async () => {
@@ -711,5 +712,193 @@ describe('every event kind the contract declares', () => {
     )
 
     expect([...HANDLED_KINDS].sort()).toEqual([...declared].sort())
+  })
+})
+
+/**
+ * What the wire actually carries, as opposed to what the contract permits.
+ *
+ * Logged against the live stack, 2026-08-26: **`tool_started` and `tool_finished` carry an empty
+ * message, always.** The agent constructs both without one. Every test above passes a note on
+ * those kinds and every one of them was green, describing a stream that does not exist — so a
+ * rider watching `describe_trip` run was told "Working…" and nothing else.
+ *
+ * The fixes here are the ones that need nothing from the backend. A note on `tool_started` is
+ * backend's to add, and when it lands it supersedes the fallback below without a change here.
+ */
+describe('ChatRail when a tool says nothing about itself', () => {
+  function running(events: readonly ChatEvent[]) {
+    const chat = vi.fn(
+      async function* (_slug: string, _request: ChatRequest, _options?: RequestOptions) {
+        for (const item of events) yield item
+        await new Promise(() => undefined)
+      },
+    )
+    render(
+      <ChatRail
+        client={{ chat }}
+        resolveSlug={() => Promise.resolve('wabdr-north')}
+        onTripChanged={vi.fn()}
+      />,
+    )
+  }
+
+  it('names the tool from the wire rather than saying nothing', async () => {
+    // Derived from `tool`, not from a table of phrases invented here: a hand-written label would
+    // duplicate wording the backend owns and drift from it. This cannot drift, because it is the
+    // identifier the backend sent, made readable.
+    running([event({ kind: 'tool_started', message: '', tool: 'find_places' })])
+
+    await send('find me somewhere to camp')
+
+    const status = await screen.findByTestId('chat-activity')
+    expect(status.textContent ?? '').toMatch(/find places/i)
+  })
+
+  it('prefers the tool\u2019s own words the moment it has any', async () => {
+    running([event({ kind: 'tool_started', message: 'Searching along the route', tool: 'find_places' })])
+
+    await send('find me somewhere to camp')
+
+    const status = await screen.findByTestId('chat-activity')
+    expect(status.textContent ?? '').toMatch(/Searching along the route/)
+    expect(status.textContent ?? '').not.toMatch(/find places/i)
+  })
+
+  it('stops claiming a tool is running once it has finished', async () => {
+    // Measured: two seconds pass between a tool finishing and the model saying anything, and the
+    // line used to hold the finished tool's name through all of it.
+    // With a note, so this fails for the right reason rather than because nothing was ever set.
+    running([
+      event({ kind: 'tool_started', message: 'Reading the trip', tool: 'describe_trip' }),
+      event({ kind: 'tool_finished', message: '', tool: 'describe_trip' }),
+    ])
+
+    await send('what have I got')
+
+    await waitFor(() => {
+      expect(screen.getByTestId('chat-activity').textContent ?? '').toMatch(/^Working/)
+    })
+  })
+
+  it('leaves one line in the transcript for a tool that ran, not two', async () => {
+    // The interaction with backend's change, and the reason it is worth landing first: with a
+    // note on both kinds, a six-tool turn becomes twelve lines of log — which is the thing Tim
+    // asked to have folded away on the replan side. Started is what is happening and belongs to
+    // the activity line; finished is what happened and belongs in the transcript.
+    running([
+      event({ kind: 'tool_started', message: 'Searching along the route', tool: 'find_places' }),
+      event({ kind: 'tool_finished', message: 'Found 10 places', tool: 'find_places' }),
+    ])
+
+    await send('find me somewhere to camp')
+
+    expect(await screen.findByText('Found 10 places')).toBeInTheDocument()
+    expect(screen.queryByText('Searching along the route')).not.toBeInTheDocument()
+  })
+})
+
+/**
+ * How long *this step* has been running.
+ *
+ * The worst moment in a measured turn was not a missing event: the judge's first call took
+ * **16.6 seconds** with the line frozen on "scoring 10 places", because that stage is one model
+ * call for the whole batch and has nothing to report until it returns. A turn-wide clock says
+ * "27s" there, which answers a question nobody asked. What tells a rider the difference between
+ * working and hung is how long the thing on screen has been the thing on screen.
+ */
+describe('ChatRail timing the step in front of you', () => {
+  function stalling(events: readonly ChatEvent[]) {
+    const chat = vi.fn(
+      async function* (_slug: string, _request: ChatRequest, _options?: RequestOptions) {
+        for (const item of events) yield item
+        await new Promise(() => undefined)
+      },
+    )
+    render(
+      <ChatRail
+        client={{ chat }}
+        resolveSlug={() => Promise.resolve('wabdr-north')}
+        onTripChanged={vi.fn()}
+      />,
+    )
+  }
+
+  it('starts the clock again when the activity changes', async () => {
+    vi.useFakeTimers()
+    try {
+      stalling([event({ kind: 'tool_progress', message: 'scoring 10 places', tool: 'find_places' })])
+      await sendWithTimers('find me somewhere to camp')
+
+      await act(async () => {
+        vi.setSystemTime(Date.now() + 14_000)
+        await vi.advanceTimersByTimeAsync(1000)
+      })
+
+      // Fifteen seconds into the turn, and fifteen into this step, so far indistinguishable.
+      expect(screen.getByTestId('chat-activity').textContent ?? '').toMatch(/15s/)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('times the step rather than the turn', async () => {
+    // The distinguishing case, and the one a real turn produced: the turn is over a minute old
+    // and the step in front of you is seconds old. A turn-wide clock reads "1m 2s" there and
+    // makes a step that just started look like the stall.
+    vi.useFakeTimers()
+    try {
+      // Held open so the second step can arrive *after* the clock has run on, which is the
+      // whole point — yielding both up front would make the two figures the same number.
+      let release = (): void => undefined
+      const gate = new Promise<void>((resolve) => {
+        release = resolve
+      })
+      const chat = vi.fn(
+        async function* (_slug: string, _request: ChatRequest, _options?: RequestOptions) {
+          yield event({
+            kind: 'tool_progress',
+            message: 'checking 32 places are real',
+            tool: 'find_places',
+          })
+          await gate
+          yield event({ kind: 'tool_progress', message: 'scoring 10 places', tool: 'find_places' })
+          await new Promise(() => undefined)
+        },
+      )
+      render(
+        <ChatRail
+          client={{ chat }}
+          resolveSlug={() => Promise.resolve('wabdr-north')}
+          onTripChanged={vi.fn()}
+        />,
+      )
+      await sendWithTimers('find me somewhere to camp')
+
+      await act(async () => {
+        vi.setSystemTime(Date.now() + 61_000)
+        await vi.advanceTimersByTimeAsync(1000)
+      })
+      // A minute in, on the old step, and the line says so.
+      expect(screen.getByTestId('chat-activity').textContent ?? '').toMatch(/1m/)
+
+      // Let the new step land first, then let the clock tick underneath it. Combined into one
+      // advance, a mutant that merely zeroes the counter without restarting the clock survives:
+      // the display is reset and no tick happens afterwards to expose the stale baseline.
+      await act(async () => {
+        release()
+        await Promise.resolve()
+      })
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(4000)
+      })
+
+      const shown = screen.getByTestId('chat-activity').textContent ?? ''
+      expect(shown).toMatch(/scoring 10 places/)
+      // The turn is still over a minute old. This step is not.
+      expect(shown).not.toMatch(/1m/)
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })

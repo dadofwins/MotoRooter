@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { replanErrorMessage, routeErrorMessage } from './routeErrorMessage'
 import { ApiError, ApiNetworkError, ApiNotImplementedError } from '../api/errors'
+import type { ApiErrorCode } from '../api/types'
 
 /**
  * What a rider is told when routing fails.
@@ -97,5 +98,58 @@ describe('replanErrorMessage', () => {
         new ApiError({ status: 429, code: 'quota_exceeded', detail: 'daily quota spent' }),
       ),
     ).toMatch(/limit|today/i)
+  })
+})
+
+/**
+ * Codes that say something a rider can act on.
+ *
+ * Found while building place search: `rate_limited` had no message and fell through to
+ * "something went wrong", which is actively misleading — a rider reads it, retries immediately,
+ * and fails again. The backend went to the trouble of separating "too fast" from "budget spent"
+ * and the UI was collapsing them.
+ *
+ * Not every code earns a sentence. `internal_error`, `validation_error` and the rest are bugs or
+ * internals where the generic message is the honest one: naming them would tell a rider something
+ * true and useless. These are the ones where knowing which failure it was changes what to do next.
+ */
+describe('codes a rider can act on', () => {
+  const distinct: readonly [ApiErrorCode, RegExp][] = [
+    // Wait and retry. Distinct from quota, which will not come back today.
+    ['rate_limited', /moment|too many/i],
+    // The assistant's budget, not routing's — the map still works.
+    ['llm_quota_exceeded', /assistant/i],
+    // The assistant is down; the mouse is not.
+    ['llm_unavailable', /assistant/i],
+    ['llm_refused', /assistant/i],
+    // A route came back with gaps, which is about the route rather than the request.
+    ['route_incomplete', /route/i],
+    // A mode this engine cannot serve, which the picker can act on.
+    ['unsupported_intent', /mode|intent/i],
+  ]
+
+  it.each(distinct)('says something specific for %s', (code, expected) => {
+    const message = routeErrorMessage(new ApiError({ status: 400, code, detail: 'x' }))
+
+    expect(message).toMatch(expected)
+    expect(message).not.toMatch(/something went wrong/i)
+  })
+
+  it('tells "too fast" apart from "budget spent"', () => {
+    // The distinction the backend built rate limiting to make. One waits, the other does not.
+    const fast = routeErrorMessage(new ApiError({ status: 429, code: 'rate_limited', detail: 'x' }))
+    const spent = routeErrorMessage(
+      new ApiError({ status: 429, code: 'quota_exceeded', detail: 'x' }),
+    )
+
+    expect(fast).not.toBe(spent)
+    expect(spent).toMatch(/tomorrow/i)
+  })
+
+  it('still says something honest for a code that is a bug rather than a condition', () => {
+    // A rider can do nothing about an internal error, so naming it would be true and useless.
+    expect(routeErrorMessage(new ApiError({ status: 500, code: 'internal_error', detail: 'x' }))).toMatch(
+      /something went wrong/i,
+    )
   })
 })

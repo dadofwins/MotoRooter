@@ -23,7 +23,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { apiClient } from './api/apiClient'
 import type { ApiClient } from './api/client'
-import type { Coordinate, LegIntent, Poi, Trip, TripLeg, Waypoint } from './api/types'
+import type { Coordinate, GeocodeResult, LegIntent, Poi, Trip, TripLeg, Waypoint } from './api/types'
 import { MapCanvas } from './map/MapCanvas'
 import { MAP_ID, loadMaps } from './map/googleMaps'
 import type { GoogleMapsLoader } from './map/loadGoogleMaps'
@@ -45,6 +45,7 @@ import {
 import { ReplanProgress } from './trip/ReplanProgress'
 import { RoutePoints } from './trip/RoutePoints'
 import { CategoryPicker } from './trip/CategoryPicker'
+import { PlaceSearch } from './trip/PlaceSearch'
 import { climbSummary } from './trip/climbSummary'
 import { GpxExport } from './trip/GpxExport'
 import { useDiscoveryCategories } from './trip/useDiscoveryCategories'
@@ -68,6 +69,7 @@ type AppClient = Pick<
   | 'replan'
   | 'chat'
   | 'exportGpx'
+  | 'geocode'
 >
 
 const NO_POIS: readonly Poi[] = []
@@ -266,6 +268,30 @@ function TripSession({
   useEffect(() => {
     current.current = { waypoints, legs }
   }, [waypoints, legs])
+
+  /**
+   * A place chosen by name becomes a waypoint carrying that name.
+   *
+   * Named rather than left as a coordinate, which is what makes the route read back as places —
+   * the last thing in the app that asked a rider to read numbers. `place_id` is the only field
+   * the terms let us keep and the trip document has nowhere to put one, so it is deliberately
+   * dropped: the name and the coordinate are what a route needs.
+   */
+  const addNamedPlace = useCallback(
+    (place: GeocodeResult) => {
+      change((from) =>
+        withWaypointAppended(
+          {
+            waypoints: from.waypoints,
+            legs: from.legs ?? legsSpanning(from.waypoints.length, DEFAULT_INTENT),
+          },
+          { coordinate: place.coordinate, name: place.name, pinned: true },
+          DEFAULT_INTENT,
+        ),
+      )
+    },
+    [change],
+  )
 
   const addWaypoint = useCallback(
     (coordinate: Coordinate) => {
@@ -756,6 +782,15 @@ function TripSession({
             local merge: the assistant edited the document, so the document wins — replaying
             events into state here would make two models of one trip. */}
         <ChatRail client={client} resolveSlug={save.ensure} onTripChanged={reload} />
+
+        {/* The other way in, and the older one: the original spec offered typing an address or
+            clicking the map, and only the clicking half ever shipped. It sits with the route it
+            adds to. */}
+        <PlaceSearch
+          client={client}
+          near={waypoints.at(-1)?.coordinate ?? null}
+          onChoose={addNamedPlace}
+        />
 
         {/* The mouse's reach over the route, point by point. Right-click on a pin is the fast
             path; this is the discoverable and keyboard-reachable one. */}

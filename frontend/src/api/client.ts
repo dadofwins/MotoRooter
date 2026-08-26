@@ -18,6 +18,8 @@
  */
 import { ApiError, ApiNetworkError, ApiNotImplementedError, isAbortError, type ErrorCode } from './errors'
 import type {
+  GeocodeResponse,
+  Coordinate,
   ChatEvent,
   ChatRequest,
   CreateTripRequest,
@@ -61,6 +63,20 @@ export interface ApiClient {
    * be a constant in the frontend, or it silently diverges from the engine serving the leg.
    */
   routingCapabilities(options?: RequestOptions): Promise<RoutingCapabilitiesResponse>
+  /**
+   * Resolve a typed place name to real places.
+   *
+   * Several results, not one: a name is a claim until something verifies it, and plenty of names
+   * verify to more than one real place. Choosing silently is the failure this exists to avoid, so
+   * the caller shows the list. An empty `results` is an ordinary answer — a typo matches nothing.
+   *
+   * `near` biases toward a point, which is what makes "Leavenworth" the Washington one on a trip
+   * already in Washington. Omitted rather than invented when the trip has nowhere to bias toward.
+   */
+  geocode(
+    query: string,
+    options?: RequestOptions & { readonly near?: Coordinate },
+  ): Promise<GeocodeResponse>
   /** Fast path: route one leg. No LLM, no persistence, sub-second. */
   routeLeg(request: RouteLegInput, options?: RequestOptions): Promise<RouteLegResponse>
 
@@ -333,6 +349,18 @@ export function createApiClient(options: ApiClientOptions = {}): ApiClient {
   return {
     async health(requestOptions?: RequestOptions): Promise<HealthResponse> {
       return readJson<HealthResponse>(await send('/api/health', { method: 'GET' }, requestOptions))
+    },
+
+    async geocode(
+      query: string,
+      requestOptions?: RequestOptions & { readonly near?: Coordinate },
+    ): Promise<GeocodeResponse> {
+      const params = new URLSearchParams({ q: query })
+      const near = requestOptions?.near
+      if (near !== undefined) params.set('near', `${String(near.lat)},${String(near.lon)}`)
+      return readJson<GeocodeResponse>(
+        await send(`/api/geocode?${params.toString()}`, { method: 'GET' }, requestOptions),
+      )
     },
 
     async routingCapabilities(

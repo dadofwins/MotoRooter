@@ -21,6 +21,21 @@ const BY_CODE: Partial<Record<ErrorCode, string>> = {
   trip_not_found: 'That trip no longer exists.',
   trip_already_exists: 'A trip with that name already exists. Choose another.',
   trip_modified_concurrently: 'Someone else edited this trip first. Reload to see their version.',
+
+  // Deliberately distinct from `quota_exceeded`: the backend separates "too fast" from "budget
+  // spent" and they call for opposite actions. Collapsing them into one generic sentence sends a
+  // rate-limited rider straight back to retry and fail again.
+  rate_limited: 'Too many requests just now. Give it a moment and try again.',
+
+  // The assistant's own budget and availability, which are not the map's. Saying so matters
+  // because everything reachable by chat is also reachable with the mouse — a rider who knows the
+  // assistant is the broken part can carry on working.
+  llm_quota_exceeded: 'The assistant has hit its limit for today. Everything still works by hand.',
+  llm_unavailable: 'The assistant is not responding. Everything still works by hand.',
+  llm_refused: 'The assistant declined that one. Try asking differently, or do it by hand.',
+
+  route_incomplete: 'Part of that route could not be worked out. Try moving the points either side.',
+  unsupported_intent: 'That mode is not available for this segment. Try another.',
 }
 
 const UNREACHABLE = 'Could not reach the server. Check your connection and try again.'

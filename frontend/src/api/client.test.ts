@@ -11,6 +11,7 @@ import { createApiClient, type FetchLike } from './client'
 import { ApiError, ApiNetworkError, ApiNotImplementedError } from './errors'
 import { DragScheduler } from '../routing/dragScheduler'
 import type {
+  GeocodeResponse,
   HealthResponse,
   PoiDetailResponse,
   ReplanEvent,
@@ -166,6 +167,43 @@ describe('request shape', () => {
 })
 
 describe('endpoints that exist today', () => {
+  it('searches for a place by name, and biases toward where the trip already is', async () => {
+    // `near` is what makes "Leavenworth" the Washington one rather than the Kansas one or the
+    // Bavarian one. Sent as the last waypoint's coordinate when the trip has any.
+    const response: GeocodeResponse = {
+      results: [
+        {
+          name: 'Leavenworth',
+          place_id: 'ChIJ123',
+          coordinate: { lat: 47.5962, lon: -120.6615 },
+          address: 'Leavenworth, WA 98826, USA',
+          kinds: ['locality', 'political'],
+        },
+      ],
+    }
+    const fetchMock = stubFetch(json(response))
+    const api = createApiClient({ fetch: fetchMock })
+
+    const found = await api.geocode('leavenworth', { near: { lat: 47.5, lon: -120.4 } })
+
+    expect(found).toEqual(response)
+    const url = new URL(lastCall(fetchMock)[0], 'http://x')
+    expect(url.pathname).toBe('/api/geocode')
+    expect(url.searchParams.get('q')).toBe('leavenworth')
+    expect(url.searchParams.get('near')).toBe('47.5,-120.4')
+  })
+
+  it('omits near entirely on a trip with nowhere to bias toward', async () => {
+    // A made-up centre would silently prefer one real place over another, which is the failure
+    // the multi-result design exists to avoid.
+    const fetchMock = stubFetch(json({ results: [] }))
+    const api = createApiClient({ fetch: fetchMock })
+
+    await api.geocode('leavenworth')
+
+    expect(new URL(lastCall(fetchMock)[0], 'http://x').searchParams.has('near')).toBe(false)
+  })
+
   it('reads routing capabilities, which is where drag throttling comes from', async () => {
     const capabilities: RoutingCapabilitiesResponse = {
       providers: [

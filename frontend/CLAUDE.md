@@ -142,6 +142,22 @@ Never edit anything under `backend/`.
   because the session was keyed on a capabilities object that was new every time. Both hooks
   that returned helpers hit this, one as a bug and one as a lint error.
 
+- **Rendering the app to look at it: put your overrides *after* the stylesheet, and check both
+  colour schemes.** There is no browser in the test setup, but `google-chrome-stable` is
+  installed, so a throwaway test can emit the component tree plus `src/index.css` to a file and
+  Chrome can screenshot it headless. Two traps, both of which cost a full attempt each:
+
+  `:root { color-scheme: light dark }` means the *user agent* picks form-control and `Canvas`
+  colours from the OS preference. Stripping the dark `@media` block is not enough — the app's own
+  `:root` wins the cascade over anything injected before it, and what you get is a plausible
+  render of a state that cannot exist: light CSS with dark selects and a black sticky heading.
+  Inject `:root { color-scheme: light !important }` **after** the stylesheet.
+
+  And check light as well as dark. **The same alpha that passes over near-black fails over
+  white** — `rgb(0 0 0 / 0.5)` is 3.95:1 on white and 5.19:1 on the dark surface — so a palette
+  verified in dark mode has not been verified. Nine muted classes failed WCAG AA that way, after
+  the dark figures had been computed and found fine.
+
 - **Verify with the exit code, never by reading the output.** `make check` prints ruff's
   "All checks passed!" from the backend step and can still exit non-zero on the frontend
   lint that follows. `make check; echo $?` is the only honest check, and piping it through

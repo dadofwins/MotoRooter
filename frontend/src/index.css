@@ -1,4 +1,23 @@
 :root {
+  /**
+   * Secondary text, and the icon-only controls that sit below it.
+   *
+   * One token per tier rather than a number chosen at each call site. There were thirty-seven
+   * ad-hoc muted values across five alphas, because every new muted class picked its opacity by
+   * copying whichever neighbour it was written next to — and nine of them failed WCAG AA once
+   * anyone rendered the light scheme.
+   *
+   * **The same alpha that passes over near-black fails over white.** 0.5 gives 3.95:1 on white
+   * and 5.19:1 on the dark surface, so a palette verified in dark mode has not been verified. The
+   * dark figures were computed, found fine, and moved on from; the light ones were never taken.
+   * If you add a muted class, use these rather than a new number, and if you must have a new
+   * number compute it against **white** first.
+   *
+   * --ink-muted  5.74:1 light / 6.83:1 dark — text, needs 4.5
+   * --ink-faint  3.95:1 light / 5.19:1 dark — icon-only controls, needs 3.0
+   */
+  --ink-muted: rgb(0 0 0 / 0.6);
+  --ink-faint: rgb(0 0 0 / 0.5);
   --chat-width: 380px;
   color-scheme: light dark;
   font-family: system-ui, -apple-system, 'Segoe UI', sans-serif;
@@ -101,7 +120,7 @@ body {
    legible, so it is not hidden either. */
 .chat__entry--tool {
   font-size: 0.8125rem;
-  color: rgb(0 0 0 / 0.6);
+  color: var(--ink-muted);
   padding-left: 0;
   padding-right: 0;
 }
@@ -122,7 +141,7 @@ body {
 
 .chat__entry--unavailable {
   font-size: 0.8125rem;
-  color: rgb(0 0 0 / 0.6);
+  color: var(--ink-muted);
   background: rgb(0 0 0 / 0.04);
   border: 1px dashed rgb(0 0 0 / 0.2);
 }
@@ -138,7 +157,7 @@ body {
 .chat__truncated {
   margin: 0;
   font-size: 0.8125rem;
-  color: rgb(0 0 0 / 0.6);
+  color: var(--ink-muted);
 }
 
 .chat__composer {
@@ -193,7 +212,7 @@ body {
   margin: 0;
   padding: 2rem;
   text-align: center;
-  color: rgb(0 0 0 / 0.55);
+  color: var(--ink-muted);
   background: #e8e6e1;
 }
 
@@ -260,7 +279,7 @@ body {
 .landing__blurb {
   margin: 0.375rem 0 1.25rem;
   line-height: 1.5;
-  color: rgb(0 0 0 / 0.6);
+  color: var(--ink-muted);
 }
 
 .landing__field {
@@ -268,7 +287,7 @@ body {
   gap: 0.25rem;
   margin-bottom: 0.75rem;
   font-size: 0.8125rem;
-  color: rgb(0 0 0 / 0.6);
+  color: var(--ink-muted);
 }
 
 .landing__field input {
@@ -301,7 +320,7 @@ body {
   font-size: 0.8125rem;
   text-transform: uppercase;
   letter-spacing: 0.04em;
-  color: rgb(0 0 0 / 0.5);
+  color: var(--ink-muted);
 }
 
 .landing__recent ul {
@@ -333,7 +352,7 @@ body {
 .landing__forget {
   padding: 0.25rem 0.5rem;
   font: inherit;
-  color: rgb(0 0 0 / 0.45);
+  color: var(--ink-faint);
   background: transparent;
   border: none;
   cursor: pointer;
@@ -344,10 +363,17 @@ body {
   margin: 0.75rem 0 0;
   font-size: 0.75rem;
   line-height: 1.45;
-  color: rgb(0 0 0 / 0.5);
+  color: var(--ink-muted);
 }
 
 @media (prefers-color-scheme: dark) {
+  /* The same tiers, over the dark surface. Both pass comfortably here — it is the light scheme
+     that is unforgiving, which is the whole reason these are tokens. */
+  :root {
+    --ink-muted: rgb(255 255 255 / 0.6);
+    --ink-faint: rgb(255 255 255 / 0.5);
+  }
+
   .landing {
     background: #141416;
   }
@@ -360,7 +386,7 @@ body {
   .landing__field,
   .landing__recent h2,
   .landing__note {
-    color: rgb(255 255 255 / 0.6);
+    color: var(--ink-muted);
   }
 
   .landing__field input,
@@ -371,11 +397,11 @@ body {
   }
 
   .landing__forget {
-    color: rgb(255 255 255 / 0.5);
+    color: var(--ink-faint);
   }
 
   .trip-bar__new {
-    color: rgb(255 255 255 / 0.65);
+    color: var(--ink-muted);
     border-color: rgb(255 255 255 / 0.22);
   }
 
@@ -404,11 +430,11 @@ body {
 
   .route-summary__provenance,
   .leg-mode__provenance {
-    color: rgb(255 255 255 / 0.5);
+    color: var(--ink-muted);
   }
 
   .progress__history > summary {
-    color: rgb(255 255 255 / 0.55);
+    color: var(--ink-muted);
   }
 
   .progress__history > summary:hover {
@@ -422,11 +448,11 @@ body {
   .points__title,
   .points__index,
   .points__pinned {
-    color: rgb(255 255 255 / 0.55);
+    color: var(--ink-muted);
   }
 
   .points__remove {
-    color: rgb(255 255 255 / 0.5);
+    color: var(--ink-faint);
   }
 
   .points__remove:hover {
@@ -439,7 +465,7 @@ body {
 
   .gpx__contents,
   .gpx__pending {
-    color: rgb(255 255 255 / 0.6);
+    color: var(--ink-muted);
   }
 
   .gpx__error {
@@ -450,7 +476,7 @@ body {
 
   .categories__group-title,
   .categories__cost {
-    color: rgb(255 255 255 / 0.55);
+    color: var(--ink-muted);
   }
 
   .categories__chip {
@@ -470,12 +496,12 @@ body {
   .places__title,
   .places__group-title,
   .places__meta {
-    color: rgb(255 255 255 / 0.55);
+    color: var(--ink-muted);
   }
 
   .places__note,
   .places__undo {
-    color: rgb(255 255 255 / 0.6);
+    color: var(--ink-muted);
   }
 
   .places__open:hover {
@@ -483,7 +509,7 @@ body {
   }
 
   .places__ignore {
-    color: rgb(255 255 255 / 0.45);
+    color: var(--ink-faint);
   }
 
   .places__ignore:hover {
@@ -504,7 +530,7 @@ body {
   }
 
   .leg-mode__label {
-    color: rgb(255 255 255 / 0.55);
+    color: var(--ink-muted);
   }
 
   .leg-mode__field select {
@@ -549,7 +575,7 @@ body {
    the disclosure: available rather than absent. */
 .progress__history > summary {
   font-size: 0.75rem;
-  color: rgb(0 0 0 / 0.55);
+  color: var(--ink-muted);
   cursor: pointer;
   padding: 0.25rem 0;
 }
@@ -565,7 +591,7 @@ body {
   margin: 0.25rem 0 0;
   font-size: 0.6875rem;
   line-height: 1.4;
-  color: rgb(0 0 0 / 0.5);
+  color: var(--ink-muted);
 }
 
 /* The route, point by point. Compact enough that a week-long trip still fits a 380px rail. */
@@ -581,7 +607,7 @@ body {
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.03em;
-  color: rgb(0 0 0 / 0.55);
+  color: var(--ink-muted);
 }
 
 /* Capped for the same reason, and lower: the points list grows with every point placed, so
@@ -607,7 +633,7 @@ body {
   width: 1.25rem;
   font-size: 0.75rem;
   font-variant-numeric: tabular-nums;
-  color: rgb(0 0 0 / 0.5);
+  color: var(--ink-muted);
 }
 
 .points__label {
@@ -617,7 +643,7 @@ body {
 }
 
 .points__pinned {
-  color: rgb(0 0 0 / 0.5);
+  color: var(--ink-muted);
 }
 
 .points__remove {
@@ -625,7 +651,7 @@ body {
   padding: 0 0.375rem;
   font: inherit;
   line-height: 1.2;
-  color: rgb(0 0 0 / 0.45);
+  color: var(--ink-faint);
   background: transparent;
   border: none;
   cursor: pointer;
@@ -647,13 +673,13 @@ body {
   margin: 0.375rem 0 0;
   font-size: 0.75rem;
   line-height: 1.4;
-  color: rgb(0 0 0 / 0.55);
+  color: var(--ink-muted);
 }
 
 .gpx__pending {
   margin: 0.375rem 0 0;
   font-size: 0.75rem;
-  color: rgb(0 0 0 / 0.6);
+  color: var(--ink-muted);
 }
 
 .gpx__error {
@@ -685,7 +711,7 @@ body {
   font-size: 0.6875rem;
   text-transform: uppercase;
   letter-spacing: 0.03em;
-  color: rgb(0 0 0 / 0.5);
+  color: var(--ink-muted);
 }
 
 .categories__chips {
@@ -735,7 +761,7 @@ body {
 .categories__cost {
   margin: 0.375rem 0 0;
   font-size: 0.6875rem;
-  color: rgb(0 0 0 / 0.55);
+  color: var(--ink-muted);
 }
 
 /* The places discovery found. Where a rider decides — twenty-nine pins on a map is a haystack. */
@@ -766,7 +792,7 @@ body {
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.03em;
-  color: rgb(0 0 0 / 0.55);
+  color: var(--ink-muted);
 }
 
 .places__count {
@@ -780,7 +806,7 @@ body {
   font-size: 0.75rem
 ;
   font-weight: 600;
-  color: rgb(0 0 0 / 0.5);
+  color: var(--ink-muted);
 }
 
 .places__list {
@@ -836,7 +862,7 @@ body {
 
 .places__meta {
   font-size: 0.75rem;
-  color: rgb(0 0 0 / 0.55);
+  color: var(--ink-muted);
 }
 
 /* The judge's own reason for keeping the place, clamped so one verbose note cannot push the
@@ -844,7 +870,7 @@ body {
 .places__note {
   font-size: 0.75rem;
   line-height: 1.35;
-  color: rgb(0 0 0 / 0.6);
+  color: var(--ink-muted);
   display: -webkit-box;
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
@@ -855,7 +881,7 @@ body {
   flex: none;
   padding: 0.3125rem 0.375rem;
   font: inherit;
-  color: rgb(0 0 0 / 0.4);
+  color: var(--ink-faint);
   background: transparent;
   border: none;
   cursor: pointer;
@@ -868,7 +894,7 @@ body {
 .places__undo {
   margin: 0.5rem 0 0;
   font-size: 0.75rem;
-  color: rgb(0 0 0 / 0.6);
+  color: var(--ink-muted);
 }
 
 .places__undo button {
@@ -938,7 +964,7 @@ body {
 
 .poi-pane__rating-text {
   font-size: 0.8125rem;
-  color: rgb(0 0 0 / 0.65);
+  color: var(--ink-muted);
 }
 
 /* What a place is actually like, which is the thing a rating cannot tell you. */
@@ -979,7 +1005,7 @@ body {
 
 .leg-mode__label {
   font-size: 0.75rem;
-  color: rgb(0 0 0 / 0.55);
+  color: var(--ink-muted);
 }
 
 .leg-mode__field select {
@@ -1084,7 +1110,7 @@ body {
 .replan__progress {
   margin: 0.5rem 0 0;
   font-size: 0.8125rem;
-  color: rgb(0 0 0 / 0.55);
+  color: var(--ink-muted);
 }
 
 /* Stale suggestions a rider cannot detect are worse than none, so this is a warning rather
@@ -1197,7 +1223,7 @@ body {
   margin: 0.25rem 0 0;
   font-size: 0.75rem;
   font-variant-numeric: tabular-nums;
-  color: rgb(0 0 0 / 0.5);
+  color: var(--ink-muted);
 }
 
 .progress__earlier {
@@ -1206,7 +1232,7 @@ body {
   list-style: none;
   font-size: 0.75rem;
   line-height: 1.5;
-  color: rgb(0 0 0 / 0.45);
+  color: var(--ink-muted);
 }
 
 /* Older steps fade, so the eye lands on what is happening now. */
@@ -1324,7 +1350,7 @@ body {
 
 .surface__distance {
   font-variant-numeric: tabular-nums;
-  color: rgb(0 0 0 / 0.55);
+  color: var(--ink-muted);
 }
 
 /* Where hue cannot be relied on at all, texture carries identity — 45 degrees and its
@@ -1418,7 +1444,7 @@ body {
   font: inherit;
   font-size: 1.125rem;
   line-height: 1.2;
-  color: rgb(0 0 0 / 0.45);
+  color: var(--ink-faint);
   background: transparent;
   border: none;
   cursor: pointer;
@@ -1437,7 +1463,7 @@ body {
 .poi-pane__kind {
   margin: 0.125rem 0 0.75rem;
   font-size: 0.8125rem;
-  color: rgb(0 0 0 / 0.6);
+  color: var(--ink-muted);
 }
 
 .poi-pane__note,
@@ -1452,13 +1478,13 @@ body {
 .poi-pane__coordinate {
   font-family: ui-monospace, monospace;
   font-size: 0.8125rem;
-  color: rgb(0 0 0 / 0.6);
+  color: var(--ink-muted);
 }
 
 .poi-pane__pending {
   margin: 0 0 0.5rem;
   font-size: 0.8125rem;
-  color: rgb(0 0 0 / 0.55);
+  color: var(--ink-muted);
 }
 
 .poi-pane__warning {
@@ -1557,7 +1583,7 @@ body {
   padding: 0.25rem 0.5rem;
   font: inherit;
   font-size: 0.8125rem;
-  color: rgb(0 0 0 / 0.6);
+  color: var(--ink-muted);
   background: transparent;
   border: 1px solid rgb(0 0 0 / 0.18);
   border-radius: 0.375rem;
@@ -1594,7 +1620,7 @@ body {
   .map-pane,
   .map-canvas__overlay {
     background: #1c1c1e;
-    color: rgb(255 255 255 / 0.6);
+    color: var(--ink-muted);
   }
 
   .chat-pane,
@@ -1603,7 +1629,7 @@ body {
   }
 
   .poi-pane__close {
-    color: rgb(255 255 255 / 0.5);
+    color: var(--ink-faint);
   }
 
   .poi-pane__close:hover {
@@ -1626,7 +1652,7 @@ body {
   .chat__entry--tool,
   .chat__working,
   .chat__truncated {
-    color: rgb(255 255 255 / 0.6);
+    color: var(--ink-muted);
   }
 
   .chat__entry--tool-failed {
@@ -1636,7 +1662,7 @@ body {
   }
 
   .chat__entry--unavailable {
-    color: rgb(255 255 255 / 0.6);
+    color: var(--ink-muted);
     background: rgb(255 255 255 / 0.05);
     border-color: rgb(255 255 255 / 0.22);
   }
@@ -1670,7 +1696,7 @@ body {
 
   .replan__progress,
   .progress__meta {
-    color: rgb(255 255 255 / 0.55);
+    color: var(--ink-muted);
   }
 
   .progress__meter {
@@ -1678,11 +1704,11 @@ body {
   }
 
   .progress__earlier {
-    color: rgb(255 255 255 / 0.45);
+    color: var(--ink-muted);
   }
 
   .surface__distance {
-    color: rgb(255 255 255 / 0.55);
+    color: var(--ink-muted);
   }
 
   .units button {
@@ -1697,7 +1723,7 @@ body {
   .poi-pane__kind,
   .poi-pane__pending,
   .poi-pane__coordinate {
-    color: rgb(255 255 255 / 0.6);
+    color: var(--ink-muted);
   }
 }
 

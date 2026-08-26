@@ -82,8 +82,8 @@ queue rather than as footnotes.
 
 | Constant | Where | Status |
 |---|---|---|
-| `GARMIN_TRACK_POINT_LIMIT = 10_000` | `gpx.py` | **Blocking M2.** Commonly documented for modern units; older handhelds cut at 500 per segment. Needs Tim's device. |
-| `RidingSpeeds` 80/40/55 km/h | `speeds.py` | **Original guess, and it now governs almost every trip.** An earlier version of this line said its blast radius had shrunk to untrusted-duration legs only — that stopped being true the moment `DEFAULT_INTENT` became `unpaved`, because every trip stating no mode routes through ORS and ORS is the untrusted one. Needs a real ride and a clock. See below. |
+| ~~`GARMIN_TRACK_POINT_LIMIT = 10_000`~~ | `gpx.py` | **Verified on real hardware, 2026-08-26.** Tim loaded an exported route onto his own unit and it read correctly. No longer an assumption. |
+| ~~`RidingSpeeds` 80/40/55 km/h~~ | `speeds.py` | **Checked against a real timed ride, 2026-08-26**, and it holds. It governs almost every trip — the default being dirt sends them through ORS, which is the untrusted-duration provider — so this was the most load-bearing unmeasured number in the project. |
 | ~~`GAP_REPORT_THRESHOLD_M = 25.0`~~ | leg stitching | **Measured 2026-08-26.** Value unchanged, now known safe rather than hoped. Engine disagreement is bimodal: single-digit metres while both snap to the same road (1.8–5.2 m across a Google/ORS handover, up to 400 m off-road), then hundreds once they choose different roads. 25 sits in an empty band, so anything from ~10 m to ~400 m behaves identically — which is why a guess worked. |
 | discovery cost weights | `pipeline.py` | From one live corridor. Being wrong skews the progress bar rather than breaking it, which is why it is tolerable. |
 
@@ -104,11 +104,13 @@ been changed.
   make here; there is one meaning and one price, and the only question is whether 55 km/h is
   right for untagged road on a route ORS chose.
 
-The OSM audit above implies untagged distance on WABDR 3 behaves like roughly 68 km/h rather
-than 55, which would mean we **over-state** trip time — the same direction as the M0 duration
-error, where 3 h 33 was shown as 4 h 56. One audited section is not a measurement, and replacing
-a guess with a better-argued guess only moves where the next person has to look. This is a
-rider-facing figure and it wants a real ride and a clock, alongside the Garmin limit.
+The OSM audit implied untagged distance on WABDR 3 might behave more like 68 km/h than 55, which
+would have meant over-stating trip time. **A real timed ride says the table holds**, so that
+inference did not survive contact with a stopwatch — which is the correct order, and the reason
+nobody changed the number on the strength of one audited section.
+
+**Every constant in this table is now measured.** If a new one is added, it belongs here until it
+is not a guess.
 
 None except the Garmin limit blocks anything, and all of them fail safely.
 

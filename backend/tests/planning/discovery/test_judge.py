@@ -7,6 +7,7 @@ it returns.
 """
 
 import json
+import logging
 from math import pi
 
 import pytest
@@ -21,6 +22,7 @@ from motorooter.routing.models import Coordinate, LegIntent, RouteLeg
 from motorooter.trips.models import PoiCategory
 
 M_PER_DEGREE_LAT = EARTH_RADIUS_M * pi / 180
+JUDGE_LOGGER = "motorooter.planning.discovery.judge"
 
 
 def north(metres: float) -> Coordinate:
@@ -496,6 +498,43 @@ class TestAnUnusableReplyIsRetried:
         client = FakeLlmClient(replies=(AssistantMessage(content="{}"),), repeat_last=True)
         assert await CandidateJudge(client).judge((), LEG) == ()
         assert client.call_count == 0
+
+
+class TestTheFailureLineSaysHowBigTheBatchWas:
+    """A batch failing and the corridor collapsing must not read the same.
+
+    One is a batch that went wrong among six that did not; the other is the whole corridor
+    collapsing. Since batching landed, the number in the log is the batch size, and a reader
+    meeting it a week later has no way to tell which of the two they are looking at unless
+    the line says so. This is the third stage in one day whose silent collapse looked like an
+    empty corridor, and every hour of that was spent on ambiguity in exactly this place.
+    """
+
+    async def test_it_names_the_batch_and_the_corridor(self, caplog):
+        scorer, _ = judge(*(says({"scores": []}) for _ in range(8)))
+        with caplog.at_level(logging.WARNING, logger=JUDGE_LOGGER):
+            await scorer.judge([resolved(f"P{index}") for index in range(30)], LEG)
+        assert "20 of 30" in caplog.text
+
+    async def test_a_corridor_that_fits_one_batch_says_so_plainly(self):
+        """No "of 5" when the batch is the whole thing; that reads as a partial failure."""
+        scorer, _ = judge(says({"scores": []}), says({"scores": []}))
+        import logging as _logging
+
+        records: list[str] = []
+
+        class Catch(_logging.Handler):
+            def emit(self, record):
+                records.append(record.getMessage())
+
+        logger = _logging.getLogger(JUDGE_LOGGER)
+        handler = Catch()
+        logger.addHandler(handler)
+        try:
+            await scorer.judge([resolved(f"P{index}") for index in range(5)], LEG)
+        finally:
+            logger.removeHandler(handler)
+        assert any("all 5" in message for message in records)
 
 
 class TestAnUnusableReplyIsRecorded:

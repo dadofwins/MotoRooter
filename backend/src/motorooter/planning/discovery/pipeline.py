@@ -22,6 +22,19 @@ outage.
 Progress is counted in completed units of work rather than in anchors, because with things
 running in parallel "anchor 3 of 24" stops meaning anything.
 
+**A stage that sends the whole corridor in one call has a ceiling nobody has looked for.**
+This is a pattern, not three coincidences. Discovery searched one leg until 2026-08-26, so
+every single-call stage had only ever been handed a quarter of a trip; whole-route search
+quadrupled the input and two of them fell over the same afternoon. Categorising failed above
+about 150 names and judging above about 40, and both failed the same way — not losing a
+result, losing the *stage*, because a stage that raises is reported as an empty corridor.
+Extraction was never exposed only because it batches per anchor by construction.
+
+So if you add a stage: batch it, measure where its own budget puts the edge, and write the
+number next to the constant. And if you widen what the pipeline is given, assume every stage
+downstream has a limit that has never been tested rather than that the ones with limits would
+have said so.
+
 **One implementation, two callers.** The REST endpoint and the assistant's tools both run
 this. Item 5 of M1 — route through the found POIs — is reachable by button and by chat, and
 two implementations of it would diverge silently, since both would produce something

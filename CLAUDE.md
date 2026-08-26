@@ -94,14 +94,15 @@ been changed.
 
 **Two things measured about `RidingSpeeds` (2026-08-26), neither of them the number itself:**
 
-- **`paved_kmh = 80` never applies.** Google returns zero surface spans, so every metre of a
-  Google leg is `UNKNOWN`; the only paved distance in the system comes from ORS. Worth knowing
-  before someone tunes that constant and wonders why nothing moves.
-- **`unknown` means two different things and is priced once.** On a Google leg it means "this
-  engine does not report surface" — a paved highway, measured at 81–99 km/h. On an ORS leg it
-  means "nobody has tagged this road", sitting beside 16–34% real dirt. Both are charged
-  55 km/h. `reports_surface` already exists to split on, so this would be a capability
-  distinction rather than an engine name — the shape the routing layer wants.
+- **`paved_kmh = 80` does apply, and only to ORS legs.** The speed table is consulted only when
+  `duration_is_trustworthy` is false, which is ORS — Google legs use Google's own car time and
+  never reach it. And ORS *does* report paved: a live WABDR 3 leg returns 11 paved spans beside
+  20 unpaved and 14 unknown. So the constant governs the paved third of every dirt route.
+- **`unknown`, as the table sees it, means exactly one thing: "nobody has tagged this road".**
+  The other meaning — "this engine does not report surface", which is every Google leg — never
+  reaches the table, because that leg's duration is trusted. So there is no capability split to
+  make here; there is one meaning and one price, and the only question is whether 55 km/h is
+  right for untagged road on a route ORS chose.
 
 The OSM audit above implies untagged distance on WABDR 3 behaves like roughly 68 km/h rather
 than 55, which would mean we **over-state** trip time — the same direction as the M0 duration

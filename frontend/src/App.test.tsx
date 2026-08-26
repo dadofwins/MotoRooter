@@ -996,6 +996,30 @@ describe('App arriving', () => {
     expect(router.createTrip.mock.calls[0]?.[0].name).toBe('Cascades loop')
   })
 
+  it('shows and remembers the name it created the trip with', async () => {
+    // The test that was missing. The existing one asserts on createTrip's *request*, which was
+    // correct and passing while everything downstream fell back to "Untitled trip": a trip
+    // created this session is never re-read, so the stored document stayed null all session
+    // and both the heading and the list lost the rider's own name.
+    const fake = createFakeMaps()
+    const router = fakeRouter()
+    render(<App mapLoader={fake.loader} mapId="motorooter-test-vector" client={router} />)
+
+    fireEvent.change(screen.getByRole('textbox', { name: /trip name/i }), {
+      target: { value: 'Cascades loop' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: /start a new trip/i }))
+    await waitFor(() => expect(fake.maps).toHaveLength(1))
+    fake.clickMap(47.6, -120.7)
+
+    // On screen…
+    expect(await screen.findByRole('heading', { name: 'Cascades loop' })).toBeInTheDocument()
+    // …and in the list they will come back to.
+    await waitFor(() => {
+      expect(localStorage.getItem('motorooter.visitedTrips')).toContain('Cascades loop')
+    })
+  })
+
   it('starts without a name rather than making the rider invent one', async () => {
     const fake = createFakeMaps()
     const router = fakeRouter()

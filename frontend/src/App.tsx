@@ -309,7 +309,9 @@ export function App({
   // This browser's record of where it has been, updated whenever a trip is known — created
   // here, or arrived at by link.
   const knownSlug = save.slug
-  const knownName = stored?.name ?? null
+  // A trip created this session is never re-read, so its name comes from the save rather than
+  // from a stored document that will stay null all session.
+  const knownName = stored?.name ?? save.name
   const remember = visited.remember
   useEffect(() => {
     if (knownSlug !== null) remember({ slug: knownSlug, name: knownName ?? 'Untitled trip' })
@@ -352,10 +354,11 @@ export function App({
         />
       </main>
       <aside className="chat-pane" aria-label="Trip assistant">
-        {stored !== null && (
-          // Which trip this is. The recent-trips list shows names, so a rider who arrived by
-          // link should see the same name here rather than having to infer it from the route.
-          <h1 className="trip-name">{stored.name}</h1>
+        {knownName !== null && (
+          // Which trip this is, whether it was arrived at by link or created here. Keyed on
+          // the name rather than on `stored`, which stays null for a trip created this
+          // session — so this heading never rendered on the path that actually creates trips.
+          <h1 className="trip-name">{knownName}</h1>
         )}
         <p className="greeting">
           Describe your trip and I&rsquo;ll help plan it for you! Or set a start and end point on

@@ -133,6 +133,16 @@ export function useStoredTrip(client: TripReader): StoredTrip {
 
 export interface TripSave {
   readonly slug: string | null
+  /**
+   * The name of a trip this created, or null when it created none.
+   *
+   * Exposed because nothing else knows it. A trip created here is never re-read — the response
+   * is right there — so without this the rider's chosen name existed only inside the request,
+   * and everything downstream fell back to a default. Deliberately the name rather than the
+   * whole `Trip`: adopting the created document as "stored" would make the rider's own edits
+   * look like they described an older one, and drop the waypoint that caused the save.
+   */
+  readonly name: string | null
   readonly status: SaveStatus
   readonly error: Error | null
 }
@@ -162,11 +172,11 @@ export function useTripSave(
   content: TripContent,
   options: TripSaveOptions,
 ): TripSave {
-  const [created, setCreated] = useState<string | null>(null)
+  const [created, setCreated] = useState<{ slug: string; name: string } | null>(null)
   const [status, setStatus] = useState<SaveStatus>('idle')
   const [error, setError] = useState<Error | null>(null)
 
-  const slug = options.slug ?? created
+  const slug = options.slug ?? created?.slug ?? null
 
   // Read inside the effect rather than depended upon, so a new array identity for the same
   // content cannot trigger a write.
@@ -203,7 +213,7 @@ export function useTripSave(
           )
           if (controller.signal.aborted) return
           target = trip.slug
-          setCreated(trip.slug)
+          setCreated({ slug: trip.slug, name: trip.name })
           writeSlugToUrl(trip.slug)
         }
 
@@ -243,5 +253,5 @@ export function useTripSave(
     }
   }, [client, contentKey, slug, options.name])
 
-  return { slug, status, error }
+  return { slug, name: created?.name ?? null, status, error }
 }

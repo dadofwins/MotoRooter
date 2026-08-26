@@ -12,7 +12,7 @@
  * Storage is treated as something that may refuse: Safari in private browsing throws on write,
  * and a list that cannot be saved is not a reason to fail.
  */
-import { useCallback, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 
 const STORAGE_KEY = 'motorooter.visitedTrips'
 
@@ -63,25 +63,24 @@ export interface VisitedTrips {
 export function useVisitedTrips(): VisitedTrips {
   const [trips, setTrips] = useState<readonly VisitedTrip[]>(readStored)
 
+  // Written where a side effect belongs, rather than inside a state updater. React may invoke
+  // an updater twice under StrictMode and an updater is meant to be pure — the write was
+  // harmless there because it is idempotent, but this is its conventional home.
+  useEffect(() => {
+    writeStored(trips)
+  }, [trips])
+
   const remember = useCallback((trip: VisitedTrip) => {
-    setTrips((previous) => {
-      // Most recent first: it is the one being worked on. Renaming updates the row rather
-      // than adding a second one for the same document.
-      const next = [trip, ...previous.filter((known) => known.slug !== trip.slug)].slice(
-        0,
-        MAX_REMEMBERED,
-      )
-      writeStored(next)
-      return next
-    })
+    // Most recent first: it is the one being worked on. Renaming updates the row rather than
+    // adding a second one for the same document.
+    setTrips((previous) => [trip, ...previous.filter((known) => known.slug !== trip.slug)].slice(
+      0,
+      MAX_REMEMBERED,
+    ))
   }, [])
 
   const forget = useCallback((slug: string) => {
-    setTrips((previous) => {
-      const next = previous.filter((known) => known.slug !== slug)
-      writeStored(next)
-      return next
-    })
+    setTrips((previous) => previous.filter((known) => known.slug !== slug))
   }, [])
 
   return useMemo(() => ({ trips, remember, forget }), [trips, remember, forget])

@@ -35,14 +35,18 @@ import type {
  */
 
 /**
- * A chat endpoint that answers the way the real one does today: 501.
+ * The endpoints that are not built yet, answering the way the real ones do today: 501.
  *
  * Spread into every client literal, because a required method added to `AppClient` otherwise
- * breaks each of them at once — the same reason `src/api/fixtures.ts` exists for response
- * shapes. The rail's own behaviour is tested in `src/chat/ChatRail.test.tsx`.
+ * breaks each of them at once — the same reason `src/api/fixtures.ts` exists for response shapes.
+ * Named for the *category* rather than for `chat`, because it has now absorbed a second endpoint
+ * and will absorb the next: each of these has its own behaviour tested where it lives.
  */
-function stubChat() {
+function stubUnbuilt() {
   return {
+    exportGpx: vi.fn((_slug: string, _options?: RequestOptions) =>
+      Promise.reject(new ApiNotImplementedError({ detail: 'gpx export is not implemented yet' })),
+    ),
     chat: vi.fn(
       // Annotated rather than inferred: a body that only throws infers `AsyncGenerator<never>`,
       // and a test that then supplies a real event cannot type-check against it.
@@ -308,7 +312,7 @@ function fakeRouter(response: RouteLegResponse = ROUTE_RESPONSE) {
     placeDetail: vi.fn((_placeId: string, _options?: RequestOptions) =>
       Promise.reject(new ApiNotImplementedError({ detail: 'Places enrichment is not implemented yet' })),
     ),
-      ...stubChat(),
+      ...stubUnbuilt(),
   }
 }
 
@@ -399,7 +403,7 @@ describe('App routing the placed points', () => {
       placeDetail: vi.fn((_placeId: string, _options?: RequestOptions) =>
         Promise.reject(new ApiNotImplementedError({ detail: 'not implemented yet' })),
       ),
-      ...stubChat(),
+      ...stubUnbuilt(),
     }
     render(<App mapLoader={fake.loader} mapId="motorooter-test-vector" client={router} />)
     await mapReady(fake)
@@ -430,7 +434,7 @@ describe('App routing the placed points', () => {
       placeDetail: vi.fn((_placeId: string, _options?: RequestOptions) =>
         Promise.reject(new ApiNotImplementedError({ detail: 'not implemented yet' })),
       ),
-      ...stubChat(),
+      ...stubUnbuilt(),
     }
     render(<App mapLoader={fake.loader} mapId="motorooter-test-vector" client={router} />)
     await mapReady(fake)
@@ -454,7 +458,7 @@ describe('App routing the placed points', () => {
       placeDetail: vi.fn((_placeId: string, _options?: RequestOptions) =>
         Promise.reject(new ApiNotImplementedError({ detail: 'not implemented yet' })),
       ),
-      ...stubChat(),
+      ...stubUnbuilt(),
     }
     render(<App mapLoader={fake.loader} mapId="motorooter-test-vector" client={router} />)
     await mapReady(fake)
@@ -493,7 +497,7 @@ describe('App dragging the route', () => {
       placeDetail: vi.fn((_placeId: string, _options?: RequestOptions) =>
         Promise.reject(new ApiNotImplementedError({ detail: 'not implemented yet' })),
       ),
-      ...stubChat(),
+      ...stubUnbuilt(),
     }
 
     render(<App mapLoader={fake.loader} mapId="motorooter-test-vector" client={router} />)
@@ -1239,6 +1243,83 @@ describe('App arriving', () => {
     await waitFor(() => {
       expect(router.getTrip).toHaveBeenCalledWith('wabdr-north', expect.anything())
     })
+  })
+})
+
+describe('exporting the trip for a GPS unit', () => {
+  it('cannot export a trip with nowhere to go', async () => {
+    const fake = createFakeMaps()
+    render(<App mapLoader={fake.loader} mapId="motorooter-test-vector" client={fakeRouter()} />)
+    await mapReady(fake)
+    fake.clickMap(47.0, -120.0)
+
+    expect(screen.getByRole('button', { name: /download gpx/i })).toBeDisabled()
+  })
+
+  it('says what travels, including the places found along the way', async () => {
+    window.history.replaceState(null, '', '/?trip=wabdr-north')
+    const fake = createFakeMaps()
+    const router = fakeRouter()
+    router.getTrip.mockResolvedValue(
+      tripFixture({
+        slug: 'wabdr-north',
+        name: 'WABDR North',
+        waypoints: [waypointFixture(47, -120), waypointFixture(48, -120)],
+        pois: [
+          poiFixture({ id: 'a', name: 'Lone Fir', source: 'places', place_id: 'p1' }),
+          poiFixture({ id: 'b', name: 'Chevron', category: 'fuel', source: 'places', place_id: 'p2' }),
+        ],
+      }),
+    )
+    render(<App mapLoader={fake.loader} mapId="motorooter-test-vector" client={router} />)
+    await mapReady(fake)
+
+    expect(await screen.findByText(/2 places as waypoints/i)).toBeInTheDocument()
+  })
+
+  it('leaves an ignored place out of the file, not just off the map', async () => {
+    // The export reads the stored document, and ignoring removes the place from it. So this is
+    // the same decision surfacing in a second place rather than a second mechanism.
+    window.history.replaceState(null, '', '/?trip=wabdr-north')
+    const fake = createFakeMaps()
+    const router = fakeRouter()
+    router.getTrip.mockResolvedValue(
+      tripFixture({
+        slug: 'wabdr-north',
+        name: 'WABDR North',
+        waypoints: [waypointFixture(47, -120), waypointFixture(48, -120)],
+        pois: [
+          poiFixture({ id: 'a', name: 'Lone Fir', source: 'places', place_id: 'p1' }),
+          poiFixture({ id: 'b', name: 'Chevron', category: 'fuel', source: 'places', place_id: 'p2' }),
+        ],
+      }),
+    )
+    render(<App mapLoader={fake.loader} mapId="motorooter-test-vector" client={router} />)
+    await mapReady(fake)
+    await screen.findByText(/2 places as waypoints/i)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Ignore Lone Fir' }))
+
+    expect(await screen.findByText(/1 places as waypoints/i)).toBeInTheDocument()
+  })
+
+  it('reads as not built yet rather than broken, because it is still a stub', async () => {
+    window.history.replaceState(null, '', '/?trip=wabdr-north')
+    const fake = createFakeMaps()
+    const router = fakeRouter()
+    router.getTrip.mockResolvedValue(
+      tripFixture({
+        slug: 'wabdr-north',
+        name: 'WABDR North',
+        waypoints: [waypointFixture(47, -120), waypointFixture(48, -120)],
+      }),
+    )
+    render(<App mapLoader={fake.loader} mapId="motorooter-test-vector" client={router} />)
+    await mapReady(fake)
+
+    fireEvent.click(await screen.findByRole('button', { name: /download gpx/i }))
+
+    expect(await screen.findByText(/export is not built yet/i)).toBeInTheDocument()
   })
 })
 

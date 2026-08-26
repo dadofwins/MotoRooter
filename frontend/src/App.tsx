@@ -45,6 +45,7 @@ import {
 import { ReplanProgress } from './trip/ReplanProgress'
 import { RoutePoints } from './trip/RoutePoints'
 import { CategoryPicker } from './trip/CategoryPicker'
+import { GpxExport } from './trip/GpxExport'
 import { useDiscoveryCategories } from './trip/useDiscoveryCategories'
 import { needsReplan, useReplan } from './trip/useReplan'
 import { useRouteLegs } from './trip/useRouteLegs'
@@ -65,6 +66,7 @@ type AppClient = Pick<
   | 'updateTrip'
   | 'replan'
   | 'chat'
+  | 'exportGpx'
 >
 
 const NO_POIS: readonly Poi[] = []
@@ -702,6 +704,17 @@ function TripSession({
             {routeErrorMessage(save.error)}
           </p>
         )}
+
+        {/* The file for the device. Below the route it describes, and it exports the stored
+            document — which is why an ignored place is genuinely absent from it rather than
+            merely hidden. */}
+        <GpxExport
+          client={client}
+          slug={save.slug}
+          tripName={knownName}
+          waypointCount={waypoints.length}
+          placeCount={placed.length}
+        />
 
         <div className="units">
           {/* A preference, so it sits with the numbers it changes rather than in a settings

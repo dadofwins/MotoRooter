@@ -16,7 +16,7 @@ from motorooter.api.schemas import (
     RoutingCapabilitiesResponse,
 )
 from motorooter.routing.models import RouteRequest, stamped
-from motorooter.speeds import estimate_leg_duration_s
+from motorooter.speeds import leg_duration_s
 
 router = APIRouter(prefix="/api/routing", tags=["routing"], responses=ERROR_RESPONSES)
 
@@ -70,8 +70,9 @@ async def route_leg(request: RouteLegRequest, resolver: Resolver) -> RouteLegRes
     return RouteLegResponse(
         leg=leg,
         live_update_interval_ms=provider.capabilities.live_update_interval_ms,
-        # Derived here rather than on the model: the domain reports what the provider said,
-        # and the boundary reports what we believe. The two differ by a factor of five on
-        # dirt, because the only profile with dirt access is a bicycle one.
-        estimated_duration_s=estimate_leg_duration_s(leg),
+        # Chosen here rather than on the model: the domain reports what the provider said,
+        # and the boundary reports what we believe. For dirt those differ by a factor of
+        # five, because the only profile with dirt access is a bicycle one — and for
+        # highway they differ the other way, which is why this asks rather than derives.
+        estimated_duration_s=leg_duration_s(leg),
     )

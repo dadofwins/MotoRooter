@@ -31,7 +31,7 @@ from motorooter.routing.models import Coordinate, LegIntent, RouteLeg, Surface
 from motorooter.speeds import (
     DEFAULT_RIDING_SPEEDS,
     RidingSpeeds,
-    estimate_leg_duration_s,
+    leg_duration_s,
 )
 
 CURRENT_SCHEMA_VERSION = 1
@@ -316,10 +316,7 @@ class Trip(BaseModel):
         The table only applies to legs whose provider is not trusted on duration; a trusted
         leg contributes what its engine said, and no speed table overrides it.
         """
-        return sum(
-            leg.duration_s if leg.duration_is_trustworthy else estimate_leg_duration_s(leg, speeds)
-            for leg in self.routed_legs
-        )
+        return sum(leg_duration_s(leg, speeds) for leg in self.routed_legs)
 
     def _surface_fraction(self, surface: Surface) -> float:
         measured = sum(leg.geometry_length_m for leg in self.routed_legs)

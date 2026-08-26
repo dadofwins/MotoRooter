@@ -16,7 +16,11 @@ import pytest
 import respx
 
 from motorooter.planning.discovery.errors import DiscoveryError, DiscoveryRefused
-from motorooter.planning.discovery.naming import GEOCODE_URL, PlaceNamer
+from motorooter.planning.discovery.naming import (
+    GEOCODE_URL,
+    PlaceNamer,
+    is_distinctive_road,
+)
 from motorooter.routing.models import Coordinate
 
 ANCHOR = Coordinate(lat=46.8722, lon=-121.5165)
@@ -305,3 +309,59 @@ class TestAGenericStreetIsNotASearchTerm:
         """Degrading to no name at all would cost the stretch its searches entirely, and a
         street name is a poor search term rather than a harmful one."""
         assert await self._name(self._road("Smith Road", locality=None)) == "Smith Road"
+
+
+class TestANumberedStreetIsStillAStreet:
+    """The hole in the digit test, and it is the case Tim actually hit.
+
+    "A number makes a road a designation" holds for `U.S. 12` and breaks for
+    `Northeast 112th Street` — a Bellevue residential street, and the literal name from the
+    first replan run he reported. Every grid-planned town in America is full of them, which
+    is exactly the terrain this rule exists to handle.
+
+    An ordinal is the giveaway: designations are cardinal (`Route 66`, `SR 20`), grid streets
+    are ordinal (`112th`, `1st`, `42nd`). Checked before the digit test, because otherwise
+    the digit test answers first and the ordinal never gets a say.
+    """
+
+    @staticmethod
+    async def _name(body):
+        with respx.mock(assert_all_called=False) as mock:
+            mock.get(url__startswith=GEOCODE_URL).mock(return_value=httpx.Response(200, json=body))
+            return await PlaceNamer(api_key="k").name_for(ANCHOR)
+
+    @staticmethod
+    def _road(name: str):
+        return result(
+            component(name, "route"),
+            component("Bellevue", "locality", "political"),
+            formatted=f"{name}, Bellevue, WA, USA",
+        )
+
+    @pytest.mark.parametrize(
+        "street",
+        [
+            "Northeast 112th Street",
+            "1st Avenue",
+            "42nd Street",
+            "SE 8th St",
+            "North 3rd Street",
+        ],
+    )
+    async def test_an_ordinal_street_falls_through_to_the_locality(self, street):
+        assert await self._name(self._road(street)) == "Bellevue"
+
+    @pytest.mark.parametrize(
+        "road", ["U.S. 12", "State Route 20", "Washington 123", "Forest Road 5900", "I-90"]
+    )
+    async def test_a_cardinal_designation_still_wins(self, road):
+        """The ordinal guard must not take the numbered highways with it."""
+        assert await self._name(self._road(road)) == road
+
+    def test_the_predicate_directly(self):
+        """Asserted on the function too: the routing above it can hide a wrong answer by
+        falling through to a locality that happens to be right."""
+        assert not is_distinctive_road("Northeast 112th Street")
+        assert not is_distinctive_road("1st Avenue")
+        assert is_distinctive_road("U.S. 12")
+        assert is_distinctive_road("Mather Memorial Parkway")

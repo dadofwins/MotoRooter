@@ -85,10 +85,15 @@ def is_plus_code(name: str) -> bool:
     return bool(_PLUS_CODE.match(name.strip()))
 
 
-_DESIGNATED_ROAD = re.compile(
-    r"\b(parkway|pkwy|highway|hwy|freeway|expressway|pass|byway|scenic|trail|route|road)\s*\d",
-    re.I,
-)
+_ORDINAL = re.compile(r"\b\d+(st|nd|rd|th)\b", re.I)
+"""A grid street's number, as opposed to a designation's.
+
+The distinction the bare digit test missed: designations count cardinally — `Route 66`,
+`SR 20`, `Forest Road 5900` — and grid streets count ordinally — `112th`, `1st`, `42nd`.
+`Northeast 112th Street` is a Bellevue residential street and was the anchor name in the
+first replan run, so this is the reported bug rather than a hypothetical one.
+"""
+
 _NAMED_ROAD_WORDS = re.compile(
     r"\b(parkway|pkwy|highway|hwy|freeway|expressway|turnpike|pass|byway|scenic|trail|"
     r"forest|canyon|ridge|creek\s+road|river\s+road|loop)\b",
@@ -99,26 +104,36 @@ _NAMED_ROAD_WORDS = re.compile(
 def is_distinctive_road(name: str) -> bool:
     """Whether a road name is worth searching for, or is just somebody's street.
 
-    Two signals, and the first does most of the work. **A number makes a road a designation**
-    — `U.S. 12`, `Washington 123`, `State Route 20` — and numbering highways is close to
-    universal, so this half carries over to countries whose street words we do not know.
+    Three signals, in the order they have to be asked.
 
-    The word list is the English-only half, for roads that are named rather than numbered:
-    `Mather Memorial Parkway`, `Chinook Pass to Tipsoo Lake Trail`. It is a supplement, not
-    the mechanism, and its failure is graceful in a way a street-suffix denylist would not
-    be: an unrecognised name falls through to the locality, which is a usable search term.
-    A denylist that failed to recognise `Rue` or `Strasse` would instead keep searching for
-    it, which is the bug being fixed.
+    **An ordinal number is a grid street, never a designation.** This one goes first because
+    it is a correction to the next: `Northeast 112th Street` contains a digit, and so does
+    every numbered street in every grid-planned town. Asking about the digit first answers
+    `True` and never reaches the question that matters.
 
-    So a false negative costs precision and a false positive costs a corridor. This errs
-    towards the locality on purpose.
+    **A cardinal number makes a road a designation** — `U.S. 12`, `Washington 123`,
+    `State Route 20`. Numbering highways is close to universal, so this carries over to
+    countries whose street words we do not know.
+
+    **The word list is the English-only half**, for roads that are named rather than
+    numbered: `Mather Memorial Parkway`, `Chinook Pass to Tipsoo Lake Trail`. It is a
+    supplement, not the mechanism, and its failure is graceful in a way a street-suffix
+    denylist would not be: an unrecognised name falls through to the locality, which is still
+    a usable search term. A denylist ignorant of `Rue` or `Strasse` would instead keep
+    searching for it, which is the bug being fixed.
+
+    A false negative costs precision; a false positive costs a corridor. This errs towards
+    the locality on purpose, and the ordinal guard is that principle applied to the digit
+    test rather than an exception to it.
     """
     stripped = name.strip()
     if not stripped:
         return False
+    if _ORDINAL.search(stripped):
+        return False
     if any(character.isdigit() for character in stripped):
         return True
-    return bool(_DESIGNATED_ROAD.search(stripped) or _NAMED_ROAD_WORDS.search(stripped))
+    return bool(_NAMED_ROAD_WORDS.search(stripped))
 
 
 class PlaceNamer:

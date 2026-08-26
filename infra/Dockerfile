@@ -21,6 +21,14 @@ COPY frontend/package.json frontend/package-lock.json ./
 RUN npm ci
 COPY frontend/ ./
 
+# `npm run build` is `tsc --noEmit && vite build`, and two test files import the generated
+# contract as `../../../shared/openapi.json` — which resolves outside the frontend directory.
+# Copied to `/shared` so that path lands, keeping the image's typecheck identical to the one
+# `make check` runs. The alternative, having the image skip typechecking tests, would let the
+# two diverge, and a build that verifies something other than what CI verifies is worse than
+# an odd-looking COPY.
+COPY shared/ /shared/
+
 # Refuse to ship a bundle with no map. A build arg that never arrived is silent otherwise, and
 # the symptom appears only in a browser, only after a deploy.
 RUN test -n "$VITE_GOOGLE_MAPS_BROWSER_KEY" \

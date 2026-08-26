@@ -105,6 +105,14 @@ class _Counts:
     searched: int = 0
     named: int = 0
     resolved: int = 0
+    uncategorised: int = 0
+    """Resolved and scored, but with nothing Places would call a category.
+
+    Road junctions and forest-road numbers, mostly — correctly unpinnable, and correctly
+    dropped. Counted because they are dropped *after* a metered lookup and a scoring slot,
+    so a run quietly paying for candidates it always meant to discard should say so.
+    """
+
     failures: list[str] = field(default_factory=list)
 
 
@@ -222,7 +230,7 @@ class DiscoveryPipeline:
         yield work.step(ENRICH_STAGE, f"{len(resolved)} are real and on the route")
         scored = await self._score(resolved, leg, counts)
 
-        pois = tuple(_to_poi(item) for item in scored if item.resolved.category is not None)
+        pois = tuple(_to_poi(item) for item in scored)
         yield work.step(ENRICH_STAGE, f"scored {len(scored)}")
 
         yield DiscoveryProgress(
@@ -302,7 +310,13 @@ class DiscoveryPipeline:
 
         resolved = _unique(resolved)
         counts.resolved = len(resolved)
-        return resolved
+
+        # Anything Places will not categorise can never be pinned, so scoring it buys
+        # nothing. Dropped here rather than after judging: a road junction was costing a
+        # slot in every batch, and the judge is measurably less reliable on larger ones.
+        pinnable = tuple(item for item in resolved if item.category is not None)
+        counts.uncategorised = len(resolved) - len(pinnable)
+        return pinnable
 
     async def _score(
         self,
@@ -313,12 +327,21 @@ class DiscoveryPipeline:
         if not resolved:
             return ()
         try:
-            return await self._judge.judge(resolved, leg)
+            scored = await self._judge.judge(resolved, leg)
         except (DiscoveryError, LlmError) as exc:
             # Everything up to here is already paid for. Losing the scores is bad; losing
             # the run because scoring timed out is worse.
             counts.failures.append(f"judge: {exc}")
             return ()
+
+        # Scoring none of them is a malfunction, not an opinion. `judge` returns empty rather
+        # than raising on an unusable reply, which is right — but silently, and one live run
+        # in four came back this way: eight candidates on the route, nothing scored, and a
+        # summary reading "0 worth showing" that is indistinguishable from an empty corridor.
+        # Scoring *some* of them is a judgement and stays quiet.
+        if not scored:
+            counts.failures.append(f"judge: scored none of {len(resolved)} places")
+        return scored
 
     @staticmethod
     def _summary(counts: _Counts, pinned: int) -> str:
@@ -328,6 +351,8 @@ class DiscoveryPipeline:
             f"{counts.resolved} on the route",
             f"{pinned} worth showing",
         ]
+        if counts.uncategorised:
+            parts.append(f"{counts.uncategorised} with no category")
         if counts.failures:
             parts.append(f"{len(counts.failures)} stage failures")
         return ", ".join(parts)

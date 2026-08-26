@@ -20,6 +20,7 @@ import pytest
 from motorooter.planning.discovery.category import (
     PLACES_TYPE_TO_CATEGORY,
     from_places_types,
+    is_a_place,
 )
 from motorooter.trips.models import PoiCategory
 
@@ -191,4 +192,80 @@ class TestTheModelFillsWhatPlacesCannot:
 
         client = FakeLlmClient(replies=(AssistantMessage(content="I am not sure."),))
         result = await CategoryClassifier(client).classify([self._resolved("A")])
+        assert result[0].category is None
+
+
+class TestARoadIsNeverAPlace:
+    """Places types a highway, a byway and a forest road all as `route`.
+
+    Asking the model to categorise one produces a plausible answer rather than a refusal:
+    `Suntop Trail` and `Mather Memorial Highway` both came back as viewpoints on a live run,
+    and would have been pinned as somewhere a rider could stop. Excluded on Places' own
+    answer instead, which is deterministic and does not depend on a model declining.
+    """
+
+    def test_a_route_has_no_category(self):
+        assert from_places_types(["route"]) is None
+
+    def test_a_route_is_not_rescued_by_another_type(self):
+        """`park` would otherwise map it, and a road through a park is still a road."""
+        assert from_places_types(["route", "park"]) is None
+
+    def test_a_real_place_is_unaffected(self):
+        assert from_places_types(["tourist_attraction", "point_of_interest"]) is not None
+
+    async def test_the_model_is_not_asked_about_roads(self):
+        from motorooter.llm.messages import AssistantMessage
+        from motorooter.llm.providers.fake import FakeLlmClient
+        from motorooter.planning.discovery.category import CategoryClassifier
+        from motorooter.planning.discovery.models import Candidate, ResolvedCandidate
+        from motorooter.routing.models import Coordinate
+
+        road = ResolvedCandidate(
+            candidate=Candidate(
+                name="Mather Memorial Highway",
+                category=PoiCategory.VIEWPOINT,
+                found_near=Coordinate(lat=47.0, lon=-121.0),
+                source="brave",
+            ),
+            place_id="ChIJ_road",
+            coordinate=Coordinate(lat=47.0, lon=-121.0),
+            places_types=("route",),
+        )
+        client = FakeLlmClient(replies=(AssistantMessage(content='{"categories": []}'),))
+        result = await CategoryClassifier(client).classify([road])
+        assert client.call_count == 0
+        assert result[0].category is None
+
+
+class TestARoadJunctionIsNotAPlace:
+    """`Sunset Way & 6th Ave NE, Issaquah` came back on three of four live runs.
+
+    It resolved, it was scored, and it was then dropped for having no category — a metered
+    Places lookup and a scoring slot spent on somewhere nobody can stop. Worse, without this
+    the classifier *asks the model* about it, and a model asked to categorise a junction
+    answers rather than declining, exactly as it did for two highways.
+    """
+
+    def test_a_junction_is_refused(self):
+        assert not is_a_place(["intersection"])
+
+    async def test_the_model_is_not_asked_about_one(self):
+        """The saving and the correctness fix are the same line: refused before the model
+        sees it, rather than after it has invented an answer."""
+        from motorooter.llm.providers.fake import FakeLlmClient
+        from motorooter.planning.discovery.category import CategoryClassifier
+
+        client = FakeLlmClient(
+            replies=(
+                TestTheModelFillsWhatPlacesCannot._says(
+                    {"categories": [{"index": 0, "category": "viewpoint"}]}
+                ),
+            )
+        )
+        resolved = TestTheModelFillsWhatPlacesCannot._resolved(
+            "Sunset Way & 6th Ave NE", types=("intersection",)
+        )
+        result = await CategoryClassifier(client).classify([resolved])
+        assert client.call_count == 0
         assert result[0].category is None

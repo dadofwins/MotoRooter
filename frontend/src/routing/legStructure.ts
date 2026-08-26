@@ -19,7 +19,7 @@
  * `end === start + 1`.
  */
 import type { LegIntent, TripLeg, Waypoint } from '../api/types'
-import type { RouteEdit } from './tripEdits'
+import type { InsertViaInput, RouteEdit } from './tripEdits'
 
 /**
  * Intents that route through an engine able to report surface.
@@ -100,6 +100,73 @@ export function withWaypointAppended(
 
   const start = edit.legs.at(-1)?.end_waypoint_index ?? 0
   return { waypoints, legs: [...edit.legs, unrouted(intent, start, end)] }
+}
+
+/**
+ * Divides one leg into two at a new point.
+ *
+ * The inverse of the merge `withWaypointRemoved` performs, and deliberately *not* `insertVia`.
+ * A via grows a leg, so the result is one leg with one intent — and the reason a rider asks for
+ * this is the opposite: "keep part of a dirt section but route via road closer to it" needs two
+ * legs that can carry different modes. Growing and dividing look the same on the map and are
+ * different operations on the trip.
+ *
+ * Both halves inherit the original intent, because splitting is not choosing: the rider divides
+ * the segment and then picks a mode for one half, and inventing a different mode for either would
+ * answer a question they have not asked. Both lose their geometry — one polyline cannot describe
+ * two legs, and each half is a road nobody has asked the router about.
+ */
+export function withLegSplit(edit: RouteEdit, input: InsertViaInput): RouteEdit {
+  const target = edit.legs[input.legIndex]
+  if (target === undefined) {
+    throw new RangeError(
+      `no leg at index ${String(input.legIndex)}; the trip has ${String(edit.legs.length)}`,
+    )
+  }
+
+  const span = target.end_waypoint_index - target.start_waypoint_index
+  // Offset 0 is the leg's own start and the previous leg's end; dividing there leaves an empty
+  // half and a trip that saves cleanly while being nonsense. Past the end lands in the next leg.
+  if (input.offsetInLeg < 1 || input.offsetInLeg > span) {
+    throw new RangeError(
+      `offsetInLeg ${String(input.offsetInLeg)} would not divide leg ${String(input.legIndex)}, ` +
+        `which spans waypoints ${String(target.start_waypoint_index)}-${String(target.end_waypoint_index)}`,
+    )
+  }
+
+  const at = target.start_waypoint_index + input.offsetInLeg
+  const waypoints = [
+    ...edit.waypoints.slice(0, at),
+    // Pinned: the rider placed it deliberately, and a replan must not move or drop the point
+    // their segment boundary depends on.
+    { coordinate: input.coordinate, name: null, pinned: true },
+    ...edit.waypoints.slice(at),
+  ]
+
+  const legs = edit.legs.flatMap((leg, index) => {
+    if (index < input.legIndex) return [leg] // wholly before the division
+    if (index > input.legIndex) {
+      return [
+        {
+          ...leg,
+          start_waypoint_index: leg.start_waypoint_index + 1,
+          end_waypoint_index: leg.end_waypoint_index + 1,
+        },
+      ]
+    }
+    return [
+      { ...leg, end_waypoint_index: at, routed: null, last_routing_error: null },
+      {
+        ...leg,
+        start_waypoint_index: at,
+        end_waypoint_index: leg.end_waypoint_index + 1,
+        routed: null,
+        last_routing_error: null,
+      },
+    ]
+  })
+
+  return { waypoints, legs }
 }
 
 /**

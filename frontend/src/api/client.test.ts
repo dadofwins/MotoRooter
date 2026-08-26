@@ -204,6 +204,27 @@ describe('endpoints that exist today', () => {
     expect(new URL(lastCall(fetchMock)[0], 'http://x').searchParams.has('near')).toBe(false)
   })
 
+  it('routes through the best places, and can be told how many', async () => {
+    const fetchMock = stubFetch(json({ trip: {}, added: [], left_out: [] }))
+    const api = createApiClient({ fetch: fetchMock })
+
+    await api.routeThroughBest('wabdr-north', { limit: 5 })
+
+    expect(lastCall(fetchMock)[0]).toContain('/api/trips/wabdr-north/route-through-best')
+    expect(sentJson(fetchMock)).toEqual({ limit: 5 })
+  })
+
+  it('omits the limit so the backend picks the pace the ride implies', async () => {
+    // The default is deliberately conservative and derived from the trip. Sending a number the
+    // frontend invented would override a decision made with more information than we have.
+    const fetchMock = stubFetch(json({ trip: {}, added: [], left_out: [] }))
+    const api = createApiClient({ fetch: fetchMock })
+
+    await api.routeThroughBest('wabdr-north', {})
+
+    expect(sentJson(fetchMock)).toEqual({})
+  })
+
   it('reads routing capabilities, which is where drag throttling comes from', async () => {
     const capabilities: RoutingCapabilitiesResponse = {
       providers: [

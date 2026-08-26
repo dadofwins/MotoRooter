@@ -69,7 +69,22 @@ export function PlaceList({
       </h2>
 
       {GROUP_ORDER.map(({ group, title, one, many }) => {
-        const inGroup = pois.filter((poi) => poiGroup(poi.category) === group)
+        // Best-judged first. `Poi.score` is the judge's ranking key and this is what it is good
+        // for here: showing it as a number would be meaningless without a scale, but ordering by
+        // it means someone scanning twenty-nine places meets the good ones first — the same use
+        // the backend makes of it when it caps a list. A place with no score keeps its position
+        // rather than sinking as though it scored zero, because an unjudged place is usually one
+        // the rider added themselves.
+        const inGroup = pois
+          .filter((poi) => poiGroup(poi.category) === group)
+          .map((poi, order) => ({ poi, order }))
+          .sort((a, b) => {
+            const scored = (b.poi.score ?? -1) - (a.poi.score ?? -1)
+            return a.poi.score === undefined || a.poi.score === null || b.poi.score === undefined || b.poi.score === null
+              ? a.order - b.order
+              : scored || a.order - b.order
+          })
+          .map((entry) => entry.poi)
         // A heading over nothing is worse than a missing heading: it reads as a failed search
         // for that kind of place rather than as one that was never made.
         if (inGroup.length === 0) return null

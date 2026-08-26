@@ -441,6 +441,26 @@ body {
     color: rgb(255 255 255 / 0.85);
   }
 
+  .best-route {
+    border-top-color: rgb(255 255 255 / 0.14);
+  }
+
+  .best-route__go {
+    background: rgb(255 255 255 / 0.07);
+    border-color: rgb(255 255 255 / 0.22);
+  }
+
+  .best-route__go:hover {
+    background: rgb(255 255 255 / 0.12);
+    border-color: rgb(255 255 255 / 0.4);
+  }
+
+  .best-route__error {
+    color: #fca5a5;
+    background: rgb(220 38 38 / 0.16);
+    border-left-color: #ef4444;
+  }
+
   .place-search,
   .points {
     border-top-color: rgb(255 255 255 / 0.14);
@@ -882,6 +902,77 @@ body {
   margin: 0.375rem 0 0;
   font-size: 0.6875rem;
   color: var(--ink-muted);
+}
+
+/* The automatic path onto the route, beside the selective per-group buttons rather than
+   replacing them: Tim asked for both to survive. It edits the route on its own, which nothing
+   else here does, so the summary and the undo are part of the control rather than decoration. */
+.best-route {
+  margin-top: 1rem;
+  padding-top: 1rem;
+  border-top: 1px solid rgb(0 0 0 / 0.12);
+}
+
+.best-route__go {
+  padding: 0.3125rem 0.625rem;
+  font: inherit;
+  font-size: 0.8125rem;
+  color: inherit;
+  background: rgb(0 0 0 / 0.04);
+  border: 1px solid rgb(0 0 0 / 0.2);
+  border-radius: 0.375rem;
+  cursor: pointer;
+}
+
+.best-route__go:hover {
+  background: rgb(0 0 0 / 0.08);
+  border-color: rgb(0 0 0 / 0.35);
+}
+
+.best-route__summary {
+  margin: 0.5rem 0 0;
+  font-size: 0.8125rem;
+}
+
+.best-route__added {
+  margin: 0.25rem 0 0;
+  padding: 0;
+  list-style: none;
+  font-size: 0.75rem;
+  line-height: 1.4;
+}
+
+/* The judge's own words. Quieter than the name it explains, because the name is what a rider
+   scans for and the reason is what they read once. */
+.best-route__why {
+  color: var(--ink-muted);
+}
+
+.best-route__note {
+  margin: 0.375rem 0 0;
+  font-size: 0.75rem;
+  color: var(--ink-muted);
+}
+
+.best-route__undo,
+.best-route__more {
+  font: inherit;
+  font-size: inherit;
+  color: inherit;
+  background: transparent;
+  border: none;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.best-route__error {
+  margin: 0.375rem 0 0;
+  padding: 0.375rem 0.5rem;
+  font-size: 0.75rem;
+  color: #7f1d1d;
+  background: rgb(220 38 38 / 0.1);
+  border-left: 3px solid #b91c1c;
+  border-radius: 0.25rem;
 }
 
 /* The places discovery found. Where a rider decides — twenty-nine pins on a map is a haystack. */

@@ -18,6 +18,8 @@
  */
 import { ApiError, ApiNetworkError, ApiNotImplementedError, isAbortError, type ErrorCode } from './errors'
 import type {
+  RouteThroughBestRequest,
+  RouteThroughBestResponse,
   GeocodeResponse,
   Coordinate,
   ChatEvent,
@@ -110,6 +112,20 @@ export interface ApiClient {
     request: ChatRequest,
     options?: RequestOptions,
   ): AsyncGenerator<ChatEvent, void, undefined>
+  /**
+   * Put the best-ranked discovered places on the route, in riding order.
+   *
+   * Separate from discovery because the judgement is persisted on the POIs, so this needs no
+   * search — a rider can change their mind without paying for sixty seconds of discovery again.
+   * Ranks and caps rather than taking everything above a threshold: the scores' *ordering* is
+   * stable between runs but the count above any given line is not, so a threshold would give two
+   * different answers to the same question.
+   */
+  routeThroughBest(
+    slug: string,
+    request: RouteThroughBestRequest,
+    options?: RequestOptions,
+  ): Promise<RouteThroughBestResponse>
   /** GPX track plus ordered waypoints. Stubbed today (`ApiNotImplementedError`). */
   exportGpx(slug: string, options?: RequestOptions): Promise<Blob>
   /**
@@ -439,6 +455,20 @@ export function createApiClient(options: ApiClientOptions = {}): ApiClient {
         requestOptions,
       )
       yield* streamNdjson<ChatEvent>(response)
+    },
+
+    async routeThroughBest(
+      slug: string,
+      request: RouteThroughBestRequest,
+      requestOptions?: RequestOptions,
+    ): Promise<RouteThroughBestResponse> {
+      return readJson<RouteThroughBestResponse>(
+        await send(
+          `/api/trips/${segment(slug)}/route-through-best`,
+          { method: 'POST', json: request },
+          requestOptions,
+        ),
+      )
     },
 
     async exportGpx(slug: string, requestOptions?: RequestOptions): Promise<Blob> {

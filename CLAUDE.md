@@ -436,23 +436,31 @@ on it — measured as finding *fewer* POIs than baseline for 1.4–2.3× the sea
 mechanism was not at fault. It was pouring more candidates into a funnel already discarding
 five of six upstream.
 
-### One live unknown: the judge occasionally scores nothing
+### Solved: the judge scored nothing because one quote was misplaced
 
-**Mitigated, cause unknown, watch armed.** The judge sometimes returns an empty result for a
-batch of perfectly good resolved candidates — at its worst three runs in four, from five to
-eight on-route places. Batch size, timeout and prompt were each ruled out individually and it
-resisted reproduction.
+For most of a day this was a live unknown — at worst three runs in four returned no scores for a
+batch of perfectly good candidates, and batch size, timeout and prompt were each ruled out. It
+resisted reproduction entirely.
 
-It is retried once on *nothing* (a partial answer is a judgement and must not be discarded), and
-when both attempts fail the failure is recorded rather than surfacing as "0 worth showing", which
-is indistinguishable from an empty corridor. The raw reply is logged server-side whenever scoring
-produces nothing, so **the next occurrence explains itself** — do not go hunting for a
-reproduction, the logging is the plan.
+**The answer came from logging the reply rather than hunting the bug.** Both captures were a
+quote in the wrong place inside a key:
 
-Six consecutive clean runs followed the retry. At the measured post-retry rate that would happen
-about 18% of the time by chance, so it is evidence the mitigation works better than estimated and
-not proof the fault is gone. If you see the warning fire, the captured reply is the thing nobody
-has ever managed to look at.
+    {"index:3","score":0.50,"reason":"..."}
+    {"index:2,"score":0.7,"reason":"..."}
+
+`json.loads` fails on the whole reply, so twenty good scores went in the bin. Two lessons:
+
+- **The mitigation is why nobody could find it.** Retrying once on an empty result worked, and
+  turned a parse fault into fifteen seconds of latency — a symptom nobody would chase.
+- **Recover with `raw_decode` from each literal `{`, not a brace-counting scanner.** One capture
+  has an *odd number of quotes*, so anything tracking string state itself is left inside a string
+  for the rest of the reply and loses every later entry too — a one-entry fault costing most of
+  the batch, which is close to the bug being fixed. `raw_decode` has no state to corrupt: if a
+  value decodes, take it and jump past it; if not, step one character. A brace in prose fails to
+  decode and is skipped.
+
+The general shape, worth applying to any model reply we parse: **a structured reply is not
+guaranteed to be valid, and one malformed entry must not cost the rest.**
 
 ### Reasoning effort is per-stage, and it is measured
 

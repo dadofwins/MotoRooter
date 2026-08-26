@@ -289,6 +289,32 @@ const DRAG_THRESHOLD_PX = 5
  */
 const POST_DRAG_CLICK_MS = 250
 
+/** A waypoint's identity for the camera's purposes: where it is, to about a metre. */
+function waypointKey(at: Coordinate): string {
+  return `${at.lat.toFixed(5)},${at.lon.toFixed(5)}`
+}
+
+/**
+ * Whether what is on screen is a *different route* rather than an edit to the framed one.
+ *
+ * Framing once and never again was too coarse, and Tim found the case: an assistant plotting a
+ * whole trip is not a change to the route on screen, it is a different route arriving, and the
+ * rider has expressed no camera preference about a trip that did not exist a second ago.
+ *
+ * The distinction is **edited versus replaced**, and waypoint identity draws it where a count or
+ * a first-time flag cannot. A drag inserts a via between two points that are still there; an
+ * append keeps everything; a mode change keeps every waypoint and replaces every coordinate of
+ * the geometry, which is why this reads waypoints and not the line.
+ *
+ * A route with no waypoints at all — legs handed in on their own — cannot be told apart this way,
+ * so it keeps the old rule and is framed exactly once. Silence is not evidence of replacement.
+ */
+function isReplacement(framed: readonly string[] | null, current: readonly string[]): boolean {
+  if (framed === null) return true
+  if (framed.length === 0 || current.length === 0) return false
+  return current.every((key) => !framed.includes(key))
+}
+
 /** Ground distance one screen pixel covers, at this latitude and zoom. */
 function metresPerPixel(latitude: number, zoom: number): number {
   return (156_543.033_92 * Math.cos((latitude * Math.PI) / 180)) / 2 ** zoom
@@ -314,7 +340,13 @@ export function MapCanvas({
 }: MapCanvasProps): React.JSX.Element {
   const containerRef = useRef<HTMLDivElement>(null)
   const mapRef = useRef<google.maps.Map | null>(null)
-  const hasFramedRef = useRef(false)
+  /**
+   * The waypoints the camera was last framed on, or null before it ever has been.
+   *
+   * A set rather than a flag, because the question is not *whether* the route has been framed
+   * but whether what is on screen is still the route that was framed — see `isReplacement`.
+   */
+  const framedOn = useRef<readonly string[] | null>(null)
   const onMapClickRef = useRef(onMapClick)
 
   const [maps, setMaps] = useState<GoogleMaps | null>(null)
@@ -830,17 +862,18 @@ export function MapCanvas({
 
   useEffect(() => {
     const map = mapRef.current
-    // Frame the route once, when geometry first exists. Doing it on every change would
-    // fight a user who has deliberately panned somewhere else.
-    if (maps === null || map === null || hasFramedRef.current) return
+    if (maps === null || map === null) return
     const points = segments.flatMap((segment) => segment.path)
     if (points.length === 0) return
+
+    const identity = waypoints.map((point) => waypointKey(point.coordinate))
+    if (!isReplacement(framedOn.current, identity)) return
 
     const bounds = new maps.LatLngBounds()
     for (const point of points) bounds.extend(toLatLng(point))
     map.fitBounds(bounds)
-    hasFramedRef.current = true
-  }, [maps, segments])
+    framedOn.current = identity
+  }, [maps, segments, waypoints])
 
   return (
     <div className="map-canvas">

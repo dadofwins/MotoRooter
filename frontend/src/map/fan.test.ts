@@ -128,6 +128,33 @@ describe('fanPositions', () => {
     expect(Math.hypot(at16.x - wide.x, at16.y - wide.y)).toBeCloseTo(near, 6)
   })
 
+  it('draws the fan part-open, which is what the animation moves through', () => {
+    // The opening is the same geometry at a smaller radius rather than a second layout. One
+    // formula, so a frame mid-flight cannot disagree with where the pins end up.
+    const half = fanPositions(CENTRE, 4, ZOOM, 0.5)
+    const full = fanPositions(CENTRE, 4, ZOOM, 1)
+
+    for (let index = 0; index < half.length; index += 1) {
+      const partly = half[index]
+      const fully = full[index]
+      if (partly === undefined || fully === undefined) throw new Error('missing position')
+      expect(gapPx(CENTRE, partly)).toBeCloseTo(gapPx(CENTRE, fully) / 2, 4)
+    }
+  })
+
+  it('starts every pin on the group itself', () => {
+    // Frame zero. The pins have to *come from* the group, or the animation is eight things
+    // sliding in from nowhere.
+    for (const placed of fanPositions(CENTRE, 5, ZOOM, 0)) {
+      expect(gapPx(CENTRE, placed)).toBeCloseTo(0, 6)
+    }
+  })
+
+  it('is unchanged when nothing says otherwise', () => {
+    // The static callers pass no progress, and must keep getting the open fan.
+    expect(fanPositions(CENTRE, 6, ZOOM)).toEqual(fanPositions(CENTRE, 6, ZOOM, 1))
+  })
+
   it('has nothing to place for a group of none', () => {
     expect(fanPositions(CENTRE, 0, ZOOM)).toEqual([])
   })

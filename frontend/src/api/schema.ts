@@ -376,7 +376,7 @@ export interface components {
          *     Renaming a member is a breaking change; adding one is not.
          * @enum {string}
          */
-        ErrorCode: "invalid_request" | "unsupported_intent" | "provider_not_found" | "no_route_found" | "route_incomplete" | "quota_exceeded" | "rate_limited" | "provider_unavailable" | "llm_unavailable" | "llm_quota_exceeded" | "llm_refused" | "tool_call_failed" | "invalid_slug" | "trip_not_found" | "trip_already_exists" | "trip_modified_concurrently" | "trip_document_invalid" | "trip_storage_unavailable" | "validation_error" | "not_implemented" | "internal_error";
+        ErrorCode: "invalid_request" | "unsupported_intent" | "provider_not_found" | "no_route_found" | "route_incomplete" | "quota_exceeded" | "rate_limited" | "provider_unavailable" | "llm_unavailable" | "llm_quota_exceeded" | "llm_refused" | "tool_call_failed" | "invalid_slug" | "trip_not_found" | "trip_already_exists" | "trip_modified_concurrently" | "trip_document_invalid" | "trip_storage_unavailable" | "discovery_unavailable" | "discovery_rate_limited" | "discovery_quota_exceeded" | "discovery_refused" | "place_not_displayable" | "validation_error" | "not_implemented" | "internal_error";
         /**
          * ErrorResponse
          * @description Uniform error body. `code` is stable and machine-readable; `detail` is for humans.

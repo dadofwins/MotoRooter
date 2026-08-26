@@ -11,11 +11,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from pydantic import ValidationError
 
-from motorooter.api.error_codes import ErrorCode, resolve
-from motorooter.api.errors import NotImplementedYet
-from motorooter.routing.errors import RoutingError
-from motorooter.trips.errors import TripError
-from motorooter.trips.slug import InvalidSlug
+from motorooter.api.error_codes import ERROR_TABLE, ErrorCode, resolve
 
 
 def _body(code: ErrorCode, exc: Exception) -> dict[str, str]:
@@ -29,9 +25,20 @@ def _mapped(exc: Exception) -> JSONResponse:
 
 
 def register_exception_handlers(app: FastAPI) -> None:
-    # One handler per base class; the status and code come from the table, so adding an
-    # exception type never means touching this function.
-    for base in (RoutingError, TripError, InvalidSlug, NotImplementedYet):
+    """Register a handler for everything `ERROR_TABLE` maps, and nothing else.
+
+    **Derived from the table rather than listed here.** It was a list of four base classes,
+    and the table had grown entries for families that were not among them — so `LlmUnavailable`
+    carried a documented 502 and answered 500, and so did every discovery error. That is the
+    kind of drift neither side shows: the table looks complete, the list looks deliberate, and
+    only a request reveals that they disagree. A rider found it, in a dialog that said "could
+    not be loaded" where it should have said what was wrong.
+
+    Deriving it means a mapped exception is reachable by construction, and an unmapped one
+    still answers 500 — which is correct, because an exception nobody classified is a server
+    bug rather than something to blame on the client.
+    """
+    for base in ERROR_TABLE:
 
         @app.exception_handler(base)
         async def _handle(_: Request, exc: Exception) -> JSONResponse:

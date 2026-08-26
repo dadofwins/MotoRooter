@@ -45,6 +45,13 @@ class ErrorCode(StrEnum):
     TRIP_DOCUMENT_INVALID = "trip_document_invalid"
     TRIP_STORAGE_UNAVAILABLE = "trip_storage_unavailable"
 
+    # Discovery
+    DISCOVERY_UNAVAILABLE = "discovery_unavailable"
+    DISCOVERY_RATE_LIMITED = "discovery_rate_limited"
+    DISCOVERY_QUOTA_EXCEEDED = "discovery_quota_exceeded"
+    DISCOVERY_REFUSED = "discovery_refused"
+    PLACE_NOT_DISPLAYABLE = "place_not_displayable"
+
     VALIDATION_ERROR = "validation_error"
     NOT_IMPLEMENTED = "not_implemented"
     INTERNAL_ERROR = "internal_error"

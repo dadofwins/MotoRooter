@@ -187,6 +187,11 @@
           "trip_modified_concurrently",
           "trip_document_invalid",
           "trip_storage_unavailable",
+          "discovery_unavailable",
+          "discovery_rate_limited",
+          "discovery_quota_exceeded",
+          "discovery_refused",
+          "place_not_displayable",
           "validation_error",
           "not_implemented",
           "internal_error"

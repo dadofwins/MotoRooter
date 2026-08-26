@@ -168,7 +168,14 @@ class TestTheCategoryFallback:
             body = TestClient(app).get(f"/api/places/{PLACE_ID}?category=wild_camp").json()
         assert body["detail"]["poi"]["category"] == "wild_camp"
 
-    def test_neither_is_an_error_rather_than_a_guess(self):
+    def test_neither_is_a_typed_refusal_rather_than_a_guess(self):
+        """`>= 400` was the old assertion, and a 500 satisfies it.
+
+        Tim met this as "detail for this place could not be loaded" on a spa Google describes
+        perfectly well: the refusal escaped the error table, so the client could not tell
+        "we cannot classify this" from "the server fell over" and rendered the generic
+        failure. The status is the point, and so is the code.
+        """
         with respx.mock(assert_all_called=False) as mock:
             mock.get(url__startswith=PLACE_DETAILS_URL).mock(
                 return_value=httpx.Response(200, json=detail(types=["point_of_interest"]))
@@ -176,7 +183,8 @@ class TestTheCategoryFallback:
             app = create_app(RoutingSettings(offline=True))
             app.state.places = PlaceDetails(api_key="k")
             response = TestClient(app, raise_server_exceptions=False).get(f"/api/places/{PLACE_ID}")
-        assert response.status_code >= 400
+        assert response.status_code == 422
+        assert response.json()["code"] == "place_not_displayable"
 
 
 class TestFailure:
@@ -193,7 +201,8 @@ class TestFailure:
             app = create_app(RoutingSettings(offline=True))
             app.state.places = PlaceDetails(api_key="k")
             response = TestClient(app, raise_server_exceptions=False).get(f"/api/places/{PLACE_ID}")
-        assert response.status_code >= 400
+        assert response.status_code == 502
+        assert response.json()["code"] == "discovery_refused"
 
     def test_a_place_with_no_location_is_refused(self):
         """Nothing without a coordinate can go on a map or be pinned to a route."""
@@ -206,7 +215,8 @@ class TestFailure:
             app = create_app(RoutingSettings(offline=True))
             app.state.places = PlaceDetails(api_key="k")
             response = TestClient(app, raise_server_exceptions=False).get(f"/api/places/{PLACE_ID}")
-        assert response.status_code >= 400
+        assert response.status_code == 422
+        assert response.json()["code"] == "place_not_displayable"
 
 
 class TestPhotos:

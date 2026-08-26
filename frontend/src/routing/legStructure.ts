@@ -37,12 +37,16 @@ import type { RouteEdit } from './tripEdits'
 export const SURFACE_REPORTING_INTENTS = ['unpaved', 'technical_offroad'] as const
 
 /**
- * The intent a new leg gets until the rider chooses one.
+ * The intent a new leg gets on a trip that has not said.
  *
- * Dirt is the point of an adventure motorcycle planner, and — see above — it is also the only
- * way the rider sees any surface information at all. Per-leg choice is what the picker branch
- * adds; this is the seed, and it is the same value `Trip.default_intent` will carry once the
- * backend has it.
+ * A fallback now rather than an opinion. `Trip.default_intent` is the authoritative answer and
+ * this is what a trip with none falls back to — the distinction matters, because for a while
+ * three constants answered one question, two of them on the far side of the contract, which is
+ * how a request for "as much fun offroad as possible" came back paved.
+ *
+ * The reasoning still applies to the fallback: dirt is the point of an adventure motorcycle
+ * planner, and it is also the only way a rider sees any surface information at all, since the
+ * paved engines report no spans. Backend took this value over their own for the same reason.
  */
 export const DEFAULT_INTENT: LegIntent = 'unpaved'
 

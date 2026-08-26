@@ -17,7 +17,7 @@ from motorooter.llm.agent import Agent, AgentEvent, AgentLimits
 from motorooter.llm.errors import ToolCallFailed
 from motorooter.llm.messages import AssistantMessage, ToolCall, ToolMessage, UserMessage
 from motorooter.llm.providers.fake import FakeLlmClient
-from motorooter.llm.tools import Tool, ToolArguments, ToolOutcome, ToolRegistry
+from motorooter.llm.tools import ProgressReport, Tool, ToolArguments, ToolOutcome, ToolRegistry
 
 
 class EchoArgs(ToolArguments):
@@ -34,7 +34,11 @@ class EchoTool(Tool):
     def __init__(self) -> None:
         self.calls: list[EchoArgs] = []
 
-    async def run(self, arguments: EchoArgs) -> ToolOutcome:
+    async def run(
+        self,
+        arguments: EchoArgs,
+        on_progress: ProgressReport | None = None,
+    ) -> ToolOutcome:
         self.calls.append(arguments)
         return ToolOutcome(content=f"echoed: {arguments.text}")
 
@@ -44,7 +48,11 @@ class ExplodingTool(Tool):
     description = "Always fails."
     arguments = EchoArgs
 
-    async def run(self, arguments: EchoArgs) -> ToolOutcome:
+    async def run(
+        self,
+        arguments: EchoArgs,
+        on_progress: ProgressReport | None = None,
+    ) -> ToolOutcome:
         msg = "the upstream service is down"
         raise RuntimeError(msg)
 
@@ -151,7 +159,11 @@ class TestWhatTheUiSees:
             description = "Finds things."
             arguments = EchoArgs
 
-            async def run(self, arguments: EchoArgs) -> ToolOutcome:
+            async def run(
+                self,
+                arguments: EchoArgs,
+                on_progress: ProgressReport | None = None,
+            ) -> ToolOutcome:
                 return ToolOutcome(content="found 2", found=2)
 
         events = await collect(
@@ -251,7 +263,11 @@ class TestAFailingTool:
             description = "Cancels."
             arguments = EchoArgs
 
-            async def run(self, arguments: EchoArgs) -> ToolOutcome:
+            async def run(
+                self,
+                arguments: EchoArgs,
+                on_progress: ProgressReport | None = None,
+            ) -> ToolOutcome:
                 raise KeyboardInterrupt
 
         client = FakeLlmClient(replies=(calls("echo", '{"text": "x"}'), says("Done.")))
@@ -311,3 +327,82 @@ class TestABudgetSizedForRealWork:
     def test_the_ceiling_is_above_a_realistic_route(self):
         """Seven waypoints was not a runaway; it was a short trip."""
         assert AgentLimits().max_turns >= 15
+
+
+class TestToolsCanReportProgress:
+    """A tool that takes thirty seconds should be able to say so.
+
+    `find_places` runs the discovery pipeline, which already emits fifteen or twenty progress
+    events — and the chat transport had nowhere to put them, so the same work that fills a bar
+    from the Replan button showed "Working" and nothing else in the rail.
+
+    The event carries the tool it belongs to. Ordering would identify it right up until a turn
+    runs two tools and one of them is slow, which is precisely the turn this exists for.
+    """
+
+    class SlowTool(Tool):
+        name = "slow"
+        description = "Reports progress while it works."
+        arguments = ToolArguments
+        reports_progress = True
+
+        async def run(self, arguments, on_progress=None):
+            for step in (1, 2, 3):
+                if on_progress is not None:
+                    on_progress(f"step {step} of 3", step / 3)
+            return ToolOutcome(content="done")
+
+    @staticmethod
+    def _calls_slow() -> tuple[AssistantMessage, AssistantMessage]:
+        return (
+            AssistantMessage(
+                content=None,
+                tool_calls=(ToolCall(id="c1", name="slow", arguments="{}"),),
+            ),
+            AssistantMessage(content="Finished."),
+        )
+
+    async def _events(self) -> list[AgentEvent]:
+        registry = ToolRegistry([self.SlowTool()])
+        return await collect(agent_for(*self._calls_slow(), registry=registry))
+
+    async def test_progress_reaches_the_caller(self):
+        kinds = [event.kind for event in await self._events()]
+        assert kinds.count("tool_progress") == 3
+
+    async def test_it_arrives_before_the_tool_finishes(self):
+        kinds = [event.kind for event in await self._events()]
+        assert kinds.index("tool_progress") < kinds.index("tool_finished")
+
+    async def test_it_carries_the_message(self):
+        messages = [e.message for e in await self._events() if e.kind == "tool_progress"]
+        assert messages == ["step 1 of 3", "step 2 of 3", "step 3 of 3"]
+
+    async def test_it_carries_the_fraction(self):
+        fractions = [e.progress for e in await self._events() if e.kind == "tool_progress"]
+        assert fractions == [pytest.approx(1 / 3), pytest.approx(2 / 3), pytest.approx(1.0)]
+
+    async def test_it_names_the_tool_it_belongs_to(self):
+        """So a client can associate it without inferring from ordering."""
+        events = [e for e in await self._events() if e.kind == "tool_progress"]
+        assert {e.tool for e in events} == {"slow"}
+
+    async def test_the_tool_still_finishes_normally(self):
+        events = await self._events()
+        assert events[-1].kind == "done"
+        assert any(e.kind == "tool_finished" for e in events)
+
+    async def test_a_tool_that_reports_nothing_is_unaffected(self, registry):
+        """Every existing tool takes no callback and must keep working."""
+        events = await collect(
+            agent_for(
+                AssistantMessage(
+                    content=None,
+                    tool_calls=(ToolCall(id="c1", name="echo", arguments='{"text": "hi"}'),),
+                ),
+                AssistantMessage(content="Done."),
+                registry=registry,
+            )
+        )
+        assert not any(e.kind == "tool_progress" for e in events)
+        assert any(e.kind == "tool_finished" for e in events)

@@ -67,7 +67,7 @@ def says(*replies: AssistantMessage) -> FakeLlmClient:
 def client_with():
     """Builds an app whose chat uses a scripted model."""
 
-    def build(model: FakeLlmClient | None, *, seed: Trip | None = None):
+    def build(model: FakeLlmClient | None, *, seed: Trip | None = None, discovery=None):
         store = InMemoryTripStore()
         # Seeded directly rather than through POST /api/trips: a trip created that way has
         # no waypoints, and the editing tools are only interesting on one that has some.
@@ -77,6 +77,7 @@ def client_with():
         # Offline builds no Places client, and `add_waypoint` now needs one: a name is
         # resolved to a real place before anything is pinned, which is the point of it.
         app.state.place_lookup = _StubLookup()
+        app.state.discovery = discovery
         return TestClient(app), store
 
     return build
@@ -208,3 +209,99 @@ class TestWhenItIsNotAvailable:
         assert (
             client.post("/api/trips/no-such-trip/chat", json={"message": "hi"}).status_code == 404
         )
+
+
+class TestProgressInsideATurn:
+    """A chat turn running find_places was silent for thirty seconds.
+
+    `tool_started` then nothing until `tool_finished`, while the same work from the Replan
+    button reports fifteen or twenty events. The information existed; the transport had
+    nowhere to put it.
+
+    Exercised through the real `find_places` against a stub pipeline rather than a test-only
+    tool, so what is under test is the path a rider takes. A hook in production code that
+    exists only for a test is the thing this project keeps deleting.
+    """
+
+    class StubPipeline:
+        """Emits the shape the real pipeline emits, without the four APIs."""
+
+        async def run(self, leg, categories, **kwargs):
+            from motorooter.planning.discovery.pipeline import DiscoveryProgress
+
+            yield DiscoveryProgress(
+                stage="discovery", message="searching near Cle Elum", progress=0.25
+            )
+            yield DiscoveryProgress(stage="enrichment", message="scoring 3/8 places", progress=0.75)
+            yield DiscoveryProgress(stage="done", message="3 worth showing", progress=1.0, pois=())
+
+    @staticmethod
+    def _routed_trip() -> Trip:
+        from motorooter.routing.models import RouteLeg
+
+        now = utc_now()
+        leg = RouteLeg(
+            geometry=(
+                Coordinate(lat=47.0, lon=-121.0),
+                Coordinate(lat=47.1, lon=-121.1),
+            ),
+            distance_m=8000.0,
+            duration_s=600.0,
+            provider="fake",
+            intent=LegIntent.TWISTY_PAVED,
+        )
+        return Trip(
+            slug=SLUG,
+            name="Cascade Loop",
+            created_at=now,
+            edited_at=now,
+            waypoints=(
+                Waypoint(coordinate=Coordinate(lat=47.0, lon=-121.0), name="Start"),
+                Waypoint(coordinate=Coordinate(lat=47.1, lon=-121.1), name="End"),
+            ),
+            legs=(
+                TripLeg(
+                    intent=LegIntent.TWISTY_PAVED,
+                    start_waypoint_index=0,
+                    end_waypoint_index=1,
+                    routed=leg,
+                ),
+            ),
+        )
+
+    def _events(self, client_with):
+        model = says(
+            AssistantMessage(
+                content=None,
+                tool_calls=(
+                    ToolCall(id="c1", name="find_places", arguments='{"categories": ["food"]}'),
+                ),
+            ),
+            AssistantMessage(content="Found three places."),
+        )
+        client, _ = client_with(model, seed=self._routed_trip(), discovery=self.StubPipeline())
+        return events(post(client))
+
+    def test_progress_reaches_the_client(self, client_with):
+        kinds = [event["kind"] for event in self._events(client_with)]
+        assert "tool_progress" in kinds
+
+    def test_it_arrives_before_the_tool_finishes(self, client_with):
+        kinds = [event["kind"] for event in self._events(client_with)]
+        assert kinds.index("tool_progress") < kinds.index("tool_finished")
+
+    def test_it_carries_the_message_and_fraction(self, client_with):
+        progress = [e for e in self._events(client_with) if e["kind"] == "tool_progress"]
+        assert progress[0]["message"] == "searching near Cle Elum"
+        assert progress[0]["progress"] == pytest.approx(0.25)
+
+    def test_it_names_the_tool(self, client_with):
+        """So a client can associate it without inferring from ordering — which breaks the
+        moment a turn runs two tools and one of them is slow."""
+        progress = [e for e in self._events(client_with) if e["kind"] == "tool_progress"]
+        assert {e["tool"] for e in progress} == {"find_places"}
+
+    def test_other_events_carry_no_fraction(self, client_with):
+        """`progress` is null except on a progress event; a client must not read it as zero."""
+        others = [e for e in self._events(client_with) if e["kind"] != "tool_progress"]
+        assert all(event["progress"] is None for event in others)

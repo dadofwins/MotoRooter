@@ -555,3 +555,38 @@ class TestAmbiguityRefusesRatherThanGuesses:
         kit = await tools(lookup=TestAddWaypointTakesANameNotACoordinate.StubLookup(*self._two()))
         with pytest.raises(ToolCallFailed):
             await call(kit, AddWaypoint.name, '{"name": "Leavenworth", "place_id": "ChIJ_no"}')
+
+
+class TestFindPlacesReportsWhileItRuns:
+    """Thirty seconds of "Working" was the chat half of Tim's progress complaint.
+
+    The pipeline already emits fifteen or twenty events; `find_places` consumed the stream and
+    kept only the last. Forwarding them is plumbing rather than new machinery — the same
+    events the Replan button has always shown.
+    """
+
+    async def test_it_reports_each_stage(self):
+        kit = await tools(document=trip(routed=True), discovery=_StubDiscovery())
+        seen: list[tuple[str, float | None]] = []
+        tool = kit.registry.get(FindPlaces.name)
+        await tool.run(
+            tool.parse('{"categories": ["food"]}'),
+            on_progress=lambda message, fraction: seen.append((message, fraction)),
+        )
+        assert seen, "the stream was consumed and nothing was said"
+
+    async def test_it_passes_the_pipeline_message_through(self):
+        kit = await tools(document=trip(routed=True), discovery=_StubDiscovery())
+        seen: list[str] = []
+        tool = kit.registry.get(FindPlaces.name)
+        await tool.run(
+            tool.parse('{"categories": ["food"]}'),
+            on_progress=lambda message, fraction: seen.append(message),
+        )
+        assert any("worth showing" in message for message in seen)
+
+    async def test_it_still_works_without_a_callback(self):
+        """Every other caller, including the REST endpoint's own path."""
+        kit = await tools(document=trip(routed=True), discovery=_StubDiscovery())
+        outcome = await call(kit, FindPlaces.name, '{"categories": ["food"]}')
+        assert outcome.found >= 1

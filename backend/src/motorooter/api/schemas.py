@@ -193,9 +193,14 @@ class ChatEvent(BaseModel):
     which the client already parses.
     """
 
-    kind: Literal["message", "tool_started", "tool_finished", "tool_failed", "done"] = Field(
-        description="What happened. `done` is always last."
-    )
+    kind: Literal[
+        "message",
+        "tool_started",
+        "tool_progress",
+        "tool_finished",
+        "tool_failed",
+        "done",
+    ] = Field(description="What happened. `done` is always last.")
     message: str = Field(
         default="",
         description="Assistant text for `message`, or a human-readable note for tool events.",
@@ -210,6 +215,20 @@ class ChatEvent(BaseModel):
             "event specifically, because a client reading only the last event must be able "
             "to tell 'finished' from 'cut off mid-task'."
         ),
+    )
+    progress: float | None = Field(
+        default=None,
+        description=(
+            "On a `tool_progress` event, how far through **that tool** the run is, 0 to 1. "
+            "Null on every other kind, and null when a tool cannot say — read it as "
+            "unknown rather than as zero.\n\n"
+            "Within the tool, not within the turn: a turn's total work is decided by the "
+            "model while it is deciding it, so a turn-level fraction would be invented. "
+            "`tool` names which tool it belongs to, so a turn that runs two of them can be "
+            "followed without inferring from ordering."
+        ),
+        ge=0.0,
+        le=1.0,
     )
     trip_changed: bool = Field(
         default=False,

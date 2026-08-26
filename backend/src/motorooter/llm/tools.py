@@ -11,7 +11,7 @@ later, and the divergence will be invisible because both paths return something 
 """
 
 import json
-from collections.abc import Iterable, Sequence
+from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass, field
 from typing import Any, ClassVar
 
@@ -52,6 +52,15 @@ class ToolOutcome:
 
     payload: dict[str, Any] = field(default_factory=dict)
     """Structured result for the UI. Shape is the tool's own business."""
+
+
+ProgressReport = Callable[[str, float | None], None]
+"""What a slow tool calls to say where it has got to: a message and an optional fraction.
+
+The fraction is within the tool. A caller that knows how many tools a turn will run could
+compute something turn-level, but nothing does — the model decides that while it is deciding
+it, so the honest denominator is the one the tool itself owns.
+"""
 
 
 class Tool:
@@ -117,7 +126,27 @@ class Tool:
         ]
         return f"arguments for {self.name!r} do not match its schema — {'; '.join(problems)}"
 
-    async def run(self, arguments: Any) -> ToolOutcome:  # noqa: ANN401 -- narrowed by subclass
+    reports_progress: ClassVar[bool] = False
+    """Whether this tool reports progress while it runs.
+
+    Declared rather than discovered. The caller needs to know *before* starting whether it
+    must set up the machinery that lets a running tool speak — and that machinery changes
+    how exceptions surface, so every tool paying for it would be a real cost. Slow tools opt
+    in; the rest are awaited plainly.
+    """
+
+    async def run(
+        self,
+        arguments: Any,  # noqa: ANN401 -- narrowed by the subclass's arguments model
+        on_progress: ProgressReport | None = None,
+    ) -> ToolOutcome:
+        """Do the thing.
+
+        Args:
+            arguments: the validated arguments object.
+            on_progress: where to report intermediate state, when the caller wants it and
+                the tool has any. Only ever supplied to a tool with `reports_progress`.
+        """
         raise NotImplementedError
 
 

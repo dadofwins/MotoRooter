@@ -1389,7 +1389,7 @@ describe('where the riding time came from', () => {
     await waitFor(() => {
       expect(summaryNote()).not.toBeNull()
     })
-    expect(summaryNote()?.textContent ?? '').toMatch(/our own estimate/i)
+    expect(summaryNote()?.textContent ?? '').toMatch(/our estimate, not the engine/i)
   })
 
   it('says nothing when the figure is the engine own measurement', async () => {

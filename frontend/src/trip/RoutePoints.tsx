@@ -72,6 +72,18 @@ export function RoutePoints({
   // as a route not started.
   if (waypoints.length === 0) return null
 
+  /**
+   * Whether saying "placed by you" distinguishes anything.
+   *
+   * Every point a rider clicks is pinned, so on a route nobody has replanned the label appears on
+   * every row and tells them nothing — five identical annotations, which is how it looked once the
+   * rail was rendered and examined. It earns its place only when the list is mixed, which is
+   * exactly when a replan has added or moved points the rider did not place.
+   */
+  const mixedProvenance =
+    waypoints.some((waypoint) => waypoint.pinned) &&
+    waypoints.some((waypoint) => !waypoint.pinned)
+
   return (
     <section className="points" aria-label="Route points">
       <h2 className="points__title">Route</h2>
@@ -91,9 +103,10 @@ export function RoutePoints({
               </span>
               <span className="points__label">
                 {label}
-                {waypoint.pinned && (
+                {mixedProvenance && waypoint.pinned && (
                   // A replan may move or drop an unpinned point and must leave a pinned one
-                  // alone, so this is worth seeing before pressing Replan rather than after.
+                  // alone, so this is worth seeing before pressing Replan rather than after —
+                  // but only where there is something to tell it apart from.
                   <span className="points__pinned"> · placed by you</span>
                 )}
               </span>

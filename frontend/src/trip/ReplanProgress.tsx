@@ -82,11 +82,21 @@ export function ReplanProgress({
       </p>
 
       {earlier.length > 0 && (
-        <ul className="progress__earlier">
-          {earlier.map((step) => (
-            <li key={step.id}>{step.message}</li>
-          ))}
-        </ul>
+        // Folded away, not removed. Tim used this on a real trip and said the current line and
+        // the meter are enough — which is a statement that the *accumulation* is noise, not that
+        // he wants less information. The count sits on the disclosure so the history reads as
+        // available rather than absent, and `details` gives keyboard operation and the open state
+        // for free rather than through a button and a piece of state.
+        <details className="progress__history">
+          <summary>
+            {`${String(earlier.length)} earlier step${earlier.length === 1 ? '' : 's'}`}
+          </summary>
+          <ul className="progress__earlier">
+            {earlier.map((step) => (
+              <li key={step.id}>{step.message}</li>
+            ))}
+          </ul>
+        </details>
       )}
     </div>
   )

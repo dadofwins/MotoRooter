@@ -258,3 +258,122 @@ describe('ChatRail', () => {
     expect(client.chat).not.toHaveBeenCalled()
   })
 })
+
+/**
+ * Following the conversation.
+ *
+ * Tim's item 3, from planning a real trip: the history should auto-scroll to the bottom. The care
+ * it needs is the other half — a rider who has scrolled up to re-read something must not be yanked
+ * back down the moment the assistant says anything, which is the standard way this feature becomes
+ * infuriating.
+ *
+ * jsdom has no layout engine, so the scroll geometry is defined by the test. That is honest here
+ * rather than a workaround: the component only ever reads three numbers off the element, and
+ * supplying them is exactly what a browser would do.
+ */
+describe('ChatRail scrolling', () => {
+  /** Gives the log a size, since jsdom reports every dimension as zero. */
+  function measure(log: HTMLElement, { height = 200, content = 1000, top = 800 } = {}) {
+    Object.defineProperty(log, 'clientHeight', { value: height, configurable: true })
+    Object.defineProperty(log, 'scrollHeight', { value: content, configurable: true })
+    log.scrollTop = top
+    return log
+  }
+
+  function theLog(): HTMLElement {
+    const log = document.querySelector('.chat__log')
+    if (log === null) throw new Error('no chat log')
+    return log as HTMLElement
+  }
+
+  it('scrolls to the newest message', async () => {
+    const client = fakeClient([
+      event({ kind: 'message', message: 'There is a campground at Lone Fir.' }),
+      event({ kind: 'done' }),
+    ])
+    render(
+      <ChatRail
+        client={client}
+        resolveSlug={() => Promise.resolve('wabdr-north')}
+        onTripChanged={vi.fn()}
+      />,
+    )
+    measure(theLog())
+
+    await send('anywhere to camp?')
+    await screen.findByText(/campground at Lone Fir/)
+
+    expect(theLog().scrollTop).toBe(1000)
+  })
+
+  it('leaves a rider alone who has scrolled up to read something', async () => {
+    // The half that makes it bearable. Yanking someone back mid-sentence is worse than not
+    // scrolling at all, because it happens exactly when they are concentrating.
+    const client = fakeClient([
+      event({ kind: 'message', message: 'There is a campground at Lone Fir.' }),
+      event({ kind: 'done' }),
+    ])
+    render(
+      <ChatRail
+        client={client}
+        resolveSlug={() => Promise.resolve('wabdr-north')}
+        onTripChanged={vi.fn()}
+      />,
+    )
+    const log = measure(theLog(), { top: 0 })
+    fireEvent.scroll(log)
+
+    await send('anywhere to camp?')
+    await screen.findByText(/campground at Lone Fir/)
+
+    expect(theLog().scrollTop).toBe(0)
+  })
+
+  it('follows again once they scroll back down', async () => {
+    // Returning to the bottom is how a rider says "carry on" — no separate control needed, and
+    // no state that can get stuck.
+    const client = fakeClient([
+      event({ kind: 'message', message: 'First answer.' }),
+      event({ kind: 'done' }),
+    ])
+    render(
+      <ChatRail
+        client={client}
+        resolveSlug={() => Promise.resolve('wabdr-north')}
+        onTripChanged={vi.fn()}
+      />,
+    )
+    const log = measure(theLog(), { top: 0 })
+    fireEvent.scroll(log)
+
+    log.scrollTop = 800
+    fireEvent.scroll(log)
+    await send('anything else?')
+    await screen.findByText('First answer.')
+
+    expect(theLog().scrollTop).toBe(1000)
+  })
+
+  it('counts a few pixels off the bottom as still following', async () => {
+    // Rounding, momentum and sub-pixel heights mean "at the bottom" is never exact, and an exact
+    // comparison would silently stop following after one flick of a trackpad.
+    const client = fakeClient([
+      event({ kind: 'message', message: 'Near enough.' }),
+      event({ kind: 'done' }),
+    ])
+    render(
+      <ChatRail
+        client={client}
+        resolveSlug={() => Promise.resolve('wabdr-north')}
+        onTripChanged={vi.fn()}
+      />,
+    )
+    const log = measure(theLog(), { top: 790 })
+    fireEvent.scroll(log)
+
+    await send('hello')
+    await screen.findByText('Near enough.')
+
+    expect(theLog().scrollTop).toBe(1000)
+  })
+})

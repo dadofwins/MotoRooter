@@ -1246,6 +1246,64 @@ describe('App arriving', () => {
   })
 })
 
+describe('a trip that comes back to where it started', () => {
+  it('handles a route returning to its first point', async () => {
+    // The shape of the first trip anyone actually planned: "starting in Woodinville, WA going
+    // east and coming back". Coming back repeats a coordinate, which the route list keyed on.
+    const warned: unknown[][] = []
+    const spy = vi.spyOn(console, 'error').mockImplementation((...args: unknown[]) => {
+      warned.push(args)
+    })
+    try {
+      const fake = createFakeMaps()
+      const router = fakeRouter()
+      render(<App mapLoader={fake.loader} mapId="motorooter-test-vector" client={router} />)
+      await mapReady(fake)
+
+      fake.clickMap(47.75, -122.16)
+      fake.clickMap(47.52, -120.46)
+      fake.clickMap(47.75, -122.16)
+
+      await waitFor(() => {
+        expect(screen.getByText(/3 points placed/)).toBeInTheDocument()
+      })
+      const rows = within(screen.getByRole('region', { name: 'Route points' })).getAllByRole(
+        'listitem',
+      )
+      expect(rows).toHaveLength(3)
+      expect(warned.flat().join(' ')).not.toMatch(/same key|duplicate key/i)
+    } finally {
+      spy.mockRestore()
+    }
+  })
+
+  it('removes the return leg rather than the outbound one', async () => {
+    // Two stops at one place are different stops. Getting this wrong deletes the start of the
+    // trip when a rider meant to drop the finish.
+    const fake = createFakeMaps()
+    render(<App mapLoader={fake.loader} mapId="motorooter-test-vector" client={fakeRouter()} />)
+    await mapReady(fake)
+    fake.clickMap(47.75, -122.16)
+    fake.clickMap(47.52, -120.46)
+    fake.clickMap(47.75, -122.16)
+    await waitFor(() => {
+      expect(screen.getByText(/3 points placed/)).toBeInTheDocument()
+    })
+
+    fireEvent.click(screen.getByRole('button', { name: 'Remove point 3' }))
+
+    await waitFor(() => {
+      expect(screen.getByText(/2 points placed/)).toBeInTheDocument()
+    })
+    const rows = within(screen.getByRole('region', { name: 'Route points' })).getAllByRole(
+      'listitem',
+    )
+    // The one that survives is the start, not the finish.
+    expect(rows[0]?.textContent ?? '').toMatch(/47\.7500/)
+    expect(rows[1]?.textContent ?? '').toMatch(/47\.5200/)
+  })
+})
+
 describe('where the place details go', () => {
   /**
    * Tim, after planning a real trip: *"I don't love that the details go in the bottom of the right

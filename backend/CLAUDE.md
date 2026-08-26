@@ -86,8 +86,14 @@ Never edit anything under `frontend/`.
   rebase when it tells you to.
 - **One queue item per branch.** Finish it, hand off, start the next on a fresh branch while
   the review runs. A branch with three features in it is a branch nobody can review well.
-- Do not rewrite history on a branch you have already handed off — the reviewer is looking
-  at those commits.
+- **Rewriting a handed-off branch: rebase yes, revise no.** The two rules above collide, and
+  the rebase wins. A rebase onto current `main` rewrites commits the reviewer may be reading,
+  but `make handoff` requires it and a review against stale `main` is worth less than a clean
+  diff. So: rebase and force-push freely, and **say in the handoff mail that you did and that
+  the content is unchanged**. What stays forbidden is *revising* handed-off commits — amending
+  their content, squashing, or reordering — because then the reviewer's notes point at code
+  that no longer exists. Fixes go on top as new commits; the branch gets tidied at merge, which
+  is the integrator's job.
 
 ## House rules
 

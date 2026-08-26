@@ -17,6 +17,7 @@ from motorooter.api.exception_handlers import register_exception_handlers
 from motorooter.api.routers import places, routing, trips
 from motorooter.api.schemas import HealthResponse
 from motorooter.api.streaming import apply_streaming_media_types
+from motorooter.chat.factory import build_chat_model
 from motorooter.planning.discovery.factory import build_discovery
 from motorooter.planning.discovery.factory import settings_from_env as discovery_from_env
 from motorooter.routing.factory import RoutingSettings, build_routing
@@ -70,7 +71,13 @@ def create_app(
     # `None` when the credentials are absent. Replan answers 501 and everything else works:
     # discovery needs four keys, and refusing to boot without them would take the whole
     # backend down for a feature most requests never touch.
-    app.state.discovery = None if routing_config.offline else build_discovery(discovery_from_env())
+    discovery_config = discovery_from_env()
+    app.state.discovery = None if routing_config.offline else build_discovery(discovery_config)
+
+    # Same rule as discovery, and the same reason: chat needs a credential most requests
+    # never touch, so its absence disables one endpoint rather than the deployment. Pinned
+    # from config — which model answers is a deploy decision, never an inline default.
+    app.state.chat_model = None if routing_config.offline else build_chat_model(discovery_config)
 
     register_exception_handlers(app)
 

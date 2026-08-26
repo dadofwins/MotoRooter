@@ -154,7 +154,7 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Talk to the assistant about a trip (not yet implemented)
+         * Talk to the assistant about a trip
          * @description One conversational turn. The assistant may call tools, and those tools are the same service functions the mouse path calls — item 5 of the MVP is reachable both ways and must not become two implementations that drift.
          *
          *     **Streams newline-delimited JSON** (`application/x-ndjson`): one `ChatEvent` per line, `done` last. Same framing as replan, which the client already parses.
@@ -1610,7 +1610,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description Not implemented yet. */
+            /** @description No chat model configured on this deployment. */
             501: {
                 headers: {
                     [name: string]: unknown;

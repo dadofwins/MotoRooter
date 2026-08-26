@@ -2108,7 +2108,7 @@
                 }
               }
             },
-            "description": "Not implemented yet."
+            "description": "No chat model configured on this deployment."
           },
           "502": {
             "content": {
@@ -2131,7 +2131,7 @@
             "description": "Service Unavailable"
           }
         },
-        "summary": "Talk to the assistant about a trip (not yet implemented)",
+        "summary": "Talk to the assistant about a trip",
         "tags": [
           "trips"
         ]

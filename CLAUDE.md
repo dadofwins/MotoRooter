@@ -257,7 +257,7 @@ trusted depends on the profile it ran, and that belongs in `ProviderCapabilities
 `reports_surface`, resolved per intent. Do not special-case an engine name at the call site —
 that is the mistake the whole routing architecture exists to prevent.
 
-Reported ascent (6,400–8,800 m against the reference's 3,188 m) looks wrong. **Narrowed
+Reported ascent looked wrong — 6,400–8,800 m against the reference’s 3,188 m. **Diagnosed
 2026-08-26, and both benign explanations are ruled out**, computed from the reference track's
 own per-point elevations:
 
@@ -267,19 +267,34 @@ own per-point elevations:
   22%. Extrapolated to ORS's own ~29 m spacing it predicts **3,558 m** — density explains about
   370 m of a 3,200–5,600 m gap.
 
-So ORS reports 1.8–2.5× a densely-sampled true profile of that corridor, and it is one of: the
-`cycling-mountain` profile genuinely routing a much steeper line, or ORS's elevation lookup or
-accumulation being wrong. Those differ in consequence — the first means the number is right and
-the *route* is the problem; the second is a provider bug worth reporting upstream.
+### Resolved (2026-08-26): `cycling-mountain` returns 0 for a failed elevation lookup
 
-**The measurement that separates them:** route the same corridor, request per-point elevation,
-sum it naively. ~6,400 m means the geometry really is steeper; ~3,500 m means `ascent_m` is
-computed wrong. This cannot be done from the frontend — `Coordinate` is lat/lon only, so
-per-point elevation does not cross the contract today.
+Neither hypothesis was right, and nothing was computed wrong anywhere. **ORS's reported ascent
+equals a naive sum over its own elevations to the metre** — we passed through a number that was
+faithful to bad data. The profile emits an exact `0` when its elevation lookup fails, and each
+plunge to sea level and back adds twice the local elevation to a cumulative sum:
 
-**Keep the suppression.** These numbers strengthen the rule rather than lifting it: the figure is
-roughly double, and showing it would overstate a day's climbing in the direction that makes a
-rider plan too little. Do not show climb figures to a user until this is resolved.
+| corridor | zero points | ascent with | without |
+|---|---|---|---|
+| Ellensburg–Cashmere | 12 of 2,763 | 6,729 m | **3,605 m** |
+| Chinook Pass | 4 of 311 | 3,725 m | **1,495 m** |
+| both, `driving-car` | 0 | unchanged | unchanged |
+
+Twelve points in 2,763 were 3,124 m of the gap. Chinook is what killed "the geometry is steeper":
+229 m/km over a paved highway pass is a sustained 23% gradient, and `driving-car` crosses the same
+pass reporting 52. Filtering climbs under 20 m barely moved it, which is what pointed at a
+sentinel rather than at noise.
+
+Two independent methods agree: 3,605 m measured against the 3,558 m the density extrapolation
+above predicted, 1.3% apart.
+
+**The fix lives in the adapter**, where a wire-format quirk belongs — ascent is computed from the
+elevations rather than read from `properties.ascent`. Note **zero alone is not the signal**: sea
+level is real and a coastal route must not have its geometry treated as corrupt. The sentinel is
+an exact zero the route's own *median* says cannot be right — median rather than mean, because a
+mean is dragged toward zero by the very points being detected.
+
+Climb figures are no longer suppressed on these grounds.
 
 ## Discovery architecture
 

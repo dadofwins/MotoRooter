@@ -13,15 +13,20 @@ absent one — it puts the wrong icon on the map and gets filtered into the wron
 nothing about it looks broken.
 """
 
+import asyncio
 import json
+import logging
 import re
 from collections.abc import Iterable, Sequence
 from types import MappingProxyType
 
+from motorooter.llm.errors import LlmError
 from motorooter.llm.messages import Message, SystemMessage, UserMessage
 from motorooter.llm.protocol import LlmClient
 from motorooter.planning.discovery.models import ResolvedCandidate
 from motorooter.trips.models import PoiCategory
+
+logger = logging.getLogger(__name__)
 
 _JSON_OBJECT = re.compile(r"\{.*\}", re.DOTALL)
 
@@ -131,6 +136,28 @@ Return only JSON: {{"categories": [{{"index": 0, "category": "wild_camp"}}]}}
 """
 
 
+CLASSIFY_BATCH_SIZE = 60
+"""How many places to ask about in one call.
+
+The stage had no ceiling, and one call for a whole corridor has a cliff in it. Measured
+against the live model at this stage's own 15 s budget, `gpt-5-mini` at minimal effort:
+
+    25 names   3.4s      80 names    8.8s
+    40 names   4.4s     100 names   10.3s
+    60 names   7.3s     120 names   11.2s
+                       150 names   TIMEOUT
+
+Roughly 0.09 s a name, so the cliff is around 150 — and going over it did not lose a category,
+it lost the *stage*: the pipeline turns any exception from resolve into an empty result, so a
+corridor with 540 candidates reported "0 worth showing", which is what a genuinely empty
+corridor reports. Reachable before whole-route search; one long leg does it.
+
+Sixty because 7.3 s against a 15 s budget survives the model having a bad day, and because
+batches run concurrently, so halving it again would buy latency nobody would notice and cost
+requests somebody pays for.
+"""
+
+
 class CategoryClassifier:
     """Asks the model only about places Places could not type.
 
@@ -145,7 +172,14 @@ class CategoryClassifier:
     async def classify(
         self, resolved: Sequence[ResolvedCandidate]
     ) -> tuple[ResolvedCandidate, ...]:
-        """Fill in missing categories. Anything still unknown is returned unchanged."""
+        """Fill in missing categories. Anything still unknown is returned unchanged.
+
+        Raises:
+            LlmError: every batch failed. Partial failure degrades — those places stay
+                uncategorised and are dropped as unpinnable one stage later — but total
+                failure has to be audible, because "nothing could be categorised" and "there
+                was nothing to categorise" produce the same empty map otherwise.
+        """
         # A road is never a place, so the model is not asked about one. Left to it, it
         # answers plausibly — two highways came back as viewpoints on a live run.
         pending = [
@@ -156,15 +190,40 @@ class CategoryClassifier:
         if not pending:
             return tuple(resolved)
 
-        reply = await self._client.complete(self._conversation(pending), [])
-        assigned = _assignments_in(reply.content)
+        batches = [
+            pending[start : start + CLASSIFY_BATCH_SIZE]
+            for start in range(0, len(pending), CLASSIFY_BATCH_SIZE)
+        ]
+        settled = await asyncio.gather(
+            *(self._classify_batch(batch) for batch in batches), return_exceptions=True
+        )
 
         updated = list(resolved)
-        for position, category in assigned.items():
-            if 0 <= position < len(pending):
-                index, candidate = pending[position]
-                updated[index] = candidate.model_copy(update={"category": category})
+        failures: list[LlmError] = []
+        answered = False
+        for batch, outcome in zip(batches, settled, strict=True):
+            if isinstance(outcome, BaseException):
+                if not isinstance(outcome, LlmError):
+                    raise outcome
+                logger.warning("classifying %d places failed: %s", len(batch), outcome)
+                failures.append(outcome)
+                continue
+            answered = True
+            for position, category in outcome.items():
+                if 0 <= position < len(batch):
+                    index, candidate = batch[position]
+                    updated[index] = candidate.model_copy(update={"category": category})
+
+        if failures and not answered:
+            raise failures[0]
         return tuple(updated)
+
+    async def _classify_batch(
+        self, batch: Sequence[tuple[int, ResolvedCandidate]]
+    ) -> dict[int, PoiCategory]:
+        """One call, and the positions it answers are within this batch."""
+        reply = await self._client.complete(self._conversation(batch), [])
+        return _assignments_in(reply.content)
 
     @staticmethod
     def _conversation(

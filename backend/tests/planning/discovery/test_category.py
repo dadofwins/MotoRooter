@@ -195,6 +195,106 @@ class TestTheModelFillsWhatPlacesCannot:
         assert result[0].category is None
 
 
+class TestItSurvivesAWholeRouteOfCandidates:
+    """One unbatched call had a cliff in it, and the fall was the whole stage.
+
+    Measured against the live model at the classifier's own 15 s budget, `gpt-5-mini` at
+    minimal effort:
+
+        25 names   3.4s      80 names    8.8s
+        40 names   4.4s     100 names   10.3s
+        60 names   7.3s     120 names   11.2s
+                           150 names   TIMEOUT
+
+    Roughly 0.09 s a name. So a corridor yielding more than about 150 uncategorised places
+    raised `LlmUnavailable`, and the pipeline's resolve stage turns any exception into an
+    empty result — 540 candidates became "0 worth showing", which is exactly the summary a
+    genuinely empty corridor produces. It was reachable before whole-route search: a single
+    long leg does it.
+    """
+
+    @staticmethod
+    def _batch(size: int):
+        return [
+            TestTheModelFillsWhatPlacesCannot._resolved(f"Place {index}") for index in range(size)
+        ]
+
+    @staticmethod
+    def _assigns(indices):
+        return TestTheModelFillsWhatPlacesCannot._says(
+            {"categories": [{"index": index, "category": "wild_camp"} for index in indices]}
+        )
+
+    async def test_a_large_batch_is_split_into_several_calls(self):
+        from motorooter.llm.providers.fake import FakeLlmClient
+        from motorooter.planning.discovery.category import (
+            CLASSIFY_BATCH_SIZE,
+            CategoryClassifier,
+        )
+
+        size = CLASSIFY_BATCH_SIZE * 2 + 1
+        client = FakeLlmClient(replies=tuple(self._assigns([]) for _ in range(3)))
+        await CategoryClassifier(client).classify(self._batch(size))
+        assert len(client.conversations) == 3
+
+    async def test_a_batch_that_fits_is_still_one_call(self):
+        from motorooter.llm.providers.fake import FakeLlmClient
+        from motorooter.planning.discovery.category import (
+            CLASSIFY_BATCH_SIZE,
+            CategoryClassifier,
+        )
+
+        client = FakeLlmClient(replies=(self._assigns([]),))
+        await CategoryClassifier(client).classify(self._batch(CLASSIFY_BATCH_SIZE))
+        assert len(client.conversations) == 1
+
+    async def test_each_batch_is_indexed_from_zero(self):
+        """The model answers by position within what it was shown, not within the run."""
+        from motorooter.llm.providers.fake import FakeLlmClient
+        from motorooter.planning.discovery.category import (
+            CLASSIFY_BATCH_SIZE,
+            CategoryClassifier,
+        )
+
+        size = CLASSIFY_BATCH_SIZE + 1
+        client = FakeLlmClient(replies=(self._assigns([0]), self._assigns([0])))
+        result = await CategoryClassifier(client).classify(self._batch(size))
+        assigned = [index for index, item in enumerate(result) if item.category is not None]
+        assert assigned == [0, CLASSIFY_BATCH_SIZE]
+
+    async def test_the_batch_size_leaves_room_under_the_timeout(self):
+        """7.3 s measured against a 15 s budget, so it survives the model having a bad day."""
+        from motorooter.planning.discovery.category import CLASSIFY_BATCH_SIZE
+
+        assert CLASSIFY_BATCH_SIZE <= 120
+
+    async def test_one_failed_batch_does_not_cost_the_others(self):
+        """The whole point. A stage that raises is a stage the pipeline reports as empty."""
+        from motorooter.llm.errors import LlmUnavailable
+        from motorooter.llm.providers.fake import FakeLlmClient
+        from motorooter.planning.discovery.category import (
+            CLASSIFY_BATCH_SIZE,
+            CategoryClassifier,
+        )
+
+        client = FakeLlmClient(
+            replies=(LlmUnavailable("timed out"), self._assigns([0])),
+        )
+        result = await CategoryClassifier(client).classify(self._batch(CLASSIFY_BATCH_SIZE + 1))
+        assert result[CLASSIFY_BATCH_SIZE].category is PoiCategory.WILD_CAMP
+        assert result[0].category is None
+
+    async def test_every_batch_failing_still_raises(self):
+        """Silence here would be the empty-map bug again: no categories, no error, no map."""
+        from motorooter.llm.errors import LlmUnavailable
+        from motorooter.llm.providers.fake import FakeLlmClient
+        from motorooter.planning.discovery.category import CategoryClassifier
+
+        client = FakeLlmClient(replies=(LlmUnavailable("timed out"),))
+        with pytest.raises(LlmUnavailable):
+            await CategoryClassifier(client).classify(self._batch(3))
+
+
 class TestARoadIsNeverAPlace:
     """Places types a highway, a byway and a forest road all as `route`.
 

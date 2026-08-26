@@ -23,20 +23,23 @@ class FakeLlmClient:
     def __init__(
         self,
         *,
-        replies: Sequence[AssistantMessage] = (),
+        replies: Sequence[AssistantMessage | LlmError] = (),
         repeat_last: bool = False,
         error: LlmError | None = None,
         model: str = FAKE_MODEL,
     ) -> None:
         """
         Args:
-            replies: one reply per turn, in order.
+            replies: one outcome per turn, in order. An `LlmError` in the sequence is
+                raised on that turn instead of answered, which is how a caller that makes
+                several calls can be given a mixture — one batch failing while the rest
+                succeed is a different code path from every batch failing.
             repeat_last: keep returning the final reply instead of running out. Lets a test
                 script a model that never stops calling tools.
             error: raised instead of replying, for failure-path tests.
             model: reported as the pinned model.
         """
-        self._replies = list(replies)
+        self._replies: list[AssistantMessage | LlmError] = list(replies)
         self._repeat_last = repeat_last
         self._error = error
         self._model = model
@@ -64,10 +67,16 @@ class FakeLlmClient:
 
         index = self.call_count - 1
         if index < len(self._replies):
-            return self._replies[index]
+            return _answer(self._replies[index])
         if self._repeat_last and self._replies:
-            return self._replies[-1]
+            return _answer(self._replies[-1])
         # Running dry means the loop asked for more turns than the test scripted, which is
         # usually the test being wrong. Answer rather than hang, so the assertion fails
         # somewhere legible.
         return AssistantMessage(content="(the fake client ran out of scripted replies)")
+
+
+def _answer(outcome: AssistantMessage | LlmError) -> AssistantMessage:
+    if isinstance(outcome, LlmError):
+        raise outcome
+    return outcome

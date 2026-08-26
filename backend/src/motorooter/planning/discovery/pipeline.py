@@ -82,21 +82,94 @@ class DiscoveryProgress:
     the assistant's tools want the reasons too."""
 
 
+NAMING_COST = 0.4
+SEARCH_COST = 0.15
+EXTRACT_COST = 1.4
+RESOLVE_COST_PER_CANDIDATE = 0.07
+JUDGE_BASE_COST = 6.0
+JUDGE_COST_PER_CANDIDATE = 1.5
+"""Roughly how many seconds each kind of work takes, from a live corridor.
+
+Counting *steps* was the bug. A Brave search returning in 150 ms and a scoring call taking
+fifteen seconds were worth one unit each, so the bar spent 91% of itself on the first third
+of the wall clock and left the slowest stage two percentage points to move through:
+
+    search + extract    9.4s    drove the bar 0 -> 91%
+    resolve (37)        2.7s    91 -> 97%
+    judge (6)          15.1s    97 -> 99%
+
+These are estimates and they will drift — a faster model, a longer corridor, a different
+provider all move them. That is tolerable in a way the old scheme was not: being wrong about
+a stage's *share* skews the bar, while being wrong about its *existence* stops it dead. Any
+figure within a factor of two of the truth beats counting steps.
+
+Judging is deliberately the only one with a fixed cost as well as a per-candidate one: it is
+a single call whose latency is mostly the model thinking, not the batch size.
+"""
+
+EXPECTED_NAMES_PER_SEARCH = 1.8
+EXPECTED_RESOLVED_PER_SEARCH = 0.3
+"""How much enrichment one search typically creates, so it can be costed before it exists.
+
+From the same live corridor: twenty searches produced thirty-seven named candidates, of
+which six survived resolution. Reserved up front rather than booked on discovery, because
+booking it late is too late — by then the search phase has already consumed the whole bar,
+and no amount of correcting the denominator afterwards can move a number that is already at
+its ceiling.
+
+The reserve is corrected against the real counts as soon as they are known, so a corridor
+that yields nothing or twice the usual still ends up costed honestly. These figures only
+decide how good the guess is before then.
+"""
+
+CEILING = 0.99
+"""How close a non-terminal event may get to done. Only the final event says 1.0.
+
+Raising this was suggested, on the grounds that the cap made every late event render the
+same — and it was the wrong fix twice over. The tail was pinned because the *weights* were
+wrong, not the ceiling; and a finer ceiling makes it worse, because 0.999 renders as "100%"
+once a client rounds it, which claims completion while the run is still working. That is
+exactly what the cap exists to prevent.
+
+With the weights corrected, only the final pre-terminal event reaches the cap at all.
+"""
+
+
 @dataclass
 class _Work:
-    """Progress as completed units against planned units.
+    """Progress as completed cost against expected cost, both in rough seconds.
 
     Anchors made a poor denominator once the work ran in parallel — "anchor 3 of 24" stops
-    describing anything when eight are in flight. Units are what a rider is waiting for:
-    every lookup, every search, and the enrichment at the end.
+    describing anything when eight are in flight. Steps made a poor denominator too, for a
+    subtler reason: a rider is waiting for *time*, and the steps here differ in cost by two
+    orders of magnitude.
     """
 
-    total: int
-    done: int = 0
+    total: float
+    done: float = 0.0
 
-    def step(self, stage: str, message: str, *, advance: int = 1) -> "DiscoveryProgress":
+    def add(self, cost: float) -> None:
+        """Book work that was not knowable up front, such as scoring N found candidates.
+
+        Rescales `done` so the fraction is unchanged at the moment of the booking. Growing
+        the denominator alone would send the bar *backwards* — 50% becoming 43% because the
+        run discovered it had more to do — and a bar that retreats is worse than one that
+        lies, because a rider cannot tell it from a restart.
+
+        The cost of that choice is honest and small: the work already finished quietly
+        becomes worth a smaller share, and everything remaining is redistributed across
+        what is left. What is preserved is the property clients rely on, which is that this
+        number only ever moves forwards.
+        """
+        if cost == 0:
+            return
+        fraction = self.done / self.total if self.total > 0 else 0.0
+        self.total += cost
+        self.done = fraction * self.total
+
+    def step(self, stage: str, message: str, *, advance: float = 1.0) -> "DiscoveryProgress":
         self.done += advance
-        fraction = min(self.done / self.total, 0.99) if self.total > 0 else 0.99
+        fraction = min(self.done / self.total, CEILING) if self.total > 0 else CEILING
         return DiscoveryProgress(stage=stage, message=message, progress=fraction)
 
 
@@ -172,7 +245,13 @@ class DiscoveryPipeline:
         # extraction per anchor, and three for enrichment — resolve, judge, and the tally.
         # Counting units rather than anchors is what keeps the percentage meaningful once
         # things overlap.
-        work = _Work(total=len(placed) * (2 + len(wanted)) + 3)
+        searching = len(placed) * (NAMING_COST + EXTRACT_COST + len(wanted) * SEARCH_COST)
+        searches = len(placed) * len(wanted)
+        reserved_resolve = searches * EXPECTED_NAMES_PER_SEARCH * RESOLVE_COST_PER_CANDIDATE
+        reserved_judge = (
+            JUDGE_BASE_COST + searches * EXPECTED_RESOLVED_PER_SEARCH * JUDGE_COST_PER_CANDIDATE
+        )
+        work = _Work(total=searching + reserved_resolve + reserved_judge)
         updates: asyncio.Queue[DiscoveryProgress | None] = asyncio.Queue()
         found: list[Candidate] = []
 
@@ -180,21 +259,35 @@ class DiscoveryPipeline:
             name, region = await self._describe(anchor, counts)
             if name is None:
                 # No name, no searches: hand back the budget so the bar does not stall.
-                work.total -= 1 + len(wanted)
-                await updates.put(work.step(SEARCH_STAGE, "nowhere named at one point"))
+                work.add(-(EXTRACT_COST + len(wanted) * SEARCH_COST))
+                await updates.put(
+                    work.step(SEARCH_STAGE, "nowhere named at one point", advance=NAMING_COST)
+                )
                 return
-            await updates.put(work.step(SEARCH_STAGE, f"looking around {name}"))
+            await updates.put(
+                work.step(SEARCH_STAGE, f"looking around {name}", advance=NAMING_COST)
+            )
 
             results: list[Candidate] = []
             for query in queries_for(name, wanted):
                 results.extend(await self._search(query, anchor, counts))
                 await updates.put(
-                    work.step(SEARCH_STAGE, f"searched {query.category.value} near {name}")
+                    work.step(
+                        SEARCH_STAGE,
+                        f"searched {query.category.value} near {name}",
+                        advance=SEARCH_COST,
+                    )
                 )
 
             extracted = await self._extract(results, region, name, counts)
             found.extend(extracted)
-            await updates.put(work.step(SEARCH_STAGE, f"{len(extracted)} places named near {name}"))
+            await updates.put(
+                work.step(
+                    SEARCH_STAGE,
+                    f"{len(extracted)} places named near {name}",
+                    advance=EXTRACT_COST,
+                )
+            )
 
         async def produce() -> None:
             try:
@@ -223,15 +316,23 @@ class DiscoveryPipeline:
 
         # Three metered stages, three events. Behind one event this was fifteen seconds of
         # silence at 99% on a live corridor — the moment a rider is most likely to decide it
-        # has hung, and the last place left where the bar stops describing anything.
-        yield work.step(ENRICH_STAGE, f"checking {len(found)} places are real")
+        # has hung. Their sizes are only knowable now, so this is where the rest of the bar
+        # gets costed.
+        resolving = len(found) * RESOLVE_COST_PER_CANDIDATE
+        work.add(resolving - reserved_resolve)
+        yield work.step(ENRICH_STAGE, f"checking {len(found)} places are real", advance=0.0)
         resolved = await self._resolve(found, leg, counts, concurrency)
 
-        yield work.step(ENRICH_STAGE, f"{len(resolved)} are real and on the route")
+        # Scoring is the slowest thing here by a wide margin — fifteen seconds against under
+        # three for resolving four times as many — so it is named before it starts rather
+        # than after it finishes. A bar that stops should say what it is waiting for.
+        judging = JUDGE_BASE_COST + len(resolved) * JUDGE_COST_PER_CANDIDATE
+        work.add(judging - reserved_judge)
+        yield work.step(ENRICH_STAGE, f"scoring {len(resolved)} places", advance=resolving)
         scored = await self._score(resolved, leg, counts)
 
         pois = tuple(_to_poi(item) for item in scored)
-        yield work.step(ENRICH_STAGE, f"scored {len(scored)}")
+        yield work.step(ENRICH_STAGE, f"scored {len(scored)}", advance=judging)
 
         yield DiscoveryProgress(
             stage=DONE_STAGE,

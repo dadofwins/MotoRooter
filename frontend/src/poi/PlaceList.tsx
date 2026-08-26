@@ -23,15 +23,41 @@ export interface PlaceListProps {
   readonly onOpen: (poi: Poi) => void
   /** Take it off the trip. Durable, because discovered places are saved into the document. */
   readonly onIgnore: (poi: Poi) => void
+  /**
+   * Route through a whole group at once.
+   *
+   * Per group rather than one button for everything found. Tim asked for "a button to route
+   * through found POIs", and twenty-nine places is not an itinerary — it is a search result, and
+   * a control nobody presses is the demo-shaped version of this feature. A group is how a rider
+   * thinks about it: these are where I sleep, those are what I want to see, and I do not want a
+   * fuel station as a waypoint. Omit the prop and no bulk action is offered.
+   */
+  readonly onRouteThrough?: (pois: readonly Poi[]) => void
 }
 
-const GROUP_ORDER: readonly { group: PoiGroup; title: string }[] = [
-  { group: 'stay', title: 'Stays' },
-  { group: 'supply', title: 'Supplies' },
-  { group: 'sight', title: 'Sights' },
+const GROUP_ORDER: readonly { group: PoiGroup; title: string; one: string; many: string }[] = [
+  { group: 'stay', title: 'Stays', one: 'stay', many: 'stays' },
+  { group: 'supply', title: 'Supplies', one: 'supply', many: 'supplies' },
+  { group: 'sight', title: 'Sights', one: 'sight', many: 'sights' },
 ]
 
-export function PlaceList({ pois, onOpen, onIgnore }: PlaceListProps): React.JSX.Element | null {
+/**
+ * Places a bulk route-through would actually add.
+ *
+ * Anything already on the route is done, and an unconfirmed suggestion cannot be pinned at all —
+ * the backend refuses it. Counting either would put a number in the button that the action would
+ * not deliver, and the count is the whole point of the label.
+ */
+function routable(pois: readonly Poi[]): readonly Poi[] {
+  return pois.filter((poi) => poi.on_route !== true && isVerified(poi))
+}
+
+export function PlaceList({
+  pois,
+  onOpen,
+  onIgnore,
+  onRouteThrough,
+}: PlaceListProps): React.JSX.Element | null {
   // Nothing rather than an empty panel: a heading over no rows reads as broken rather than as a
   // discovery run nobody has made yet.
   if (pois.length === 0) return null
@@ -42,15 +68,31 @@ export function PlaceList({ pois, onOpen, onIgnore }: PlaceListProps): React.JSX
         Places · <span className="places__count">{pois.length} places</span>
       </h2>
 
-      {GROUP_ORDER.map(({ group, title }) => {
+      {GROUP_ORDER.map(({ group, title, one, many }) => {
         const inGroup = pois.filter((poi) => poiGroup(poi.category) === group)
         // A heading over nothing is worse than a missing heading: it reads as a failed search
         // for that kind of place rather than as one that was never made.
         if (inGroup.length === 0) return null
 
+        const addable = routable(inGroup)
+
         return (
           <div key={group} className="places__group">
-            <h3 className="places__group-title">{title}</h3>
+            <div className="places__group-head">
+              <h3 className="places__group-title">{title}</h3>
+              {onRouteThrough !== undefined && addable.length > 0 && (
+                // The count is in the label so the commitment is visible before the click, and
+                // the button is absent rather than disabled when it would add nothing — a
+                // control that does nothing reads as an action that failed.
+                <button
+                  type="button"
+                  className="places__route-through"
+                  onClick={() => onRouteThrough(addable)}
+                >
+                  {`Route through ${String(addable.length)} ${addable.length === 1 ? one : many}`}
+                </button>
+              )}
+            </div>
             <ul className="places__list">
               {inGroup.map((poi) => (
                 <li key={poi.id} className="places__row">

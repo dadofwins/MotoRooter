@@ -31,7 +31,7 @@ import { isVerified } from './map/poiPin'
 import { PlaceList } from './poi/PlaceList'
 import { PoiDetailDialog } from './poi/PoiDetailDialog'
 import { DragSession } from './routing/dragSession'
-import { addPoiToRoute, isLegStale, type RouteEdit } from './routing/tripEdits'
+import { addPoiToRoute, addPoisToRoute, isLegStale, type RouteEdit } from './routing/tripEdits'
 import { replanErrorMessage, routeErrorMessage } from './trip/routeErrorMessage'
 import { SurfaceSummary } from './trip/SurfaceSummary'
 import { ChatRail } from './chat/ChatRail'
@@ -413,6 +413,29 @@ function TripSession({
     setOpenPoi((open) => (open?.id === poi.id ? null : open))
   }, [])
 
+  /**
+   * Route through a whole group of discovered places.
+   *
+   * One edit, so one pass of re-routing — `addPoisToRoute` folds the same function the selective
+   * path and the assistant's tool use, rather than being a second insertion algorithm that would
+   * drift from them.
+   */
+  const onRouteThrough = useCallback(
+    (chosen: readonly Poi[]) => {
+      change((from) => {
+        const added = addPoisToRoute(
+          {
+            waypoints: from.waypoints,
+            legs: from.legs ?? legsSpanning(from.waypoints.length, DEFAULT_INTENT),
+          },
+          chosen,
+        )
+        return added === null ? {} : added
+      })
+    },
+    [change],
+  )
+
   const undoIgnore = useCallback(() => {
     setIgnored((previous) => previous.slice(0, -1))
   }, [])
@@ -586,7 +609,12 @@ function TripSession({
 
         {/* Where a rider decides. Twenty-nine pins on a map is a haystack, and this is the
             second entry point into the same dialog the pins open. */}
-        <PlaceList pois={placed} onOpen={onPoiOpen} onIgnore={onPoiIgnore} />
+        <PlaceList
+          pois={placed}
+          onOpen={onPoiOpen}
+          onIgnore={onPoiIgnore}
+          onRouteThrough={onRouteThrough}
+        />
 
         {ignored.length > 0 && (
           <p className="places__undo" role="status">

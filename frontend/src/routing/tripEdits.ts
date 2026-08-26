@@ -197,6 +197,42 @@ export function addPoiToRoute(edit: RouteEdit, poi: Poi): RouteEdit | null {
 }
 
 /**
+ * Puts several discovered places on the route in one edit.
+ *
+ * The bulk half of "route through the found POIs", where `addPoiToRoute` is the selective half.
+ * It is deliberately a fold over that same function rather than a second insertion algorithm:
+ * the mouse path, the bulk path and the assistant's tool must not be three implementations that
+ * drift, and the ordering rules are subtle enough that a second copy would drift silently.
+ *
+ * **One edit, not one per place.** A caller applying `addPoiToRoute` in a loop would put a
+ * routing request in flight for every place. Folding here means one state change, and the
+ * routing layer then asks about exactly the legs that actually changed.
+ *
+ * Order comes out right for free. Each insertion is placed by position *along the route* rather
+ * than by proximity, so the result is the same whatever order the places arrive in — which
+ * matters because discovery order is search order, and inserting in it would zigzag a rider up
+ * and down the corridor.
+ *
+ * `null` when nothing could be added — no routed leg to insert into, or every candidate
+ * unverified — so a caller can say why rather than appear to do nothing.
+ */
+export function addPoisToRoute(edit: RouteEdit, pois: readonly Poi[]): RouteEdit | null {
+  let result = edit
+  let added = 0
+
+  for (const poi of pois) {
+    const next = addPoiToRoute(result, poi)
+    // A candidate the backend would refuse, or a leg with no geometry to measure along. Skipped
+    // rather than fatal: one bad place must not cost the rider the whole action.
+    if (next === null) continue
+    result = next
+    added += 1
+  }
+
+  return added === 0 ? null : result
+}
+
+/**
  * Half of the backend's rounding step, which is the largest a rounded value can differ from
  * the original.
  *

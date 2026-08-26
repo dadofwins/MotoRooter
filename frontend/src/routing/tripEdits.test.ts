@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   addPoiToRoute,
+  addPoisToRoute,
   insertVia,
   isLegStale,
   legWaypoints,
@@ -9,7 +10,7 @@ import {
 } from './tripEdits'
 import type { RouteEdit } from './tripEdits'
 import type { Coordinate, Poi, RouteLeg, TripLeg, Waypoint } from '../api/types'
-import { routeLeg } from '../api/fixtures'
+import { routeLeg, tripLeg } from '../api/fixtures'
 
 /**
  * The trip edits a drag performs.
@@ -462,5 +463,121 @@ describe('addPoiToRoute', () => {
     const result = addPoiToRoute(trip, poi())
 
     assertContiguous(result?.legs ?? [], result?.waypoints.length ?? 0)
+  })
+})
+
+/**
+ * Routing through several places at once.
+ *
+ * The bulk half of Tim's item 5 — "button to route through found POIs" — where the selective
+ * half has existed since the POI branch. The properties that make it useful rather than
+ * demo-shaped are all about *order* and *cost*: places must go in where they belong along the
+ * route rather than in the order discovery happened to find them, and one press must be one
+ * edit rather than one edit per place.
+ */
+describe('addPoisToRoute', () => {
+  /** A trip whose single leg runs south along one line, so "along the route" is unambiguous. */
+  function southbound(): RouteEdit {
+    return {
+      waypoints: [waypoint(48.0), waypoint(47.0)],
+      legs: [
+        tripLeg({
+          start_waypoint_index: 0,
+          end_waypoint_index: 1,
+          routed: routeLeg({
+            geometry: [
+              { lat: 48.0, lon: -120 },
+              { lat: 47.75, lon: -120 },
+              { lat: 47.5, lon: -120 },
+              { lat: 47.25, lon: -120 },
+              { lat: 47.0, lon: -120 },
+            ],
+          }),
+        }),
+      ],
+    }
+  }
+
+  function place(id: string, lat: number, overrides: Partial<Poi> = {}): Poi {
+    return {
+      id,
+      name: `Place ${id}`,
+      category: 'campground',
+      coordinate: { lat, lon: -120 },
+      source: 'places',
+      place_id: `p-${id}`,
+      note: null,
+      on_route: false,
+      ...overrides,
+    }
+  }
+
+  it('puts them in along the route, not in the order they were found', () => {
+    // Discovery order is search order. Inserting in it would zigzag a rider up and down the
+    // corridor, which is the thing that makes a bulk button worse than doing it by hand.
+    const added = addPoisToRoute(southbound(), [
+      place('south', 47.2),
+      place('north', 47.8),
+      place('middle', 47.5),
+    ])
+
+    expect(added).not.toBeNull()
+    expect(added?.waypoints.map((waypoint) => waypoint.name)).toEqual([
+      null,
+      'Place north',
+      'Place middle',
+      'Place south',
+      null,
+    ])
+  })
+
+  it('is one edit, however many places go in', () => {
+    // One press, one re-route. Applying `addPoiToRoute` from the outside per place would put a
+    // request in flight for each of them.
+    const before = southbound()
+    const added = addPoisToRoute(before, [place('a', 47.8), place('b', 47.2)])
+
+    expect(added?.waypoints).toHaveLength(4)
+    // Still one leg: both places are interior to it, so it is extended rather than split.
+    expect(added?.legs).toHaveLength(1)
+    expect(added?.legs[0]?.end_waypoint_index).toBe(3)
+  })
+
+  it('skips a place that was never confirmed, and keeps the rest', () => {
+    // The backend refuses to pin an unresolved suggestion, so offering to would be a lie. One
+    // bad candidate must not cost the rider the whole action.
+    const added = addPoisToRoute(southbound(), [
+      place('good', 47.8),
+      place('bad', 47.5, { source: 'llm_suggested', place_id: null }),
+    ])
+
+    expect(added?.waypoints.map((waypoint) => waypoint.name)).toEqual([null, 'Place good', null])
+  })
+
+  it('answers null when there is nothing it could add', () => {
+    // Distinguishable from "added nothing but succeeded", so a caller can say why instead of
+    // appearing to do nothing.
+    expect(addPoisToRoute(southbound(), [])).toBeNull()
+    expect(
+      addPoisToRoute(southbound(), [place('bad', 47.5, { source: 'llm_suggested', place_id: null })]),
+    ).toBeNull()
+  })
+
+  it('answers null when there is no routed leg to insert into', () => {
+    const unrouted: RouteEdit = {
+      waypoints: [waypoint(48.0), waypoint(47.0)],
+      legs: [tripLeg({ start_waypoint_index: 0, end_waypoint_index: 1, routed: null })],
+    }
+
+    expect(addPoisToRoute(unrouted, [place('a', 47.5)])).toBeNull()
+  })
+
+  it('leaves the trip it was given untouched', () => {
+    // Pure, because the caller compares the result against what it had to decide whether
+    // anything changed.
+    const before = southbound()
+    addPoisToRoute(before, [place('a', 47.5)])
+
+    expect(before.waypoints).toHaveLength(2)
   })
 })

@@ -20,6 +20,13 @@ import type { Poi, ReplanEvent, Trip, TripLeg } from '../api/types'
 
 export type Replanner = Pick<ApiClient, 'replan'>
 
+/** One thing the run has done, newest first in the log. */
+export interface ReplanStep {
+  readonly id: number
+  readonly message: string
+  readonly stage: string
+}
+
 export interface ReplanState {
   readonly isRunning: boolean
   /** Which stage the run is in: route_search, discovery, enrichment, done. */
@@ -30,6 +37,16 @@ export interface ReplanState {
   readonly pois: readonly Poi[]
   /** Legs any stage re-routed. Empty until one does. */
   readonly legs: readonly TripLeg[]
+  /**
+   * What the run has done, newest first.
+   *
+   * A rider watching a multi-minute operation needs to see it accumulate — "I have no idea
+   * what it's doing" was the complaint. Bounded, because parallel discovery will emit far more
+   * events than a rail can hold, and consecutive duplicates are collapsed for the same reason.
+   */
+  readonly log: readonly ReplanStep[]
+  /** Whole seconds since the run began, and frozen once it ends. */
+  readonly elapsedS: number
   /** A finished run that turned up nothing, which is a real outcome and often today's. */
   readonly foundNothing: boolean
   readonly error: Error | null
@@ -54,6 +71,9 @@ export function needsReplan(trip: Trip | null): boolean {
   return Date.parse(trip.edited_at) > Date.parse(trip.planned_at)
 }
 
+/** Enough to show the shape of what happened without becoming a feed that scrolls away. */
+const MAX_LOG_STEPS = 12
+
 export function useReplan(client: Replanner): ReplanState {
   const [isRunning, setRunning] = useState(false)
   const [stage, setStage] = useState<string | null>(null)
@@ -63,6 +83,9 @@ export function useReplan(client: Replanner): ReplanState {
   const [legs, setLegs] = useState<readonly TripLeg[]>([])
   const [finished, setFinished] = useState(false)
   const [error, setError] = useState<Error | null>(null)
+  const [log, setLog] = useState<readonly ReplanStep[]>([])
+  const [elapsedS, setElapsed] = useState(0)
+  const nextId = useRef(0)
 
   const running = useRef<AbortController | null>(null)
 
@@ -73,6 +96,18 @@ export function useReplan(client: Replanner): ReplanState {
 
   // A run outliving its component would deliver events into a dead tree.
   useEffect(() => stop, [stop])
+
+  // Counted rather than measured from a clock: a tick is what the display needs, and an
+  // interval is what a test can drive deterministically.
+  useEffect(() => {
+    if (!isRunning) return undefined
+    const timer = setInterval(() => {
+      setElapsed((previous) => previous + 1)
+    }, 1000)
+    return () => {
+      clearInterval(timer)
+    }
+  }, [isRunning])
 
   const start = useCallback(
     (slug: string) => {
@@ -87,6 +122,8 @@ export function useReplan(client: Replanner): ReplanState {
       setByStage(new Map())
       setLegs([])
       setProgress(null)
+      setLog([])
+      setElapsed(0)
 
       const consume = async (): Promise<void> => {
         const stream = client.replan(
@@ -105,7 +142,21 @@ export function useReplan(client: Replanner): ReplanState {
       const apply = (item: ReplanEvent): void => {
         setStage(item.stage)
         if (item.message !== '') setMessage(item.message)
-        setProgress(item.progress ?? null)
+        // The highest seen, not the latest. Parallel emission means a 40% event can land after
+        // a 60% one, and a meter that retreats reads as broken — "at least this far" is both
+        // stable and true.
+        if (item.progress !== null && item.progress !== undefined) {
+          const arrived = item.progress
+          setProgress((previous) => (previous === null ? arrived : Math.max(previous, arrived)))
+        }
+        if (item.message !== '') {
+          setLog((previous) => {
+            // Consecutive duplicates collapse: parallel steps repeat their wording.
+            if (previous[0]?.message === item.message) return previous
+            const step: ReplanStep = { id: nextId.current++, message: item.message, stage: item.stage }
+            return [step, ...previous].slice(0, MAX_LOG_STEPS)
+          })
+        }
         if (item.pois !== undefined && item.pois.length > 0) {
           // Replace this stage's contribution, keep every other stage's.
           setByStage((previous) => new Map(previous).set(item.stage, item.pois ?? []))
@@ -153,6 +204,8 @@ export function useReplan(client: Replanner): ReplanState {
     progress,
     pois,
     legs,
+    log,
+    elapsedS,
     // Only after a run has actually finished: before that, empty means "not yet".
     foundNothing: finished && pois.length === 0,
     error,

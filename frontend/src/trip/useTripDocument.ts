@@ -57,6 +57,18 @@ export function hasTripInUrl(): boolean {
   return readSlugFromUrl() !== null
 }
 
+/**
+ * Forgets which trip is current, so the next one created is not written over it.
+ *
+ * replaceState again: leaving a trip is not a navigation either, and the rider should still be
+ * able to go back to wherever they came from before the app.
+ */
+export function clearTripFromUrl(): void {
+  const url = new URL(window.location.href)
+  url.searchParams.delete(URL_PARAM)
+  window.history.replaceState(null, '', url)
+}
+
 function readSlugFromUrl(): string | null {
   return new URL(window.location.href).searchParams.get(URL_PARAM)
 }

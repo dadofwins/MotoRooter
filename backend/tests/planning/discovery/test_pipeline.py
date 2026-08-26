@@ -745,3 +745,74 @@ class TestFollowingRoads:
         [event async for event in runner.run(LEG, CATEGORIES, max_anchors=2)]
         # Two anchor queries, plus the expansion queries for the single road they found.
         assert len(source.queries) <= 2 + 3
+
+
+class TestScoringCountsUp:
+    """Tim: "'Scoring 41 places' — this should be incremental 'scoring 1/41'".
+
+    It was one event and a flat stretch, because the call is atomic by design: the judge
+    ranks candidates against each other, so splitting the batch is what would cost the
+    ranking. Streaming the reply gives real increments without splitting anything.
+    """
+
+    @staticmethod
+    def _resolved(index: int):
+        return ResolvedCandidate(
+            candidate=Candidate(
+                name=f"Place {index}",
+                category=PoiCategory.WILD_CAMP,
+                found_near=Coordinate(lat=0.01, lon=-121.0),
+                source="brave",
+            ),
+            place_id=f"ChIJ_{index}",
+            coordinate=Coordinate(lat=0.01, lon=-121.0),
+            category=PoiCategory.WILD_CAMP,
+        )
+
+    class StreamingJudgeClient(FakeLlmClient):
+        def __init__(self, count: int):
+            text = json.dumps(
+                {"scores": [{"index": i, "score": 0.8, "reason": "ok"} for i in range(count)]}
+            )
+            super().__init__(replies=(AssistantMessage(content=text),), repeat_last=True)
+            self.fragments = [text[i : i + 20] for i in range(0, len(text), 20)]
+
+        async def stream(self, messages):
+            for fragment in self.fragments:
+                yield fragment
+
+    async def _events(self, count: int = 5):
+        resolved = tuple(self._resolved(i) for i in range(count))
+        runner = DiscoveryPipeline(
+            namer=StubNamer(),
+            source=FakeSearchSource(),
+            extractor=PlaceExtractor(
+                llm('{"places": [{"result_index": 0, "place_name": "First"}]}')
+            ),
+            resolver=StubResolver(resolved=resolved),
+            classifier=CategoryClassifier(llm('{"categories": []}')),
+            judge=CandidateJudge(self.StreamingJudgeClient(count)),
+        )
+        return [e async for e in runner.run(LEG, CATEGORIES, max_anchors=2, spacing_m=1000)]
+
+    async def test_it_reports_each_place_as_it_is_scored(self):
+        events = await self._events(5)
+        scoring = [e for e in events if "scoring" in e.message.lower()]
+        assert len(scoring) > 1, "one event is the flat stretch Tim reported"
+
+    async def test_the_message_says_how_far_through(self):
+        events = await self._events(5)
+        said = " ".join(e.message for e in events)
+        assert "3/5" in said or "3 of 5" in said
+
+    async def test_the_bar_moves_while_scoring(self):
+        events = await self._events(5)
+        during = [e.progress for e in events if "scoring" in e.message.lower() and e.progress]
+        assert len(set(during)) > 1, "the slowest stage should not be one position"
+
+    async def test_progress_still_only_moves_forwards(self):
+        values = [e.progress for e in await self._events(5) if e.progress is not None]
+        assert values == sorted(values)
+
+    async def test_it_still_ends_at_one(self):
+        assert (await self._events(5))[-1].progress == 1.0

@@ -11,7 +11,8 @@ decision, and a default here would be one silently inherited by anything that fo
 choose.
 """
 
-from collections.abc import Sequence
+import json
+from collections.abc import AsyncIterator, Sequence
 from typing import Any
 
 import httpx
@@ -87,6 +88,65 @@ class OpenAiClient:
         response = await self._post(payload)
         self._raise_for_status(response)
         return self._decode(response)
+
+    async def stream(self, messages: Sequence[Message]) -> AsyncIterator[str]:
+        """Content as it arrives, piece by piece.
+
+        Content only, deliberately. Tool calls arrive split across chunks with their
+        arguments in fragments, and reassembling them is a second problem with its own
+        failure modes; the caller that needs this is the judge, whose reply is JSON and
+        whose turn has no tools. `complete` remains the way to run a tool-calling turn.
+
+        The point is progress. Scoring forty places is one call that takes half a minute, and
+        without this there is nothing to report from — "scoring 41 places" sits still because
+        the request is atomic, not because the work is.
+
+        Raises: the same `LlmError` subclasses as `complete`, so a caller handles one
+        hierarchy whichever it used.
+        """
+        payload: dict[str, Any] = {
+            "model": self._model,
+            "messages": [self._encode(message) for message in messages],
+            "stream": True,
+        }
+        if self._reasoning_effort is not None:
+            payload["reasoning_effort"] = self._reasoning_effort
+
+        async for line in self._stream_lines(payload):
+            if not line.startswith("data:"):
+                continue
+            data = line[len("data:") :].strip()
+            if not data or data == "[DONE]":
+                continue
+            piece = _content_of(data)
+            if piece:
+                yield piece
+
+    async def _stream_lines(self, payload: dict[str, Any]) -> AsyncIterator[str]:
+        """Server-sent event lines, with failures translated before the first yield."""
+        url = f"{self._base_url}/chat/completions"
+        headers = {
+            "Authorization": f"Bearer {self._api_key}",
+            "Content-Type": "application/json",
+        }
+        client = self._client or httpx.AsyncClient(timeout=self._timeout_s)
+        try:
+            async with client.stream(
+                "POST", url, json=payload, headers=headers, timeout=self._timeout_s
+            ) as response:
+                if not response.is_success:
+                    # The body has to be read before it can be inspected, and a streaming
+                    # response has not been.
+                    await response.aread()
+                    self._raise_for_status(response)
+                async for line in response.aiter_lines():
+                    yield line
+        except httpx.HTTPError as exc:
+            msg = f"request to OpenAI failed: {exc}"
+            raise LlmUnavailable(msg) from exc
+        finally:
+            if self._client is None:
+                await client.aclose()
 
     # -- request ------------------------------------------------------------------------
 
@@ -194,3 +254,22 @@ class OpenAiClient:
         if isinstance(error, dict):
             return str(error.get("message", error))
         return str(error or "")[:200]
+
+
+def _content_of(data: str) -> str | None:
+    """The content delta in one frame, or `None` if there is not one.
+
+    A malformed frame costs that frame. Losing a whole scoring run to one truncated line
+    would be the expensive reading of a cheap problem, and the caller is reassembling text
+    where a gap is visible rather than silent.
+    """
+    try:
+        body = json.loads(data)
+    except ValueError:
+        return None
+    try:
+        delta = body["choices"][0]["delta"]
+    except (TypeError, KeyError, IndexError):
+        return None
+    content = delta.get("content") if isinstance(delta, dict) else None
+    return content if isinstance(content, str) and content else None

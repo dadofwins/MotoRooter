@@ -298,3 +298,73 @@ class TestReasoningEffort:
         )
         await build_client(reasoning_effort="minimal").complete([UserMessage(content="hi")], [])
         assert json.loads(route.calls.last.request.read())["reasoning_effort"] == "minimal"
+
+
+class TestStreamingContent:
+    """Token-level streaming, which the adapter did not have.
+
+    The chat endpoint streams `ChatEvent`s — one per tool call — so the transport looked like
+    it streamed. The model call underneath was a single request, which is why "scoring 41
+    places" is one silent block: there was nothing to report progress *from*.
+
+    Only content, deliberately. Tool calls arrive split across chunks with their arguments in
+    fragments, and reassembling them is a second problem with its own failure modes. The
+    caller that needs this is the judge, whose reply is prose-shaped JSON and no tool calls.
+    """
+
+    @staticmethod
+    def _sse(*chunks: str) -> bytes:
+        lines = []
+        for chunk in chunks:
+            payload = json.dumps({"choices": [{"delta": {"content": chunk}}]})
+            lines.append(f"data: {payload}\n\n")
+        lines.append("data: [DONE]\n\n")
+        return "".join(lines).encode()
+
+    async def _collect(self, body: bytes, mock_openai) -> list[str]:
+        mock_openai.post(COMPLETIONS_URL).mock(return_value=httpx.Response(200, content=body))
+        return [piece async for piece in build_client().stream([UserMessage(content="hi")])]
+
+    async def test_it_yields_each_piece(self, mock_openai):
+        assert await self._collect(self._sse("Hel", "lo"), mock_openai) == ["Hel", "lo"]
+
+    async def test_the_pieces_reassemble(self, mock_openai):
+        pieces = await self._collect(self._sse('{"sco', 'res": ', "[]}"), mock_openai)
+        assert "".join(pieces) == '{"scores": []}'
+
+    async def test_it_asks_for_a_stream(self, mock_openai):
+        route = mock_openai.post(COMPLETIONS_URL).mock(
+            return_value=httpx.Response(200, content=self._sse("x"))
+        )
+        [piece async for piece in build_client().stream([UserMessage(content="hi")])]
+        assert json.loads(route.calls.last.request.read())["stream"] is True
+
+    async def test_the_done_sentinel_is_not_content(self, mock_openai):
+        assert "[DONE]" not in "".join(await self._collect(self._sse("x"), mock_openai))
+
+    async def test_empty_deltas_are_skipped(self, mock_openai):
+        """A stream opens with a role-only delta carrying no content."""
+        body = (
+            b'data: {"choices":[{"delta":{"role":"assistant"}}]}\n\n'
+            b'data: {"choices":[{"delta":{"content":"x"}}]}\n\n'
+            b"data: [DONE]\n\n"
+        )
+        assert await self._collect(body, mock_openai) == ["x"]
+
+    async def test_a_malformed_chunk_is_skipped_not_fatal(self, mock_openai):
+        """One bad frame should cost that frame. The alternative is losing a whole scoring
+        run to a truncated line."""
+        body = (
+            b'data: {not json}\n\ndata: {"choices":[{"delta":{"content":"x"}}]}\n\ndata: [DONE]\n\n'
+        )
+        assert await self._collect(body, mock_openai) == ["x"]
+
+    async def test_a_transport_failure_is_translated(self, mock_openai):
+        mock_openai.post(COMPLETIONS_URL).mock(side_effect=httpx.ConnectError("no route"))
+        with pytest.raises(LlmUnavailable):
+            [piece async for piece in build_client().stream([UserMessage(content="hi")])]
+
+    async def test_an_error_status_is_translated(self, mock_openai):
+        mock_openai.post(COMPLETIONS_URL).mock(return_value=httpx.Response(429, json={}))
+        with pytest.raises(LlmQuotaExceeded):
+            [piece async for piece in build_client().stream([UserMessage(content="hi")])]

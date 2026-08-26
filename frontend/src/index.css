@@ -533,6 +533,16 @@ body {
   font-variant-numeric: tabular-nums;
 }
 
+/* What the assistant is doing, with a meter that moves and a clock that counts.
+   Tim: "the 'Working' text should make better use of the progress meter, it doesn't tell me
+   what's going on." There is no figure to report inside a chat turn, so the meter is
+   indeterminate and the honest additions are the tool's own note and the elapsed wait. */
+.chat__activity {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
 /* The steps behind the current one, folded away by default.
    Tim used the log on a real trip and said the current line and the meter are enough — which is a
    statement that the accumulation is noise, not that he wants less information. So the count is on

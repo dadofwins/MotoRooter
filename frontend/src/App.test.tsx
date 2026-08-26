@@ -1246,6 +1246,76 @@ describe('App arriving', () => {
   })
 })
 
+describe('where the place details go', () => {
+  /**
+   * Tim, after planning a real trip: *"I don't love that the details go in the bottom of the right
+   * hand pane... I'd like that view to be separate."*
+   *
+   * "Separate" is the request, and the thing to assert is containment rather than appearance —
+   * being at the bottom of the rail is precisely what he objected to, and it is exactly what a
+   * test can see.
+   */
+  async function opened() {
+    window.history.replaceState(null, '', '/?trip=wabdr-north')
+    const fake = createFakeMaps()
+    const router = fakeRouter()
+    router.getTrip.mockResolvedValue(
+      tripFixture({
+        slug: 'wabdr-north',
+        name: 'WABDR North',
+        waypoints: [waypointFixture(47, -120), waypointFixture(48, -120)],
+        pois: [poiFixture({ id: 'a', name: 'Lone Fir', source: 'places', place_id: 'p1' })],
+      }),
+    )
+    render(<App mapLoader={fake.loader} mapId="motorooter-test-vector" client={router} />)
+    await mapReady(fake)
+    fireEvent.click(await screen.findByRole('button', { name: /^Lone Fir/ }))
+    return { fake, router, pane: await screen.findByRole('complementary', { name: 'Lone Fir' }) }
+  }
+
+  it('puts the details outside the rail, not at the bottom of it', async () => {
+    const { pane } = await opened()
+
+    const rail = screen.getByRole('complementary', { name: 'Trip assistant' })
+    expect(rail.contains(pane)).toBe(false)
+  })
+
+  it('leaves the map and the rail usable while it is open', async () => {
+    // The reason it stopped being a modal. A rider looking at a place should be able to click the
+    // map and scroll the rail at the same time — that is what "separate" buys over a dialog.
+    const { pane } = await opened()
+
+    expect(pane).not.toHaveAttribute('aria-modal')
+    expect(screen.getByRole('main', { name: 'Route map' })).not.toHaveAttribute('inert')
+    expect(screen.getByRole('button', { name: /find places/i })).toBeEnabled()
+  })
+
+  it('dismisses on the X and gives the space back', async () => {
+    await opened()
+
+    fireEvent.click(screen.getByRole('button', { name: /close place details/i }))
+
+    await waitFor(() => {
+      expect(screen.queryByRole('complementary', { name: 'Lone Fir' })).not.toBeInTheDocument()
+    })
+  })
+
+  it('opens the same pane from a map pin as from the list', async () => {
+    // Both entry points, still one view.
+    const { fake } = await opened()
+    fireEvent.click(screen.getByRole('button', { name: /close place details/i }))
+    await waitFor(() => {
+      expect(screen.queryByRole('complementary', { name: 'Lone Fir' })).not.toBeInTheDocument()
+    })
+
+    act(() => {
+      fake.poiMarkers()[0]?.click()
+    })
+
+    expect(await screen.findByRole('complementary', { name: 'Lone Fir' })).toBeInTheDocument()
+  })
+})
+
 describe('how much the trip climbs', () => {
   /**
    * Suppressed for months on a real discrepancy, now explained: ORS returned an exact 0 where its
@@ -1675,13 +1745,13 @@ describe('deciding about the places discovery found', () => {
     expect(screen.getByRole('button', { name: /^Chevron/ })).toBeInTheDocument()
   })
 
-  it('opens the same dialog from a list row as from a pin', async () => {
+  it('opens the same pane from a list row as from a pin', async () => {
     const { fake } = withPlaces()
     await mapReady(fake)
 
     fireEvent.click(await screen.findByRole('button', { name: /^Lone Fir/ }))
 
-    expect(await screen.findByRole('dialog', { name: 'Lone Fir' })).toBeInTheDocument()
+    expect(await screen.findByRole('complementary', { name: 'Lone Fir' })).toBeInTheDocument()
   })
 
   it('takes an ignored place off the trip, not just off the screen', async () => {

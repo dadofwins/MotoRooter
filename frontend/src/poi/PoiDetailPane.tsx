@@ -24,7 +24,7 @@ import { placeErrorMessage } from '../trip/routeErrorMessage'
 
 export type PlaceReader = Pick<ApiClient, 'placeDetail'>
 
-export interface PoiDetailDialogProps {
+export interface PoiDetailPaneProps {
   readonly poi: Poi
   readonly client: PlaceReader
   readonly onClose: () => void
@@ -61,20 +61,20 @@ function formatCoordinate({ lat, lon }: Poi['coordinate']): string {
 
 type Status = 'loading' | 'ready' | 'unavailable' | 'failed' | 'nothing-to-ask'
 
-export function PoiDetailDialog({
+export function PoiDetailPane({
   poi,
   client,
   onClose,
   onAddToRoute,
   onIgnore,
-}: PoiDetailDialogProps): React.JSX.Element {
+}: PoiDetailPaneProps): React.JSX.Element {
   const verified = isVerified(poi)
   const placeId = poi.place_id ?? null
 
   const [detail, setDetail] = useState<PoiDetail | null>(null)
   const [status, setStatus] = useState<Status>(placeId === null ? 'nothing-to-ask' : 'loading')
   const [error, setError] = useState<Error | null>(null)
-  const dialogRef = useRef<HTMLDivElement>(null)
+  const paneRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     // A POI with no place_id has no listing to look up. Asking anyway would be a request
@@ -107,7 +107,7 @@ export function PoiDetailDialog({
 
   // Focus moves in, so a keyboard user is where the new content is and Escape reaches it.
   useEffect(() => {
-    dialogRef.current?.focus()
+    paneRef.current?.focus()
   }, [])
 
   // Which photo is large. Reset by remount: the dialog is created per place, so there is no
@@ -126,46 +126,60 @@ export function PoiDetailDialog({
     (detail?.website ?? null) !== null
 
   return (
-    <div
-      className="poi-dialog"
-      role="dialog"
-      aria-modal="true"
+    <aside
+      className="poi-pane"
+      // A pane, not a dialog. Tim asked for the detail to be "separate" — a modal is a thing you
+      // must deal with before continuing, and a pane is a thing you read while doing something
+      // else. `aria-modal` would tell a screen reader the map and the rail are inert; they are
+      // not, and the whole point of putting this beside the map is that a rider can use both.
       aria-label={poi.name}
+      // Focus still moves in, so a keyboard user lands on the new content and Escape reaches it.
+      // Moving focus is helpful; trapping it is what a modal does and what this must not.
       tabIndex={-1}
-      ref={dialogRef}
+      ref={paneRef}
       onKeyDown={(event) => {
         if (event.key === 'Escape') onClose()
       }}
     >
-      <header className="poi-dialog__head">
+      <header className="poi-pane__head">
+        <button
+          type="button"
+          className="poi-pane__close"
+          // Named for what it closes: "Close" alone is ambiguous once the rail has its own
+          // dismissible things, and a bare glyph is unusable with a screen reader.
+          aria-label="Close place details"
+          onClick={onClose}
+        >
+          ×
+        </button>
         {/* Known without asking anyone: showing it immediately makes the click feel answered. */}
-        <h2 className="poi-dialog__name">{poi.name}</h2>
-        <p className="poi-dialog__kind">{poiLabel(poi.category)}</p>
+        <h2 className="poi-pane__name">{poi.name}</h2>
+        <p className="poi-pane__kind">{poiLabel(poi.category)}</p>
       </header>
 
-      {poi.note !== null && poi.note !== undefined && <p className="poi-dialog__note">{poi.note}</p>}
+      {poi.note !== null && poi.note !== undefined && <p className="poi-pane__note">{poi.note}</p>}
 
       {!verified && (
         // Stated as a fact about the suggestion, not as an error, and stated rather than
         // left as a control that quietly does nothing.
-        <p className="poi-dialog__warning">
+        <p className="poi-pane__warning">
           This place has not been confirmed against a real listing, so it cannot be added to
           the route yet.
         </p>
       )}
 
       {status === 'loading' && (
-        <p role="status" className="poi-dialog__pending">
+        <p role="status" className="poi-pane__pending">
           Loading details&hellip;
         </p>
       )}
 
       {status === 'unavailable' && (
-        <p className="poi-dialog__pending">Listing details are not available yet.</p>
+        <p className="poi-pane__pending">Listing details are not available yet.</p>
       )}
 
       {status === 'failed' && error !== null && (
-        <p role="alert" className="poi-dialog__warning">
+        <p role="alert" className="poi-pane__warning">
           {placeErrorMessage(error)}
         </p>
       )}
@@ -173,9 +187,9 @@ export function PoiDetailDialog({
       {status === 'ready' && detail !== null && (
         <>
           {photos.length > 0 && (
-            <div className="poi-dialog__gallery">
+            <div className="poi-pane__gallery">
               <img
-                className="poi-dialog__photo"
+                className="poi-pane__photo"
                 src={photos[shownPhoto] ?? photos[0]}
                 // Numbered, so a screen-reader user knows there are others and which one this
                 // is. Places photos come with no description to use instead.
@@ -185,12 +199,12 @@ export function PoiDetailDialog({
               {photos.length > 1 && (
                 // Buttons rather than clickable images: this is a control, and it has to be
                 // reachable by keyboard.
-                <div className="poi-dialog__thumbs">
+                <div className="poi-pane__thumbs">
                   {photos.map((url, index) => (
                     <button
                       key={url}
                       type="button"
-                      className="poi-dialog__thumb"
+                      className="poi-pane__thumb"
                       aria-label={`Show photo ${String(index + 1)} of ${String(photos.length)}`}
                       aria-current={index === shownPhoto}
                       onClick={() => setShownPhoto(index)}
@@ -204,11 +218,11 @@ export function PoiDetailDialog({
           )}
 
           {rating !== null && (
-            <p className="poi-dialog__rating">
-              <span className="poi-dialog__stars" aria-hidden="true">
+            <p className="poi-pane__rating">
+              <span className="poi-pane__stars" aria-hidden="true">
                 {stars(rating)}
               </span>{' '}
-              <span className="poi-dialog__rating-text">
+              <span className="poi-pane__rating-text">
                 {rating.toFixed(1)} out of 5
                 {ratingCount !== null &&
                   ` · ${String(ratingCount)} ${ratingCount === 1 ? 'rating' : 'ratings'}`}
@@ -219,20 +233,20 @@ export function PoiDetailDialog({
           {!hasListing && (
             // The expected outcome for dispersed camping, said plainly. What follows is the
             // part a rider can actually use.
-            <p className="poi-dialog__pending">
+            <p className="poi-pane__pending">
               No listing details for this place — which is normal for anywhere wild.
             </p>
           )}
 
           {detail.opening_hours.length > 0 && (
-            <ul className="poi-dialog__hours">
+            <ul className="poi-pane__hours">
               {detail.opening_hours.map((line) => (
                 <li key={line}>{line}</li>
               ))}
             </ul>
           )}
 
-          <ul className="poi-dialog__links">
+          <ul className="poi-pane__links">
             {detail.phone !== null && detail.phone !== undefined && (
               <li>
                 <a href={`tel:${detail.phone}`}>{detail.phone}</a>
@@ -252,7 +266,7 @@ export function PoiDetailDialog({
           {detail.reviews.length > 0 && (
             // Fetched on every call and never rendered until now. What a place is actually like
             // is the thing a rating cannot tell you.
-            <ul className="poi-dialog__reviews">
+            <ul className="poi-pane__reviews">
               {detail.reviews.map((review) => (
                 <li key={review}>{review}</li>
               ))}
@@ -261,9 +275,9 @@ export function PoiDetailDialog({
         </>
       )}
 
-      <p className="poi-dialog__coordinate">{formatCoordinate(poi.coordinate)}</p>
+      <p className="poi-pane__coordinate">{formatCoordinate(poi.coordinate)}</p>
 
-      <div className="poi-dialog__actions">
+      <div className="poi-pane__actions">
         {verified && onAddToRoute !== undefined && (
           // The same action as right-clicking the pin, made discoverable: nobody finds a
           // right-click menu they were not told about.
@@ -279,10 +293,8 @@ export function PoiDetailDialog({
             Ignore
           </button>
         )}
-        <button type="button" onClick={onClose}>
-          Close
-        </button>
+
       </div>
-    </div>
+    </aside>
   )
 }

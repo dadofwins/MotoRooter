@@ -29,7 +29,7 @@ import { MAP_ID, loadMaps } from './map/googleMaps'
 import type { GoogleMapsLoader } from './map/loadGoogleMaps'
 import { isVerified } from './map/poiPin'
 import { PlaceList } from './poi/PlaceList'
-import { PoiDetailDialog } from './poi/PoiDetailDialog'
+import { PoiDetailPane } from './poi/PoiDetailPane'
 import { DragSession } from './routing/dragSession'
 import { addPoiToRoute, addPoisToRoute, isLegStale, type RouteEdit } from './routing/tripEdits'
 import { replanErrorMessage, routeErrorMessage } from './trip/routeErrorMessage'
@@ -802,8 +802,13 @@ function TripSession({
           </button>
         </div>
 
+      </aside>
+
+      {/* Its own pane, beside the map rather than at the bottom of the rail. Tim asked for the
+          view to be "separate", and that is a change of kind as much as position: it is no longer
+          modal, so the map stays clickable and the rail stays scrollable while a place is open. */}
         {openPoi !== null && (
-          <PoiDetailDialog
+          <PoiDetailPane
             poi={openPoi}
             client={client}
             onIgnore={onPoiIgnore}
@@ -838,7 +843,6 @@ function TripSession({
             {routeErrorMessage(error)}
           </p>
         )}
-      </aside>
     </div>
   )
 }

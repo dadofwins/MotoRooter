@@ -1,6 +1,6 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
-import { PoiDetailDialog } from './PoiDetailDialog'
+import { PoiDetailPane } from './PoiDetailPane'
 import { ApiError, ApiNetworkError, ApiNotImplementedError } from '../api/errors'
 import type { RequestOptions } from '../api/client'
 import type { Poi, PoiDetailResponse } from '../api/types'
@@ -58,12 +58,14 @@ function fakeClient(response: PoiDetailResponse = detail()) {
   }
 }
 
-describe('PoiDetailDialog', () => {
-  it('is a dialog, named after the place', async () => {
-    render(<PoiDetailDialog poi={poi()} client={fakeClient()} onClose={vi.fn()} />)
+describe('PoiDetailPane', () => {
+  it('is a region named after the place', async () => {
+    // It used to be a modal dialog and is now a pane beside the map, at Tim's request — see the
+    // block at the end of this file for why that is a change of kind rather than of position.
+    render(<PoiDetailPane poi={poi()} client={fakeClient()} onClose={vi.fn()} />)
 
-    const dialog = await screen.findByRole('dialog', { name: /Lone Fir Campground/ })
-    expect(dialog).toBeInTheDocument()
+    const pane = await screen.findByRole('complementary', { name: /Lone Fir Campground/ })
+    expect(pane).toBeInTheDocument()
   })
 
   it('shows what is already known before anything is fetched', async () => {
@@ -75,7 +77,7 @@ describe('PoiDetailDialog', () => {
       ),
     }
 
-    render(<PoiDetailDialog poi={poi()} client={client} onClose={vi.fn()} />)
+    render(<PoiDetailPane poi={poi()} client={client} onClose={vi.fn()} />)
 
     expect(screen.getByText('Lone Fir Campground')).toBeInTheDocument()
     expect(screen.getByText('Campground')).toBeInTheDocument() // the category, not the name
@@ -93,7 +95,7 @@ describe('PoiDetailDialog', () => {
       }),
     )
 
-    render(<PoiDetailDialog poi={poi()} client={client} onClose={vi.fn()} />)
+    render(<PoiDetailPane poi={poi()} client={client} onClose={vi.fn()} />)
 
     expect(await screen.findByText(/4\.6/)).toBeInTheDocument()
     expect(screen.getByText(/812/)).toBeInTheDocument()
@@ -111,7 +113,7 @@ describe('PoiDetailDialog', () => {
     const client = fakeClient(detail({ rating: null, user_rating_count: null }))
 
     render(
-      <PoiDetailDialog
+      <PoiDetailPane
         poi={poi({ name: 'Pull-out above Harts Pass', note: 'Flat, room for two tents' })}
         client={client}
         onClose={vi.fn()}
@@ -135,7 +137,7 @@ describe('PoiDetailDialog', () => {
       ),
     }
 
-    render(<PoiDetailDialog poi={poi()} client={client} onClose={vi.fn()} />)
+    render(<PoiDetailPane poi={poi()} client={client} onClose={vi.fn()} />)
 
     expect(await screen.findByText(/not available yet/i)).toBeInTheDocument()
     // Not an error: nothing is broken and there is nothing for the rider to do.
@@ -149,7 +151,7 @@ describe('PoiDetailDialog', () => {
       ),
     }
 
-    render(<PoiDetailDialog poi={poi()} client={client} onClose={vi.fn()} />)
+    render(<PoiDetailPane poi={poi()} client={client} onClose={vi.fn()} />)
 
     const alert = await screen.findByRole('alert')
     expect(alert).toHaveTextContent(/connection|reach/i)
@@ -164,7 +166,7 @@ describe('PoiDetailDialog', () => {
       ),
     }
 
-    render(<PoiDetailDialog poi={poi()} client={client} onClose={vi.fn()} />)
+    render(<PoiDetailPane poi={poi()} client={client} onClose={vi.fn()} />)
 
     const alert = await screen.findByRole('alert')
     expect(alert.textContent).not.toContain('places')
@@ -176,7 +178,7 @@ describe('PoiDetailDialog', () => {
     const client = fakeClient()
 
     render(
-      <PoiDetailDialog
+      <PoiDetailPane
         poi={poi({ source: 'llm_suggested', place_id: null })}
         client={client}
         onClose={vi.fn()}
@@ -190,7 +192,7 @@ describe('PoiDetailDialog', () => {
   it('offers to add a confirmed place to the route, and does not for a suggestion', async () => {
     const onAddToRoute = vi.fn()
     const { unmount } = render(
-      <PoiDetailDialog poi={poi()} client={fakeClient()} onClose={vi.fn()} onAddToRoute={onAddToRoute} />,
+      <PoiDetailPane poi={poi()} client={fakeClient()} onClose={vi.fn()} onAddToRoute={onAddToRoute} />,
     )
 
     fireEvent.click(await screen.findByRole('button', { name: /add to route/i }))
@@ -198,7 +200,7 @@ describe('PoiDetailDialog', () => {
     unmount()
 
     render(
-      <PoiDetailDialog
+      <PoiDetailPane
         poi={poi({ source: 'llm_suggested', place_id: null })}
         client={fakeClient()}
         onClose={vi.fn()}
@@ -208,14 +210,17 @@ describe('PoiDetailDialog', () => {
     expect(screen.queryByRole('button', { name: /add to route/i })).not.toBeInTheDocument()
   })
 
-  it('closes on the button and on Escape', async () => {
+  it('closes on the X and on Escape', async () => {
+    // One close control, not two. The actions row used to carry a "Close" button as well; with an
+    // X in the corner that is a second way to do the same thing competing with Add and Ignore for
+    // a rider's attention.
     const onClose = vi.fn()
-    render(<PoiDetailDialog poi={poi()} client={fakeClient()} onClose={onClose} />)
+    render(<PoiDetailPane poi={poi()} client={fakeClient()} onClose={onClose} />)
 
-    fireEvent.click(await screen.findByRole('button', { name: /close/i }))
+    fireEvent.click(await screen.findByRole('button', { name: /close place details/i }))
     expect(onClose).toHaveBeenCalledTimes(1)
 
-    fireEvent.keyDown(screen.getByRole('dialog'), { key: 'Escape' })
+    fireEvent.keyDown(screen.getByRole('complementary'), { key: 'Escape' })
     expect(onClose).toHaveBeenCalledTimes(2)
   })
 
@@ -223,11 +228,11 @@ describe('PoiDetailDialog', () => {
     // Google's terms permit storing place_id and essentially nothing else. A second opening
     // asking again is the observable consequence of not keeping the first answer.
     const client = fakeClient()
-    const { unmount } = render(<PoiDetailDialog poi={poi()} client={client} onClose={vi.fn()} />)
+    const { unmount } = render(<PoiDetailPane poi={poi()} client={client} onClose={vi.fn()} />)
     await waitFor(() => expect(client.placeDetail).toHaveBeenCalledTimes(1))
     unmount()
 
-    render(<PoiDetailDialog poi={poi()} client={client} onClose={vi.fn()} />)
+    render(<PoiDetailPane poi={poi()} client={client} onClose={vi.fn()} />)
 
     await waitFor(() => expect(client.placeDetail).toHaveBeenCalledTimes(2))
   })
@@ -241,7 +246,7 @@ describe('PoiDetailDialog', () => {
       }),
     }
 
-    const { unmount } = render(<PoiDetailDialog poi={poi()} client={client} onClose={vi.fn()} />)
+    const { unmount } = render(<PoiDetailPane poi={poi()} client={client} onClose={vi.fn()} />)
     await waitFor(() => expect(signals).toHaveLength(1))
     unmount()
 
@@ -252,12 +257,12 @@ describe('PoiDetailDialog', () => {
     const withPhotos = fakeClient(detail({ photo_urls: ['https://example.test/a.jpg'] }))
 
     const { unmount } = render(
-      <PoiDetailDialog poi={poi()} client={withPhotos} onClose={vi.fn()} />,
+      <PoiDetailPane poi={poi()} client={withPhotos} onClose={vi.fn()} />,
     )
     expect(await screen.findByRole('img', { name: /Lone Fir Campground/ })).toBeInTheDocument()
     unmount()
 
-    render(<PoiDetailDialog poi={poi()} client={fakeClient()} onClose={vi.fn()} />)
+    render(<PoiDetailPane poi={poi()} client={fakeClient()} onClose={vi.fn()} />)
     await waitFor(() => expect(screen.queryByRole('status')).not.toBeInTheDocument())
     expect(screen.queryByRole('img')).not.toBeInTheDocument()
   })
@@ -275,12 +280,12 @@ describe('PoiDetailDialog', () => {
  * way: a rating has to be readable without seeing the stars, and a place with no listing has to
  * keep saying so plainly rather than looking broken.
  */
-describe('PoiDetailDialog, the listing', () => {
+describe('PoiDetailPane, the listing', () => {
   it('shows a rating as stars and as words, never as stars alone', async () => {
     // Glyphs alone fail in sunlight, at a glance, and with a screen reader. The stars are
     // decoration over a sentence that carries the same fact.
     const client = fakeClient(detail({ rating: 4.5, user_rating_count: 128 }))
-    render(<PoiDetailDialog poi={poi()} client={client} onClose={vi.fn()} />)
+    render(<PoiDetailPane poi={poi()} client={client} onClose={vi.fn()} />)
 
     expect(await screen.findByText(/4\.5 out of 5/i)).toBeInTheDocument()
     expect(screen.getByText(/128 ratings/i)).toBeInTheDocument()
@@ -288,7 +293,7 @@ describe('PoiDetailDialog, the listing', () => {
 
   it('says one rating rather than 1 ratings', async () => {
     const client = fakeClient(detail({ rating: 5, user_rating_count: 1 }))
-    render(<PoiDetailDialog poi={poi()} client={client} onClose={vi.fn()} />)
+    render(<PoiDetailPane poi={poi()} client={client} onClose={vi.fn()} />)
 
     expect(await screen.findByText(/1 rating\b/i)).toBeInTheDocument()
   })
@@ -297,7 +302,7 @@ describe('PoiDetailDialog, the listing', () => {
     const client = fakeClient(
       detail({ reviews: ['Great gravel access, quiet midweek.', 'Vault toilet, no water.'] }),
     )
-    render(<PoiDetailDialog poi={poi()} client={client} onClose={vi.fn()} />)
+    render(<PoiDetailPane poi={poi()} client={client} onClose={vi.fn()} />)
 
     expect(await screen.findByText(/Great gravel access/)).toBeInTheDocument()
     expect(screen.getByText(/Vault toilet/)).toBeInTheDocument()
@@ -307,7 +312,7 @@ describe('PoiDetailDialog, the listing', () => {
     const client = fakeClient(
       detail({ photo_urls: ['https://example.test/a.jpg', 'https://example.test/b.jpg'] }),
     )
-    render(<PoiDetailDialog poi={poi()} client={client} onClose={vi.fn()} />)
+    render(<PoiDetailPane poi={poi()} client={client} onClose={vi.fn()} />)
 
     const shown = await screen.findByRole('img', { name: /Lone Fir Campground, photo 1 of 2/i })
     expect(shown).toHaveAttribute('src', 'https://example.test/a.jpg')
@@ -318,7 +323,7 @@ describe('PoiDetailDialog, the listing', () => {
     const client = fakeClient(
       detail({ photo_urls: ['https://example.test/a.jpg', 'https://example.test/b.jpg'] }),
     )
-    render(<PoiDetailDialog poi={poi()} client={client} onClose={vi.fn()} />)
+    render(<PoiDetailPane poi={poi()} client={client} onClose={vi.fn()} />)
     await screen.findByRole('img', { name: /photo 1 of 2/i })
 
     fireEvent.click(screen.getByRole('button', { name: /photo 2 of 2/i }))
@@ -332,7 +337,7 @@ describe('PoiDetailDialog, the listing', () => {
   it('offers no thumbnails for a single photo', async () => {
     // A gallery of one is a picture. The strip would be a control that does nothing.
     const client = fakeClient(detail({ photo_urls: ['https://example.test/a.jpg'] }))
-    render(<PoiDetailDialog poi={poi()} client={client} onClose={vi.fn()} />)
+    render(<PoiDetailPane poi={poi()} client={client} onClose={vi.fn()} />)
 
     expect(await screen.findByRole('img', { name: /Lone Fir Campground/i })).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /photo 1 of 1/i })).not.toBeInTheDocument()
@@ -344,7 +349,7 @@ describe('PoiDetailDialog, the listing', () => {
     const client = fakeClient(
       detail({ rating: null, user_rating_count: null, photo_urls: [], reviews: [] }),
     )
-    render(<PoiDetailDialog poi={poi()} client={client} onClose={vi.fn()} />)
+    render(<PoiDetailPane poi={poi()} client={client} onClose={vi.fn()} />)
 
     expect(await screen.findByText(/normal for anywhere wild/i)).toBeInTheDocument()
   })
@@ -353,7 +358,7 @@ describe('PoiDetailDialog, the listing', () => {
     const onIgnore = vi.fn()
     const place = poi()
     render(
-      <PoiDetailDialog
+      <PoiDetailPane
         poi={place}
         client={fakeClient()}
         onClose={vi.fn()}
@@ -371,7 +376,7 @@ describe('PoiDetailDialog, the listing', () => {
     // want to see it again — and it is the clutter they most want gone.
     const onIgnore = vi.fn()
     render(
-      <PoiDetailDialog
+      <PoiDetailPane
         poi={poi({ source: 'llm_suggested', place_id: null })}
         client={fakeClient()}
         onClose={vi.fn()}
@@ -382,5 +387,57 @@ describe('PoiDetailDialog, the listing', () => {
     expect(screen.queryByRole('button', { name: /add to route/i })).not.toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: /^ignore$/i }))
     expect(onIgnore).toHaveBeenCalled()
+  })
+})
+
+/**
+ * A pane, not a dialog.
+ *
+ * Tim, after planning a real trip: *"When clicking on map POIs I don't love that the details go in
+ * the bottom of the right hand pane. Can we pop out a second right hand (or left hand if easier)
+ * pane that can be dismissed with an X in the corner? I'd like that view to be separate."*
+ *
+ * "Separate" is the whole request, and it changes what this is rather than where it sits. A modal
+ * dialog is a thing you must deal with before continuing; a pane is a thing you read while doing
+ * something else. So `aria-modal` comes off and focus is no longer trapped — a rider must be able
+ * to look at a place and click the map at the same time, which is the point of having it beside
+ * the map rather than under the rail.
+ */
+describe('PoiDetailPane as a separate pane', () => {
+  it('is a complementary region rather than a modal dialog', () => {
+    // `aria-modal` tells a screen reader the rest of the page is inert. It is not: the map and
+    // the rail stay usable, and claiming otherwise would strand someone inside the pane.
+    render(<PoiDetailPane poi={poi()} client={fakeClient()} onClose={vi.fn()} />)
+
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(screen.getByRole('complementary', { name: /Lone Fir Campground/ })).toBeInTheDocument()
+  })
+
+  it('has an X in the corner, named for what it does', () => {
+    // A bare glyph is unusable with a screen reader, and "close" alone is ambiguous once there
+    // are two dismissible things on screen.
+    const onClose = vi.fn()
+    render(<PoiDetailPane poi={poi()} client={fakeClient()} onClose={onClose} />)
+
+    fireEvent.click(screen.getByRole('button', { name: /close place details/i }))
+
+    expect(onClose).toHaveBeenCalled()
+  })
+
+  it('still closes on Escape, which is the reflex either way', () => {
+    const onClose = vi.fn()
+    render(<PoiDetailPane poi={poi()} client={fakeClient()} onClose={onClose} />)
+
+    fireEvent.keyDown(screen.getByRole('complementary'), { key: 'Escape' })
+
+    expect(onClose).toHaveBeenCalled()
+  })
+
+  it('still takes focus when it opens', () => {
+    // Moving focus is helpful — a keyboard user lands where the new content is. Trapping it is
+    // what a modal does and what this must not.
+    render(<PoiDetailPane poi={poi()} client={fakeClient()} onClose={vi.fn()} />)
+
+    expect(screen.getByRole('complementary')).toHaveFocus()
   })
 })

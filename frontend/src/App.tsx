@@ -656,8 +656,10 @@ function TripSession({
               // "estimate", and nothing here should imply the modelled sections are the dodgy
               // ones.
               <p className="route-summary__provenance">
-                Riding time is partly our own estimate: the offroad engine reports bicycle times,
-                so those sections are modelled from distance and surface.
+                {/* Short on purpose. Three dim lines of caveat at the top of the rail outweighed
+                    the figure it qualifies — visible only once the rail was rendered and looked
+                    at. This says the same thing in one. */}
+                Time for the unpaved sections is our estimate, not the engine&rsquo;s.
               </p>
             )}
             {/* The fast path for the common removal. Route-building is click, click, click,

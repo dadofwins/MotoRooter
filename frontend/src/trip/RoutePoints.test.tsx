@@ -86,6 +86,22 @@ describe('RoutePoints', () => {
     expect(screen.queryByRole('list')).not.toBeInTheDocument()
   })
 
+  it('does not annotate every row when they are all the same', () => {
+    // Every point a rider clicks is pinned, so on a route nobody has replanned the label was on
+    // all five rows and distinguished nothing. Found by rendering the rail and looking at it.
+    render(
+      <RoutePoints
+        waypoints={[
+          waypoint(47.6, -122.1, { name: 'Woodinville', pinned: true }),
+          waypoint(47.5, -120.4, { name: 'Cashmere', pinned: true }),
+        ]}
+        onRemove={vi.fn()}
+      />,
+    )
+
+    expect(screen.queryByText(/placed by you/i)).not.toBeInTheDocument()
+  })
+
   it('says which points a rider placed by hand', () => {
     // A replan may move or drop an unpinned point but must leave a pinned one alone, so the
     // difference is worth seeing before pressing Replan rather than after.

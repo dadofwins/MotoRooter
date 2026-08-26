@@ -37,8 +37,11 @@ body {
   display: flex;
   flex-direction: column;
   gap: 0.75rem;
-  flex: 1 1 auto;
-  min-height: 12rem;
+  /* Sized to its content, not stretched. It used to grow into the rail's spare space, which was
+     harmless while it was the last section — but moving it above the lists turned that into
+     roughly 250 px of blank rail between the greeting and the composer. Visible only by looking
+     at a screenshot; no test measures emptiness. */
+  flex: 0 0 auto;
   margin-top: 1rem;
   padding-top: 1rem;
   border-top: 1px solid rgb(0 0 0 / 0.12);
@@ -48,7 +51,9 @@ body {
   display: flex;
   flex-direction: column;
   gap: 0.5rem;
-  flex: 1 1 auto;
+  /* Bounded rather than growing, for the same reason as the lists below: a long transcript
+     scrolls inside its own section instead of pushing the route off the screen. */
+  max-height: 18rem;
   overflow-y: auto;
 }
 
@@ -359,6 +364,22 @@ body {
   .trip-bar__new {
     color: rgb(255 255 255 / 0.65);
     border-color: rgb(255 255 255 / 0.22);
+  }
+
+  .route-summary > button,
+  .gpx > button,
+  .chat__composer button,
+  .places__route-through {
+    background: rgb(255 255 255 / 0.07);
+    border-color: rgb(255 255 255 / 0.22);
+  }
+
+  .route-summary > button:hover,
+  .gpx > button:hover,
+  .chat__composer button:hover,
+  .places__route-through:hover {
+    background: rgb(255 255 255 / 0.12);
+    border-color: rgb(255 255 255 / 0.4);
   }
 
   .trip-bar__new:hover {
@@ -921,6 +942,15 @@ body {
   border-radius: 0.25rem;
 }
 
+/* Secondary to the label that names the segment. The figures were inheriting body size while
+   "Woodinville to Cashmere" above them was small and dim, so the numbers shouted louder than
+   which segment they described — an inverted hierarchy, visible only by looking at it. */
+.leg-mode__figures {
+  margin: 0.25rem 0 0;
+  font-size: 0.8125rem;
+  font-variant-numeric: tabular-nums;
+}
+
 /* Said in words as well as marked in the option, because this is the one thing the app exists
    to show and losing it should not be a surprise. */
 .leg-mode__note {
@@ -942,6 +972,35 @@ body {
   background: rgb(245 158 11 / 0.12);
   border-left: 3px solid #b45309;
   border-radius: 0.25rem;
+}
+
+/* Secondary actions.
+   Found by rendering the rail at 380 px and looking at it: only the Replan button had any
+   styling, so "Remove last point", "Download GPX" and the route-through buttons inherited the
+   browser's default dark button chrome — dark grey on dark with no visible edge — and read as
+   disabled next to the one styled button. No test could see that. Scoped to the sections that
+   need it rather than a bare `button` rule, so the chips, the picker and the list controls that
+   have their own styling are untouched. */
+.route-summary > button,
+.gpx > button,
+.chat__composer button,
+.places__route-through {
+  padding: 0.3125rem 0.625rem;
+  font: inherit;
+  font-size: 0.8125rem;
+  color: inherit;
+  background: rgb(0 0 0 / 0.04);
+  border: 1px solid rgb(0 0 0 / 0.2);
+  border-radius: 0.375rem;
+  cursor: pointer;
+}
+
+.route-summary > button:hover,
+.gpx > button:hover,
+.chat__composer button:hover,
+.places__route-through:hover {
+  background: rgb(0 0 0 / 0.08);
+  border-color: rgb(0 0 0 / 0.35);
 }
 
 /* The slow path. Sits with the route it acts on rather than in a toolbar. */

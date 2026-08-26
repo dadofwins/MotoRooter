@@ -428,6 +428,24 @@ on it — measured as finding *fewer* POIs than baseline for 1.4–2.3× the sea
 mechanism was not at fault. It was pouring more candidates into a funnel already discarding
 five of six upstream.
 
+### One live unknown: the judge occasionally scores nothing
+
+**Mitigated, cause unknown, watch armed.** The judge sometimes returns an empty result for a
+batch of perfectly good resolved candidates — at its worst three runs in four, from five to
+eight on-route places. Batch size, timeout and prompt were each ruled out individually and it
+resisted reproduction.
+
+It is retried once on *nothing* (a partial answer is a judgement and must not be discarded), and
+when both attempts fail the failure is recorded rather than surfacing as "0 worth showing", which
+is indistinguishable from an empty corridor. The raw reply is logged server-side whenever scoring
+produces nothing, so **the next occurrence explains itself** — do not go hunting for a
+reproduction, the logging is the plan.
+
+Six consecutive clean runs followed the retry. At the measured post-retry rate that would happen
+about 18% of the time by chance, so it is evidence the mitigation works better than estimated and
+not proof the fault is gone. If you see the warning fire, the captured reply is the thing nobody
+has ever managed to look at.
+
 ### Reasoning effort is per-stage, and it is measured
 
 The rule above has a corollary that cost a day to find: **when you do ask the model, ask for

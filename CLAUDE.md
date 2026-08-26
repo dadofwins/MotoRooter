@@ -331,15 +331,28 @@ Mirror the routing layer, which exists and works:
 
 - A `DiscoverySource` protocol with adapters (`brave`, `places`, `llm`), no source name
   outside its own module, and a shared contract test suite every adapter passes.
-- The same decorator stack: caching, retry, quota. Brave and Places are both metered, and
-  discovery fans out far more requests per user action than routing does.
+- Retry and quota decorators, as routing has. **Caching is not uniform here, and cannot be**
+  — see the licensing constraint below. Discovery fans out far more requests per user action
+  than routing does, so retry-with-backoff is what absorbs the 429s that concurrency earns.
+  Backoff on `RateLimited`, give up immediately on `QuotaExceeded`; retrying an exhausted
+  budget is a storm that looks exactly like the outage it is retrying.
+- **Deduplicate queries before issuing them.** This, not caching, is what reduces request
+  volume — and it is unaffected by licensing. Adjacent anchors routinely reverse-geocode to
+  the same road name and then issue byte-identical searches: both anchors on the live Chinook
+  corridor came back "Mather Memorial Parkway" and searched the same three queries twice.
 - Hermetic tests. Recorded fixtures for Brave, Places and OpenAI; no test touches a live API.
 
 ### Constraints
 
 - **Places caching stays limited to `place_id`.** Unchanged by any of this.
-- **Check Brave's terms before caching result text.** Caching a `place_id` is settled;
-  caching search snippets is not, and nobody should assume.
+- **Brave forbids caching search results. Checked, 2026-08-25.** The Search API terms
+  prohibit customers from "store[ing], cach[ing], or creat[ing] a database of Search Results,
+  in whole or in part, other than transient storage required for operation of Customer
+  Applications". No retention window, no 24-hour allowance — the only permitted storage is
+  what serving a request needs. Brave sells plans that grant storage rights explicitly, so
+  this is a commercial decision rather than a technical one, and not one to make quietly.
+  Caching extraction *output* is ours to keep, but it keys on snippets we may not store, so
+  it is not worth the tangle.
 - **Every tool the assistant can call must also be reachable by mouse.** Discovery is the
   biggest test of that rule: "find me more restaurants on the route" and a Restaurants button
   must run the same service function, not two implementations that drift.

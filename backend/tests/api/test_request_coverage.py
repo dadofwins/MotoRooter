@@ -26,10 +26,15 @@ SCHEMAS = SOURCE_ROOT / "api" / "schemas.py"
 
 DELIBERATELY_UNREAD: dict[str, str] = {
     "ReplanRequest.prompt": (
-        "A free-text steer is a real feature and not a quick wire-up: it is the one field "
-        "where client-authored text would reach query generation, so where it enters the "
-        "four-stage pipeline needs deciding before it is honoured. Proposed 2026-08-26, "
-        "awaiting a decision. If the answer is no, remove it from the contract instead."
+        "Reserved, deliberately unimplemented, and kept because the decision about it is "
+        "worth recording. A free-text steer — 'prefer hot springs' — is a real feature "
+        "nobody has asked for yet. When it is built it must NOT reach `queries_for`: a "
+        "client-authored string becoming a Brave query sits upstream of the corridor "
+        "distance filter, which is the hole the four-stage design exists to close and the "
+        "reason the query-derived category was deleted. The safe entry point is the judge, "
+        "where it is scoring evidence rather than a search term and every candidate stays "
+        "Places-verified before anything can prefer it. Agreed with the integrator "
+        "2026-08-26; revisit if Tim asks for it."
     ),
     "ReplanRequest.preserve_pinned": (
         "Possibly meaningless server-side: replan streams and never writes, so the merge "

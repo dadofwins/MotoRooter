@@ -153,6 +153,20 @@ Never edit anything under `backend/`.
   render of a state that cannot exist: light CSS with dark selects and a black sticky heading.
   Inject `:root { color-scheme: light !important }` **after** the stylesheet.
 
+  **A dumped `innerHTML` loses every value React set as a *property*.** `<select value=…>` is the
+  one that bites: React assigns the DOM property, serialisation writes only attributes, so the
+  dump shows each select on its *first* option. Both leg pickers rendered "Fast" over intents that
+  were `unpaved` and `twisty_paved`, and that was nearly filed as a bug. Checkboxes survive;
+  selects, and anything else driven by a property, do not. A harness that lies confidently is
+  worse than no harness — so assert the state in a test and use the render for layout and colour.
+
+  **Render over something like the real surface, not over a flat pane colour.** The map is
+  satellite imagery and terrain, and a contrast figure computed against `#e8e6e1` describes a
+  surface that only exists while the map is loading. The fan's leader lines measured 3.88:1
+  against the pane tone and were nearly invisible over striped imagery; the fix was a casing, the
+  same trick the pins get from their white ring. A busy background in the harness costs one
+  gradient and answers the question that matters.
+
   And check light as well as dark. **The same alpha that passes over near-black fails over
   white** — `rgb(0 0 0 / 0.5)` is 3.95:1 on white and 5.19:1 on the dark surface — so a palette
   verified in dark mode has not been verified. Nine muted classes failed WCAG AA that way, after

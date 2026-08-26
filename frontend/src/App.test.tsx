@@ -163,14 +163,16 @@ function createFakeMaps() {
 }
 
 /**
- * Waits until the map object exists, not merely until the loading text has gone.
+ * Comes through the front door if it is showing, then waits for the map.
  *
- * They are not the same moment. The text disappears when React commits the state change,
- * while the map is constructed in a passive effect that can flush a tick later — so a test
- * that waits for the text and then clicks occasionally finds no click listener yet. Rare
- * enough to look like a heisenbug and frequent enough to fail CI.
+ * Waiting for the map object rather than for the loading text to vanish: those are not the
+ * same moment. The text goes when React commits the state change, while the map is built in a
+ * passive effect that can flush a tick later — so a test that waited for the text and then
+ * clicked occasionally found no click listener. Rare enough to look like a heisenbug.
  */
 async function mapReady(fake: ReturnType<typeof createFakeMaps>): Promise<void> {
+  const start = screen.queryByRole('button', { name: /start a new trip/i })
+  if (start !== null) fireEvent.click(start)
   await waitFor(() => {
     expect(fake.maps).toHaveLength(1)
   })
@@ -561,12 +563,11 @@ describe('App', () => {
     const fake = createFakeMaps()
 
     render(<App mapLoader={fake.loader} mapId="motorooter-test-vector" client={fakeRouter()} />)
+    // Behind the front door: the greeting belongs to the trip, not to the entrance.
+    await mapReady(fake)
 
     expect(screen.getByText(/describe your trip/i)).toBeInTheDocument()
     expect(screen.getByText(/set a start and end point on the map/i)).toBeInTheDocument()
-    // Let the map finish loading before the test ends, or its state update lands on an
-    // unmounted tree and React warns about it.
-    await mapReady(fake)
   })
 
   it('places the start and the end from map clicks alone', async () => {
@@ -961,5 +962,114 @@ describe('App finding places', () => {
       fake.maps[0]?.mouseUp({ lat: 47.9, lon: -121 })
     })
     await waitFor(() => expect(client.routeLeg).toHaveBeenCalledTimes(2))
+  })
+})
+
+/**
+ * The front door.
+ *
+ * The landing screen reverses the earlier "no dialog" decision for arrivals only: a rider
+ * coming cold needs somewhere to start, and click-to-create still works once on the map.
+ */
+describe('App arriving', () => {
+  it('shows the front door rather than an empty map', () => {
+    const fake = createFakeMaps()
+    render(<App mapLoader={fake.loader} mapId="motorooter-test-vector" client={fakeRouter()} />)
+
+    expect(screen.getByRole('button', { name: /start a new trip/i })).toBeInTheDocument()
+    expect(screen.queryByLabelText('Route map')).not.toBeInTheDocument()
+  })
+
+  it('carries the name from the door into the trip it creates', async () => {
+    const fake = createFakeMaps()
+    const router = fakeRouter()
+    render(<App mapLoader={fake.loader} mapId="motorooter-test-vector" client={router} />)
+
+    fireEvent.change(screen.getByRole('textbox', { name: /trip name/i }), {
+      target: { value: 'Cascades loop' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: /start a new trip/i }))
+    await waitFor(() => expect(fake.maps).toHaveLength(1))
+    fake.clickMap(47.6, -120.7)
+
+    await waitFor(() => expect(router.createTrip).toHaveBeenCalled(), { timeout: 3000 })
+    expect(router.createTrip.mock.calls[0]?.[0].name).toBe('Cascades loop')
+  })
+
+  it('shows and remembers the name it created the trip with', async () => {
+    // The test that was missing. The existing one asserts on createTrip's *request*, which was
+    // correct and passing while everything downstream fell back to "Untitled trip": a trip
+    // created this session is never re-read, so the stored document stayed null all session
+    // and both the heading and the list lost the rider's own name.
+    const fake = createFakeMaps()
+    const router = fakeRouter()
+    render(<App mapLoader={fake.loader} mapId="motorooter-test-vector" client={router} />)
+
+    fireEvent.change(screen.getByRole('textbox', { name: /trip name/i }), {
+      target: { value: 'Cascades loop' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: /start a new trip/i }))
+    await waitFor(() => expect(fake.maps).toHaveLength(1))
+    fake.clickMap(47.6, -120.7)
+
+    // On screen…
+    expect(await screen.findByRole('heading', { name: 'Cascades loop' })).toBeInTheDocument()
+    // …and in the list they will come back to.
+    await waitFor(() => {
+      expect(localStorage.getItem('motorooter.visitedTrips')).toContain('Cascades loop')
+    })
+  })
+
+  it('starts without a name rather than making the rider invent one', async () => {
+    const fake = createFakeMaps()
+    const router = fakeRouter()
+    render(<App mapLoader={fake.loader} mapId="motorooter-test-vector" client={router} />)
+
+    fireEvent.click(screen.getByRole('button', { name: /start a new trip/i }))
+    await waitFor(() => expect(fake.maps).toHaveLength(1))
+    fake.clickMap(47.6, -120.7)
+
+    await waitFor(() => expect(router.createTrip).toHaveBeenCalled(), { timeout: 3000 })
+    expect(router.createTrip.mock.calls[0]?.[0].name).toBe('Untitled trip')
+  })
+
+  it('goes straight to the map when the link already names a trip', async () => {
+    // A shared link must not stop at a door the recipient did not ask for.
+    window.history.replaceState(null, '', '/?trip=wabdr-north')
+    const fake = createFakeMaps()
+    const router = fakeRouter()
+    router.getTrip.mockResolvedValue(tripFixture({ slug: 'wabdr-north', name: 'WABDR North' }))
+
+    render(<App mapLoader={fake.loader} mapId="motorooter-test-vector" client={router} />)
+
+    await waitFor(() => expect(fake.maps).toHaveLength(1))
+    expect(screen.queryByRole('button', { name: /start a new trip/i })).not.toBeInTheDocument()
+  })
+
+  it('lists a trip it has seen before, next time', async () => {
+    const fake = createFakeMaps()
+    const router = fakeRouter()
+    router.getTrip.mockResolvedValue(tripFixture({ slug: 'wabdr-north', name: 'WABDR North' }))
+    window.history.replaceState(null, '', '/?trip=wabdr-north')
+    const first = render(
+      <App mapLoader={fake.loader} mapId="motorooter-test-vector" client={router} />,
+    )
+    // Wait for the *write*, not for the name to appear. The rail shows the name as soon as the
+    // trip loads, but the list is recorded in a later effect — so waiting on the heading let
+    // the unmount beat the write, and the second render found an empty list. Roughly one run
+    // in four, which findBy on the far side could not fix because nothing was ever stored.
+    await waitFor(() => {
+      expect(localStorage.getItem('motorooter.visitedTrips')).toContain('wabdr-north')
+    })
+    first.unmount()
+
+    // A fresh arrival with no trip in the URL: the door, now with a way back.
+    window.history.replaceState(null, '', '/')
+    render(<App mapLoader={createFakeMaps().loader} mapId="motorooter-test-vector" client={router} />)
+
+    // findBy, not getBy: the list is read from storage in an effect, so on a fresh mount there
+    // is a tick between rendering and the button existing. A synchronous assertion here passes
+    // only when it wins that race — which it did twice out of three.
+    expect(await screen.findByRole('button', { name: 'WABDR North' })).toBeInTheDocument()
   })
 })

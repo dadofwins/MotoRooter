@@ -385,6 +385,19 @@
             ],
             "title": "Place Id"
           },
+          "score": {
+            "anyOf": [
+              {
+                "maximum": 1.0,
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Score"
+          },
           "source": {
             "$ref": "#/components/schemas/PoiSource"
           }

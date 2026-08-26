@@ -36,7 +36,7 @@ from motorooter.planning.discovery.pipeline import DiscoveryPipeline
 from motorooter.routing.errors import RouteIncomplete
 from motorooter.routing.models import RouteLeg
 from motorooter.trips.models import PoiCategory, Trip, TripSummary, utc_now
-from motorooter.trips.service import edit_trip
+from motorooter.trips.service import edit_trip, longest_routed_leg
 from motorooter.trips.slug import slugify, validate_slug
 
 router = APIRouter(prefix="/api/trips", tags=["trips"], responses=ERROR_RESPONSES)
@@ -132,7 +132,7 @@ async def replan(
     if discovery is None:
         raise NotImplementedYet("discovery (no search, model or Places credentials configured)")
 
-    leg = _longest_routed_leg(trip)
+    leg = longest_routed_leg(trip)
     if leg is None:
         raise RouteIncomplete(trip.unrouted_leg_indices or (0,))
 
@@ -140,16 +140,6 @@ async def replan(
         _stream(discovery, leg, request.categories),
         media_type=STREAMING_MEDIA_TYPE,
     )
-
-
-def _longest_routed_leg(trip: Trip) -> RouteLeg | None:
-    """The leg worth searching along.
-
-    The longest rather than the first: a trip's legs are frequently one long ride and a short
-    connector, and discovery along the connector would search the wrong half of the map.
-    """
-    routed = trip.routed_legs
-    return max(routed, key=lambda leg: leg.distance_m) if routed else None
 
 
 async def _stream(

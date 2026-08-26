@@ -118,6 +118,18 @@ class TestResolutionIsWhatMakesItReal:
         )
         assert result.to_poi(poi_id="p1").category is PoiCategory.HOTEL
 
+    def test_the_poi_carries_the_score_that_judged_it(self):
+        """Persisted so selection can happen later, not only inside the run that scored it."""
+        assert resolved().to_poi(poi_id="p1", score=0.85).score == 0.85
+
+    def test_an_unjudged_place_has_no_score_rather_than_a_zero(self):
+        assert resolved().to_poi(poi_id="p1").score is None
+
+    def test_the_places_rating_still_does_not_survive_the_boundary(self):
+        """Adding one storable number must not have opened the door to the unstorable ones."""
+        poi = resolved(rating=4.8, user_rating_count=1200).to_poi(poi_id="p1", score=0.9)
+        assert not hasattr(poi, "rating")
+
     def test_an_uncategorised_place_cannot_be_pinned(self):
         """The map needs an icon and the filters need a kind. Guessing either from the query
         is the bug this replaced, so refusing is the honest answer."""

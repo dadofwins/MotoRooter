@@ -24,7 +24,7 @@ the rider added one mid-conversation. That write succeeds and removes the wrong 
 list re-anchors the model after every mutation, which a prose summary does not.
 """
 
-from typing import Any, ClassVar, Protocol
+from typing import Any, ClassVar
 
 from pydantic import Field
 
@@ -39,31 +39,15 @@ from motorooter.llm.tools import (
 from motorooter.planning.discovery.errors import DiscoveryError
 from motorooter.planning.discovery.lookup import FoundPlace, PlaceLookup
 from motorooter.planning.discovery.pipeline import DiscoveryPipeline
+from motorooter.planning.route_through import LegRouter
 from motorooter.routing.errors import RoutingError
-from motorooter.routing.models import LegIntent, RouteLeg
+from motorooter.routing.models import LegIntent
 from motorooter.trips.models import Poi, PoiCategory, Trip, TripLeg, Waypoint
-from motorooter.trips.service import edit_trip
+from motorooter.trips.service import edit_trip, legs_for
 from motorooter.trips.store import TripStore
 
 MINIMUM_WAYPOINTS = 2
 """Below this there is no route to compute, so removing the second-to-last is refused."""
-
-
-class LegRouter(Protocol):
-    """The routing service, narrowed to what these tools need.
-
-    A protocol rather than the concrete router so a test can prove a tool routed before it
-    saved without standing up a provider registry — and so no tool reaches for a provider by
-    name, which is the thing the routing architecture exists to prevent.
-    """
-
-    async def route_waypoints(
-        self,
-        waypoints: tuple[Waypoint, ...],
-        *,
-        intent: LegIntent,
-        provider_override: str | None = None,
-    ) -> tuple[RouteLeg, ...]: ...
 
 
 def _numbered(trip: Trip) -> str:
@@ -246,7 +230,7 @@ class AddWaypoint(_TripTool):
         proposed = (*trip.waypoints, point)
         await self._route_all(trip, proposed)
         saved = await edit_trip(
-            self._store, self._slug, waypoints=proposed, legs=_legs_for(trip, proposed)
+            self._store, self._slug, waypoints=proposed, legs=legs_for(trip, proposed)
         )
         return ToolOutcome(
             content=f"Added waypoint {len(saved.waypoints) - 1}.\n{_numbered(saved)}",
@@ -288,7 +272,7 @@ class RemoveWaypoint(_TripTool):
             point for index, point in enumerate(trip.waypoints) if index != arguments.index
         )
         saved = await edit_trip(
-            self._store, self._slug, waypoints=remaining, legs=_legs_for(trip, remaining)
+            self._store, self._slug, waypoints=remaining, legs=legs_for(trip, remaining)
         )
         return ToolOutcome(
             content=f"Removed waypoint {arguments.index}.\n{_numbered(saved)}",
@@ -443,7 +427,7 @@ class AddPoiToRoute(_TripTool):
         proposed = (*trip.waypoints, point)
         await self._route_all(trip, proposed)
         saved = await edit_trip(
-            self._store, self._slug, waypoints=proposed, legs=_legs_for(trip, proposed)
+            self._store, self._slug, waypoints=proposed, legs=legs_for(trip, proposed)
         )
         return ToolOutcome(
             content=f"Routing through {match.name}.\n{_numbered(saved)}",
@@ -567,29 +551,6 @@ def _choose(found: tuple[FoundPlace, ...], text: str, place_id: str | None) -> F
         "place_id of the one you mean:\n" + "\n".join(lines)
     )
     raise ToolCallFailed(msg)
-
-
-def _legs_for(trip: Trip, waypoints: tuple[Waypoint, ...]) -> tuple[TripLeg, ...]:
-    """Legs spanning consecutive waypoint pairs, inheriting the trip's existing intent.
-
-    Rebuilt rather than patched because indices shift: a leg recorded as 2-3 means a
-    different stretch of road once a waypoint is removed ahead of it. Geometry is dropped —
-    the leg is stale by definition — and the next route request fills it back in.
-    """
-    if len(waypoints) < MINIMUM_WAYPOINTS:
-        return ()
-    default = trip.intent_for_new_legs
-    existing = {(leg.start_waypoint_index, leg.end_waypoint_index): leg for leg in trip.legs}
-    return tuple(
-        TripLeg(
-            intent=existing[(index, index + 1)].intent
-            if (index, index + 1) in existing
-            else default,
-            start_waypoint_index=index,
-            end_waypoint_index=index + 1,
-        )
-        for index in range(len(waypoints) - 1)
-    )
 
 
 class TripTools:

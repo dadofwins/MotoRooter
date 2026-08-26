@@ -460,6 +460,8 @@ export interface components {
             on_route: boolean;
             /** Place Id */
             place_id?: string | null;
+            /** Score */
+            score?: number | null;
             source: components["schemas"]["PoiSource"];
         };
         /**

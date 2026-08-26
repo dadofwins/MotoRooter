@@ -1,6 +1,7 @@
 """Trip and POI models — the vocabulary shared by the API, storage, and the frontend."""
 
 from datetime import UTC, datetime, timedelta
+from typing import Any
 
 import pytest
 from pydantic import ValidationError
@@ -16,6 +17,18 @@ def coord(lat: float = 45.0, lon: float = -121.0) -> Coordinate:
 
 
 METRES_PER_DEGREE_LAT = 111_195.0
+
+
+def poi(**overrides: Any) -> Poi:
+    fields: dict[str, Any] = {
+        "id": "p1",
+        "name": "Lion Rock Lookout",
+        "category": PoiCategory.VIEWPOINT,
+        "coordinate": coord(),
+        "source": PoiSource.PLACES,
+        "place_id": "ChIJ-lookout",
+    }
+    return Poi(**{**fields, **overrides})
 
 
 def routed(distance_m: float = 100_000.0, unpaved: bool = False) -> RouteLeg:
@@ -124,6 +137,31 @@ class TestPoi:
             on_route=True,
         )
         assert poi.on_route is True
+
+
+class TestPoiScore:
+    """The judge's verdict, kept so a rider can act on it without paying for discovery again.
+
+    Ours to store, unlike everything else discovery learns about a place: the score is a
+    number we computed and the note is a sentence our model wrote. Neither is Places content,
+    which is why they can live here when `rating` cannot.
+    """
+
+    def test_a_place_can_carry_the_score_that_judged_it(self):
+        assert poi(score=0.85).score == 0.85
+
+    def test_a_place_nobody_judged_has_no_score(self):
+        """Absent, not zero. A user-dropped pin was never scored and is not therefore bad."""
+        assert poi().score is None
+
+    @pytest.mark.parametrize("bad", [-0.1, 1.1])
+    def test_a_score_outside_the_scale_is_rejected(self, bad):
+        with pytest.raises(ValidationError):
+            poi(score=bad)
+
+    def test_the_note_holds_the_reason_in_the_judge_s_words(self):
+        reason = "Close, well-regarded lookout with unpaved approaches."
+        assert poi(note=reason).note == reason
 
 
 class TestPoiDetail:

@@ -270,6 +270,52 @@ describe('PlaceList', () => {
     expect(screen.queryByRole('button', { name: /route through/i })).not.toBeInTheDocument()
   })
 
+  it('puts the better-judged places first', () => {
+    // `Poi.score` is the judge's ranking key, and this is what it is for here. Displaying it as a
+    // number would be meaningless without a scale — "0.90" tells a rider nothing — but ordering by
+    // it means someone scanning twenty-nine places meets the good ones first, which is the same
+    // use the backend makes of it when it caps the list.
+    render(
+      <PlaceList
+        pois={[
+          place({ id: 'a', name: 'Adequate', category: 'campground', score: 0.4 }),
+          place({ id: 'b', name: 'Excellent', category: 'campground', score: 0.95 }),
+          place({ id: 'c', name: 'Middling', category: 'campground', score: 0.7 }),
+        ]}
+        onOpen={vi.fn()}
+        onIgnore={vi.fn()}
+      />,
+    )
+
+    const names = screen.getAllByRole('listitem').map((row) => row.textContent ?? '')
+    expect(names[0]).toMatch(/Excellent/)
+    expect(names[1]).toMatch(/Middling/)
+    expect(names[2]).toMatch(/Adequate/)
+  })
+
+  it('does not push an unjudged place to the bottom as though it scored zero', () => {
+    // A place a rider added by hand has no score. Sorting it as zero would bury their own choice
+    // beneath everything discovery found, which is the wrong way round.
+    // Unscored *first* in the input, deliberately. With it second the expected order and the
+    // input order coincide, so sorting a null as zero produces the same list and the test proves
+    // nothing — which is exactly what a surviving mutation showed.
+    render(
+      <PlaceList
+        pois={[
+          place({ id: 'b', name: 'Mine', category: 'campground', score: null }),
+          place({ id: 'a', name: 'Judged', category: 'campground', score: 0.5 }),
+        ]}
+        onOpen={vi.fn()}
+        onIgnore={vi.fn()}
+      />,
+    )
+
+    // Kept in the order it arrived rather than sorted against a number it does not have.
+    const names = screen.getAllByRole('listitem').map((row) => row.textContent ?? '')
+    expect(names[0]).toMatch(/Mine/)
+    expect(names[1]).toMatch(/Judged/)
+  })
+
   it('counts what it is showing, because twenty-nine was the number nobody could see', () => {
     render(
       <PlaceList

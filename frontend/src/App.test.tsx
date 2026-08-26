@@ -16,6 +16,7 @@ import {
 } from './api/fixtures'
 import type {
   ChatEvent,
+  RouteThroughBestRequest,
   GeocodeResponse,
   ChatRequest,
   Coordinate,
@@ -45,6 +46,10 @@ import type {
  */
 function stubUnbuilt() {
   return {
+    routeThroughBest: vi.fn(
+      (_slug: string, _request: RouteThroughBestRequest, _options?: RequestOptions) =>
+        Promise.resolve({ trip: tripFixture(), added: [], left_out: [] }),
+    ),
     geocode: vi.fn((_query: string, _options?: RequestOptions & { readonly near?: Coordinate }) =>
       Promise.resolve({ results: [] as GeocodeResponse['results'] }),
     ),

@@ -29,6 +29,7 @@ import { MAP_ID, loadMaps } from './map/googleMaps'
 import type { GoogleMapsLoader } from './map/loadGoogleMaps'
 import { isVerified } from './map/poiPin'
 import { PlaceList } from './poi/PlaceList'
+import { RouteThroughBest } from './poi/RouteThroughBest'
 import { PoiDetailPane } from './poi/PoiDetailPane'
 import { DragSession } from './routing/dragSession'
 import { addPoiToRoute, addPoisToRoute, isLegStale, type RouteEdit } from './routing/tripEdits'
@@ -70,6 +71,7 @@ type AppClient = Pick<
   | 'chat'
   | 'exportGpx'
   | 'geocode'
+  | 'routeThroughBest'
 >
 
 const NO_POIS: readonly Poi[] = []
@@ -482,6 +484,40 @@ function TripSession({
     [change],
   )
 
+  /**
+   * What the trip looked like before the assistant's own route edit.
+   *
+   * Held so the change is reversible. The backend has already saved it, so undoing is a write
+   * rather than a forget — restoring this into `edit` is enough, because the debounced save
+   * carries whatever is live back to storage.
+   */
+  const beforeAutoRoute = useRef<Edited | null>(null)
+
+  const onRoutedThroughBest = useCallback(
+    (routed: Trip) => {
+      // Captured from the version being replaced rather than from the response, so an undo puts
+      // back what the rider had rather than what the server thought they had.
+      beforeAutoRoute.current = live
+      change(() => ({
+        waypoints: routed.waypoints,
+        legs: routed.legs,
+        pois: routed.pois,
+      }))
+    },
+    [change, live],
+  )
+
+  const undoAutoRoute = useCallback(() => {
+    const previous = beforeAutoRoute.current
+    if (previous === null) return
+    beforeAutoRoute.current = null
+    change(() => ({
+      waypoints: previous.waypoints,
+      legs: previous.legs,
+      pois: previous.pois,
+    }))
+  }, [change])
+
   const undoIgnore = useCallback(() => {
     setIgnored((previous) => previous.slice(0, -1))
   }, [])
@@ -805,6 +841,19 @@ function TripSession({
           unit={unit}
           onIntentChange={setLegIntent}
         />
+
+        {/* The mouse equivalent of "route through the ones that rank highly", and the last thing
+            keeping that from being chat-only. Beside the per-group buttons rather than replacing
+            them: those are the selective path Tim asked to keep, this is the automatic one. */}
+        {save.slug !== null && (
+          <RouteThroughBest
+            client={client}
+            slug={save.slug}
+            candidates={placed.filter((place) => place.on_route !== true).length}
+            onRouted={onRoutedThroughBest}
+            onUndo={undoAutoRoute}
+          />
+        )}
 
         {/* Where a rider decides. Twenty-nine pins on a map is a haystack, and this is the
             second entry point into the same dialog the pins open. */}

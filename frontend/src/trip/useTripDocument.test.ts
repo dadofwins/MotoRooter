@@ -340,6 +340,34 @@ describe('useTripSave.ensure', () => {
     expect(client.createTrip.mock.calls[0]?.[0].name).toBe('Cascades loop')
   })
 
+  it('does not name a trip in the URL after the rider has left it', async () => {
+    // The sequence: creation in flight, rider clicks New trip, the URL is cleared and the
+    // session remounts — then the old creation resolves and writes the slug back. The app shows
+    // the front door while the URL names a trip, so a reload lands them back in the trip they
+    // just left. Narrow window, no data loss, and confusing enough to be worth closing.
+    let release: ((trip: Trip) => void) | null = null
+    const client = fakeClient()
+    client.createTrip.mockImplementation(
+      () =>
+        new Promise<Trip>((resolve) => {
+          release = resolve
+        }),
+    )
+    const view = renderHook(() => useSaving(client, []))
+    void view.result.current.ensure()
+    await act(async () => {
+      await Promise.resolve()
+    })
+
+    view.unmount()
+    await act(async () => {
+      release?.(tripFixture({ slug: 'trip-orphaned' }))
+      await Promise.resolve()
+    })
+
+    expect(new URL(window.location.href).searchParams.get('trip')).toBeNull()
+  })
+
   it('lets a second attempt through after a failure', async () => {
     // A failed creation is not an answer to be remembered, or the rail is dead for the
     // session over one dropped request.

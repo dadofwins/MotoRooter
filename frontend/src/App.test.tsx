@@ -56,6 +56,21 @@ function stubChat() {
   }
 }
 
+/**
+ * Removes the last point through the route list.
+ *
+ * There used to be a single "Remove last point" button. It is gone: it could only ever remove
+ * the last one, which would have made the assistant the only way to take a via-point out of the
+ * middle once it has `remove_waypoint`. The list can remove any of them, so these tests reach
+ * the same behaviour through the row.
+ */
+function removeLastPoint(): void {
+  const rows = within(screen.getByRole('region', { name: 'Route points' })).getAllByRole('listitem')
+  const last = rows.at(-1)
+  if (last === undefined) throw new Error('the route list has no points')
+  fireEvent.click(within(last).getByRole('button'))
+}
+
 const PIN_PROBE_ID = 'pin-probe'
 
 /** The shape Maps delivers position in. */
@@ -363,7 +378,7 @@ describe('App routing the placed points', () => {
     await waitFor(() => expect(fake.polylines[0]?.map).not.toBeNull())
     expect(await screen.findByText(/points placed/)).toHaveTextContent('26 mi')
 
-    fireEvent.click(screen.getByRole('button', { name: /remove last point/i }))
+    removeLastPoint()
 
     await waitFor(() => expect(fake.polylines.every((line) => line.map === null)).toBe(true))
     expect(screen.queryByText(/26 mi/i)).not.toBeInTheDocument()
@@ -389,7 +404,7 @@ describe('App routing the placed points', () => {
     fake.clickMap(48.1, -120.2)
     await screen.findByRole('alert')
 
-    fireEvent.click(screen.getByRole('button', { name: /remove last point/i }))
+    removeLastPoint()
 
     await waitFor(() => expect(screen.queryByRole('alert')).not.toBeInTheDocument())
   })
@@ -627,18 +642,66 @@ describe('App', () => {
     expect(await screen.findByText(/1 point/i)).toBeInTheDocument()
   })
 
+  it('takes a point out of the middle of the route, which only chat could do before', async () => {
+    // The gap the mouse-equivalence audit found. `remove_waypoint` is one of the assistant's
+    // tools, and until now the only mouse control removed the *last* point — so a via-point in
+    // the middle was something only the assistant could take out.
+    const fake = createFakeMaps()
+    render(<App mapLoader={fake.loader} mapId="motorooter-test-vector" client={fakeRouter()} />)
+    await mapReady(fake)
+    fake.clickMap(47.0, -120.0)
+    fake.clickMap(48.0, -120.5)
+    fake.clickMap(49.0, -121.0)
+    expect(await pinLabels(fake, 3)).toHaveLength(3)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Remove point 2' }))
+
+    await waitFor(() => {
+      expect(screen.getByText(/2 points placed/)).toBeInTheDocument()
+    })
+    // The middle one is gone and the ends are still the ends.
+    const rows = within(screen.getByRole('region', { name: 'Route points' })).getAllByRole('listitem')
+    expect(rows).toHaveLength(2)
+    expect(rows[0]?.textContent).toMatch(/47\.0000/)
+    expect(rows[1]?.textContent).toMatch(/49\.0000/)
+  })
+
+  it('removes a point on right-click, the same idiom as adding a place', async () => {
+    const fake = createFakeMaps()
+    render(<App mapLoader={fake.loader} mapId="motorooter-test-vector" client={fakeRouter()} />)
+    await mapReady(fake)
+    fake.clickMap(47.0, -120.0)
+    fake.clickMap(48.0, -120.5)
+    fake.clickMap(49.0, -121.0)
+    expect(await pinLabels(fake, 3)).toHaveLength(3)
+
+    // The second route pin: markers are created in route order.
+    const routePins = fake.markers.filter(
+      (marker) =>
+        marker.map !== null &&
+        (marker.options['content'] as HTMLElement | undefined)?.className?.startsWith('pin') === true,
+    )
+    act(() => {
+      routePins[1]?.contextMenu()
+    })
+
+    await waitFor(() => {
+      expect(screen.getByText(/2 points placed/)).toBeInTheDocument()
+    })
+  })
+
   it('offers an undo for a misplaced point, and only when there is one to undo', async () => {
     const fake = createFakeMaps()
     render(<App mapLoader={fake.loader} mapId="motorooter-test-vector" client={fakeRouter()} />)
     await mapReady(fake)
 
-    expect(screen.queryByRole('button', { name: /remove last point/i })).not.toBeInTheDocument()
+    expect(screen.queryByRole('region', { name: 'Route points' })).not.toBeInTheDocument()
 
     fake.clickMap(47.6, -120.7)
     fake.clickMap(48.1, -120.2)
     expect(await pinLabels(fake, 2)).toHaveLength(2)
 
-    fireEvent.click(screen.getByRole('button', { name: /remove last point/i }))
+    removeLastPoint()
 
     expect(await pinLabels(fake, 1)).toEqual(['Start'])
   })
@@ -756,10 +819,13 @@ describe('App units and time', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Kilometres' }))
 
     expect(await screen.findByText(/points placed/)).toHaveTextContent('42 km')
-    // The breakdown followed rather than staying in miles. Asserted on the surface row
-    // specifically: anchoring on /km$/ broke the moment a riding time was appended to the
-    // summary line, which made the test about line endings rather than about units.
-    const surfaceRow = screen.getByRole('list').querySelector('li')
+    // The breakdown followed rather than staying in miles. Scoped to the surface summary:
+    // anchoring on /km$/ broke the moment a riding time was appended to the summary line, and
+    // an unscoped `getByRole('list')` broke again when the route points list arrived. Neither
+    // failure was about units.
+    const surfaceRow = within(screen.getByRole('region', { name: /surface/i }))
+      .getByRole('list')
+      .querySelector('li')
     expect(surfaceRow?.textContent).toContain('km')
     expect(surfaceRow?.textContent).not.toContain('mi')
     view.unmount()
@@ -1375,7 +1441,7 @@ describe('a trip made of legs', () => {
       expect(router.routeLeg).toHaveBeenCalledTimes(2)
     })
 
-    fireEvent.click(screen.getByRole('button', { name: /remove last point/i }))
+    removeLastPoint()
 
     // The first leg is untouched, so there is nothing to ask. It used to cost a request for
     // the whole remaining route.
@@ -1424,7 +1490,7 @@ describe('a trip made of legs', () => {
     fake.clickMap(48.0, -121.0)
     await screen.findByText(/1 segment could not be routed/i)
 
-    fireEvent.click(screen.getByRole('button', { name: /remove last point/i }))
+    removeLastPoint()
 
     // A warning about a segment that no longer exists cannot be dismissed.
     await waitFor(() => {

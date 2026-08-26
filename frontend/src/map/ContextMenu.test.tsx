@@ -1,5 +1,5 @@
 import { fireEvent, render, screen } from '@testing-library/react'
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { ContextMenu } from './ContextMenu'
 
 /**
@@ -84,6 +84,76 @@ describe('ContextMenu', () => {
     const menu = screen.getByRole('menu')
     expect(menu.style.left).toBe('120px')
     expect(menu.style.top).toBe('240px')
+  })
+
+  describe('near the edge of the screen', () => {
+    /** jsdom measures everything as zero, so the menu has to be given a size to be clamped. */
+    function sized(width: number, height: number): void {
+      vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue({
+        width,
+        height,
+        x: 0,
+        y: 0,
+        top: 0,
+        left: 0,
+        right: width,
+        bottom: height,
+        toJSON: () => ({}),
+      })
+    }
+
+    afterEach(() => {
+      vi.restoreAllMocks()
+    })
+
+    it('stays on screen when the rider clicks near the bottom', () => {
+      // A menu whose last item is below the fold is a menu with an item nobody can choose, and
+      // the destructive one is at the bottom.
+      sized(180, 120)
+      Object.defineProperty(window, 'innerHeight', { value: 400, configurable: true })
+
+      render(
+        <ContextMenu
+          at={{ x: 100, y: 380 }}
+          items={[{ key: 'a', label: 'A', onChoose: vi.fn() }]}
+          onDismiss={vi.fn()}
+        />,
+      )
+
+      expect(screen.getByRole('menu').style.top).toBe('272px')
+    })
+
+    it('stays on screen when the rider clicks near the right edge', () => {
+      sized(180, 120)
+      Object.defineProperty(window, 'innerWidth', { value: 500, configurable: true })
+
+      render(
+        <ContextMenu
+          at={{ x: 460, y: 40 }}
+          items={[{ key: 'a', label: 'A', onChoose: vi.fn() }]}
+          onDismiss={vi.fn()}
+        />,
+      )
+
+      expect(screen.getByRole('menu').style.left).toBe('312px')
+    })
+
+    it('does not push itself off the top to fit', () => {
+      // A menu taller than the window cannot fit either way, and the top is the half worth
+      // keeping — that is where the first item is.
+      sized(180, 600)
+      Object.defineProperty(window, 'innerHeight', { value: 400, configurable: true })
+
+      render(
+        <ContextMenu
+          at={{ x: 100, y: 300 }}
+          items={[{ key: 'a', label: 'A', onChoose: vi.fn() }]}
+          onDismiss={vi.fn()}
+        />,
+      )
+
+      expect(screen.getByRole('menu').style.top).toBe('8px')
+    })
   })
 
   it('takes focus so a keyboard can reach it', () => {

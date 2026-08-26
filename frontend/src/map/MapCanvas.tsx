@@ -118,9 +118,20 @@ export interface ScreenPoint {
   readonly y: number
 }
 
-/** Where a Maps mouse event happened on screen, when it can say. */
-function screenPointOf(event: unknown): ScreenPoint {
-  const dom = (event as { domEvent?: { clientX?: number; clientY?: number } }).domEvent
+/**
+ * Where a right-click happened on screen, and the browser told to stay out of it.
+ *
+ * Both halves belong together: the only reason to read the position is to open our own menu
+ * there, and two menus stacked is worse than the unlabelled right-click this replaces — the
+ * rider picks from whichever won the paint.
+ */
+function contextPointOf(event: unknown): ScreenPoint {
+  const dom = (
+    event as {
+      domEvent?: { clientX?: number; clientY?: number; preventDefault?: () => void }
+    }
+  ).domEvent
+  dom?.preventDefault?.()
   return { x: dom?.clientX ?? 0, y: dom?.clientY ?? 0 }
 }
 
@@ -156,28 +167,15 @@ export interface MapCanvasProps {
   /**
    * Something was right-clicked, with where on screen it happened.
    *
-   * Reported rather than acted on. Right-click used to remove a waypoint and add a place to the
-   * route directly, with no label and no confirmation — the worst kind of destructive action,
-   * because the rider who discovers it discovers it by doing it. The caller turns this into a
-   * named menu.
+   * Reported rather than acted on, which is the whole point. Right-click used to remove a
+   * waypoint and add a place to the route directly, with no label and no confirmation — the worst
+   * kind of destructive action, because the rider who discovers it discovers it by doing it. The
+   * caller turns this into a named menu.
    *
-   * Never fires for an unconfirmed suggestion: the backend refuses to pin one, so there is
-   * nothing to offer.
+   * Never fires on an unconfirmed suggestion's pin: the backend refuses to pin one to the route,
+   * so there is nothing to offer.
    */
   readonly onContextMenu?: (target: ContextTarget) => void
-  /**
-   * Right-click a route point to take it off the route.
-   *
-   * The direct path, kept for a caller with no menu wired. Where `onContextMenu` is given, that
-   * wins and this is not called.
-   */
-  readonly onWaypointRemove?: (index: number) => void
-  /**
-   * A place was right-clicked: the mouse path for putting it on the route.
-   *
-   * Same precedence as above, and likewise never called for an unconfirmed suggestion.
-   */
-  readonly onPoiAdd?: (poi: Poi) => void
   /** A place was clicked. Opens its detail, whatever its provenance. */
   readonly onPoiOpen?: (poi: Poi) => void
 }
@@ -211,8 +209,6 @@ export function MapCanvas({
   onLegDrop,
   onLegCancel,
   onContextMenu,
-  onWaypointRemove,
-  onPoiAdd,
   onPoiOpen,
 }: MapCanvasProps): React.JSX.Element {
   const containerRef = useRef<HTMLDivElement>(null)
@@ -255,17 +251,11 @@ export function MapCanvas({
   }, [onLegGrab, onLegDrag, onLegDrop, onLegCancel])
 
   const poiHandlers = useRef<{
-    onPoiAdd?: ((poi: Poi) => void) | undefined
     onPoiOpen?: ((poi: Poi) => void) | undefined
   }>({})
   useEffect(() => {
-    poiHandlers.current = { onPoiAdd, onPoiOpen }
-  }, [onPoiAdd, onPoiOpen])
-
-  const waypointHandler = useRef(onWaypointRemove)
-  useEffect(() => {
-    waypointHandler.current = onWaypointRemove
-  }, [onWaypointRemove])
+    poiHandlers.current = { onPoiOpen }
+  }, [onPoiOpen])
 
   const contextHandler = useRef(onContextMenu)
   useEffect(() => {
@@ -471,7 +461,7 @@ export function MapCanvas({
             kind: 'route',
             legIndex,
             coordinate: toCoordinate(event.latLng),
-            at: screenPointOf(event),
+            at: contextPointOf(event),
           })
         }),
       )
@@ -540,13 +530,7 @@ export function MapCanvas({
       // Read through the ref so a new handler identity does not tear down and rebuild every
       // pin on the route — which on a long trip is a visible flicker on every render.
       const listener = marker.on('contextmenu', (event) => {
-        // A menu, where the caller wants one. The direct removal stays as the fallback so a
-        // canvas used without a menu keeps working.
-        if (contextHandler.current !== undefined) {
-          contextHandler.current({ kind: 'waypoint', index, at: screenPointOf(event) })
-          return
-        }
-        waypointHandler.current?.(index)
+        contextHandler.current?.({ kind: 'waypoint', index, at: contextPointOf(event) })
       })
       return { marker, listener }
     })
@@ -577,11 +561,7 @@ export function MapCanvas({
         ...(isVerified(poi)
           ? [
               marker.on('contextmenu', (event) => {
-                if (contextHandler.current !== undefined) {
-                  contextHandler.current({ kind: 'poi', poi, at: screenPointOf(event) })
-                  return
-                }
-                poiHandlers.current.onPoiAdd?.(poi)
+                contextHandler.current?.({ kind: 'poi', poi, at: contextPointOf(event) })
               }),
             ]
           : []),

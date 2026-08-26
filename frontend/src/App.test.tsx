@@ -102,6 +102,7 @@ interface FakeLine {
   readonly options: Record<string, unknown>
   map: unknown
   mouseDown(coordinate: Coordinate): void
+  rightClick(coordinate: Coordinate): void
 }
 
 interface FakeMarker {
@@ -166,6 +167,9 @@ function createFakeMaps() {
       }
       mouseDown(coordinate: Coordinate): void {
         this.listeners.get('mousedown')?.(latLngEvent(coordinate))
+      }
+      rightClick(coordinate: Coordinate): void {
+        this.listeners.get('contextmenu')?.(latLngEvent(coordinate))
       }
     },
     LatLngBounds: class {
@@ -713,7 +717,7 @@ describe('App', () => {
     expect(rows[1]?.textContent).toMatch(/49\.0000/)
   })
 
-  it('removes a point on right-click, the same idiom as adding a place', async () => {
+  it('removes a point through the menu its right-click opens', async () => {
     const fake = createFakeMaps()
     render(<App mapLoader={fake.loader} mapId="motorooter-test-vector" client={fakeRouter()} />)
     await mapReady(fake)
@@ -731,10 +735,16 @@ describe('App', () => {
     act(() => {
       routePins[1]?.contextMenu()
     })
+    fireEvent.click(await screen.findByRole('menuitem', { name: /remove this point/i }))
 
     await waitFor(() => {
       expect(screen.getByText(/2 points placed/)).toBeInTheDocument()
     })
+    // The one that was right-clicked, not whichever the menu happened to be built around: a
+    // count alone passes just as happily when the wrong point is taken off.
+    const rows = within(screen.getByRole('region', { name: 'Route points' })).getAllByRole('listitem')
+    expect(rows[0]?.textContent).toMatch(/47\.0000/)
+    expect(rows[1]?.textContent).toMatch(/49\.0000/)
   })
 
   it('offers an undo for a misplaced point, and only when there is one to undo', async () => {
@@ -775,12 +785,13 @@ describe('App and points of interest', () => {
     return { fake, router }
   }
 
-  it('adds a place to the route on right-click, routing through it', async () => {
+  it('adds a place to the route through the menu, routing through it', async () => {
     const { fake, router } = await appWithPoi()
 
     act(() => {
       fake.poiMarkers()[0]?.contextMenu()
     })
+    fireEvent.click(await screen.findByRole('menuitem', { name: /add to route/i }))
 
     await waitFor(() => expect(router.routeLeg).toHaveBeenCalledTimes(2))
     const request = router.routeLeg.mock.calls[1]?.[0]
@@ -812,6 +823,7 @@ describe('App and points of interest', () => {
     act(() => {
       fake.poiMarkers()[0]?.contextMenu()
     })
+    fireEvent.click(await screen.findByRole('menuitem', { name: /add to route/i }))
 
     await waitFor(() => expect(router.routeLeg).toHaveBeenCalledTimes(3))
     // One request, and it is the leg the place was inserted into — now three waypoints long
@@ -2673,5 +2685,166 @@ describe('App with one trip already', () => {
     await new Promise((resolve) => setTimeout(resolve, 50))
     expect(screen.getByRole('button', { name: /start a new trip/i })).toBeInTheDocument()
     expect(new URL(window.location.href).searchParams.get('trip')).toBeNull()
+  })
+})
+
+/**
+ * Right-click, with the actions named.
+ *
+ * Right-click already did two things — removed a point, added a place — and said neither, so the
+ * rider who found out found out by losing a waypoint. A named menu is the fix, and it makes room
+ * for the one thing right-click could not do at all: add a point in the middle of the route.
+ */
+describe('App right-click menus', () => {
+  async function twoPointTrip() {
+    const fake = createFakeMaps()
+    const router = fakeRouter()
+    render(<App mapLoader={fake.loader} mapId="motorooter-test-vector" client={router} />)
+    await mapReady(fake)
+    fake.clickMap(47.6, -120.7)
+    fake.clickMap(48.1, -120.2)
+    await waitFor(() => expect(router.routeLeg).toHaveBeenCalledTimes(1))
+    await waitFor(() => expect(fake.polylines.length).toBeGreaterThan(0))
+    return { fake, router }
+  }
+
+  function rightClickTheLine(fake: ReturnType<typeof createFakeMaps>, at: Coordinate): void {
+    const line = fake.polylines.find((polyline) => polyline.map !== null)
+    if (line === undefined) throw new Error('the route has no line to right-click')
+    act(() => {
+      line.rightClick(at)
+    })
+  }
+
+  it('says what a right-click on a point would do before it does it', async () => {
+    const { fake } = await twoPointTrip()
+    const pins = fake.markers.filter(
+      (marker) =>
+        marker.map !== null &&
+        (marker.options['content'] as HTMLElement | undefined)?.className?.startsWith('pin') === true,
+    )
+
+    act(() => {
+      pins[0]?.contextMenu()
+    })
+
+    expect(await screen.findByRole('menuitem', { name: /remove this point/i })).toBeInTheDocument()
+    // Still two points: naming the action is not doing it.
+    expect(screen.getByText(/2 points placed/)).toBeInTheDocument()
+  })
+
+  it('changes nothing when the rider dismisses the menu', async () => {
+    // The whole reason for the menu: a right-click can now be reconsidered.
+    const { fake } = await twoPointTrip()
+    const pins = fake.markers.filter(
+      (marker) =>
+        marker.map !== null &&
+        (marker.options['content'] as HTMLElement | undefined)?.className?.startsWith('pin') === true,
+    )
+    act(() => {
+      pins[0]?.contextMenu()
+    })
+    await screen.findByRole('menu')
+
+    fireEvent.keyDown(screen.getByRole('menu'), { key: 'Escape' })
+
+    await waitFor(() => expect(screen.queryByRole('menu')).not.toBeInTheDocument())
+    expect(screen.getByText(/2 points placed/)).toBeInTheDocument()
+  })
+
+  it('adds a point in the middle of the route, splitting the leg in two', async () => {
+    // The thing right-click could not do at all. A split rather than a via-point: the rider is
+    // dividing the trip, so each half gets its own routing mode from here on, which is what the
+    // per-leg picker has been waiting for.
+    const { fake, router } = await twoPointTrip()
+
+    rightClickTheLine(fake, { lat: 47.9, lon: -120.4 })
+    fireEvent.click(await screen.findByRole('menuitem', { name: /add point here/i }))
+
+    await waitFor(() => expect(screen.getByText(/3 points placed/)).toBeInTheDocument())
+    // Two legs now, so two requests, each of them two points long — not one leg of three.
+    await waitFor(() => expect(router.routeLeg).toHaveBeenCalledTimes(3))
+    const asked = router.routeLeg.mock.calls.slice(1).map((call) => call[0].waypoints)
+    expect(asked).toContainEqual([
+      { lat: 47.6, lon: -120.7 },
+      { lat: 47.9, lon: -120.4 },
+    ])
+    expect(asked).toContainEqual([
+      { lat: 47.9, lon: -120.4 },
+      { lat: 48.1, lon: -120.2 },
+    ])
+  })
+
+  it('splits where the rider clicked, not at the first gap in the leg', async () => {
+    // A leg with a via-point in it has more than one place a split can land, and the offset is
+    // measured along the road for the same reason a drag's is: a twisty route doubles back, so
+    // the nearest waypoint as the crow flies is routinely on the far side of a loop.
+    const fake = createFakeMaps()
+    const router = fakeRouter()
+    const place = poiFixture({ name: 'Lone Fir', coordinate: { lat: 47.9, lon: -120.35 } })
+    render(
+      <App mapLoader={fake.loader} mapId="motorooter-test-vector" client={router} pois={[place]} />,
+    )
+    await mapReady(fake)
+    fake.clickMap(47.6, -120.7)
+    fake.clickMap(48.1, -120.2)
+    await waitFor(() => expect(router.routeLeg).toHaveBeenCalledTimes(1))
+
+    // A via-point in the middle of the one leg, so the leg now spans three waypoints.
+    act(() => {
+      fake.poiMarkers()[0]?.contextMenu()
+    })
+    fireEvent.click(await screen.findByRole('menuitem', { name: /add to route/i }))
+    await waitFor(() => expect(router.routeLeg).toHaveBeenCalledTimes(2))
+
+    // Then a split beyond that via-point, near the far end of the road.
+    rightClickTheLine(fake, { lat: 48.05, lon: -120.25 })
+    fireEvent.click(await screen.findByRole('menuitem', { name: /add point here/i }))
+
+    await waitFor(() => expect(screen.getByText(/4 points placed/)).toBeInTheDocument())
+    const asked = router.routeLeg.mock.calls.slice(2).map((call) => call[0].waypoints)
+    // The new point sits after the place, not before it.
+    expect(asked).toContainEqual([
+      { lat: 47.6, lon: -120.7 },
+      { lat: 47.9, lon: -120.35 },
+      { lat: 48.05, lon: -120.25 },
+    ])
+    expect(asked).toContainEqual([
+      { lat: 48.05, lon: -120.25 },
+      { lat: 48.1, lon: -120.2 },
+    ])
+  })
+
+  it('gives each half of a split leg its own mode picker', async () => {
+    // The point of splitting rather than inserting: one road becomes two segments a rider can
+    // route differently. If the picker still showed one, the split bought nothing.
+    const { fake } = await twoPointTrip()
+    const pickers = () =>
+      within(screen.getByRole('region', { name: 'Route points' })).getAllByRole('combobox')
+    expect(pickers()).toHaveLength(1)
+
+    rightClickTheLine(fake, { lat: 47.9, lon: -120.4 })
+    fireEvent.click(await screen.findByRole('menuitem', { name: /add point here/i }))
+
+    await waitFor(() => {
+      expect(pickers()).toHaveLength(2)
+    })
+  })
+
+  it('offers a place its detail as well as the route, so the pin explains itself', async () => {
+    const fake = createFakeMaps()
+    const place = poiFixture({ name: 'Lone Fir Campground', coordinate: { lat: 47.9, lon: -120.35 } })
+    render(
+      <App mapLoader={fake.loader} mapId="motorooter-test-vector" client={fakeRouter()} pois={[place]} />,
+    )
+    await mapReady(fake)
+    await waitFor(() => expect(fake.poiMarkers()).toHaveLength(1))
+
+    act(() => {
+      fake.poiMarkers()[0]?.contextMenu()
+    })
+
+    expect(await screen.findByRole('menuitem', { name: /add to route/i })).toBeInTheDocument()
+    expect(screen.getByRole('menuitem', { name: /details/i })).toBeInTheDocument()
   })
 })

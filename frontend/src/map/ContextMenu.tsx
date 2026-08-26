@@ -10,7 +10,7 @@
  * a waypoint or a place is. The caller assembles the items, so the menu cannot drift out of step
  * with what the map can actually do.
  */
-import { useEffect, useRef } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 
 export interface ContextMenuItem {
   readonly key: string
@@ -27,8 +27,31 @@ export interface ContextMenuProps {
   readonly onDismiss: () => void
 }
 
+/** Breathing room between the menu and the edge it was pushed off. */
+const EDGE_MARGIN_PX = 8
+
 export function ContextMenu({ at, items, onDismiss }: ContextMenuProps): React.JSX.Element | null {
   const menuRef = useRef<HTMLDivElement>(null)
+  const [position, setPosition] = useState(at)
+
+  /**
+   * Pull the menu back on screen if the cursor was near an edge.
+   *
+   * Measured after layout rather than guessed from the item count: the height depends on the
+   * font the rider's browser gives it. A menu whose last item is below the fold has an item
+   * nobody can choose, and on a place pin that item is the destructive one.
+   */
+  useLayoutEffect(() => {
+    const menu = menuRef.current
+    if (menu === null) return
+    const { width, height } = menu.getBoundingClientRect()
+    setPosition({
+      // Never past the top-left: a menu bigger than the window cannot fit either way, and the
+      // first item is the half worth keeping.
+      x: Math.max(EDGE_MARGIN_PX, Math.min(at.x, window.innerWidth - width - EDGE_MARGIN_PX)),
+      y: Math.max(EDGE_MARGIN_PX, Math.min(at.y, window.innerHeight - height - EDGE_MARGIN_PX)),
+    })
+  }, [at, items])
 
   // Focus moves in so Escape and the arrow keys have somewhere to land. A menu opened by the
   // pointer is still a menu.
@@ -60,7 +83,7 @@ export function ContextMenu({ at, items, onDismiss }: ContextMenuProps): React.J
       role="menu"
       tabIndex={-1}
       ref={menuRef}
-      style={{ left: `${String(at.x)}px`, top: `${String(at.y)}px` }}
+      style={{ left: `${String(position.x)}px`, top: `${String(position.y)}px` }}
       onKeyDown={(pressed) => {
         if (pressed.key === 'Escape') onDismiss()
       }}

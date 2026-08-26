@@ -54,6 +54,14 @@ export interface RoutingCapabilitiesState {
    * our estimate — which on dirt is the more accurate of the two.
    */
   readonly reportsTrustworthyDuration: (intent: LegIntent) => boolean | null
+  /**
+   * Whether this intent's engine measures elevation, or `null` when the table cannot say.
+   *
+   * Resolved intent to provider to capability, like `reportsSurface` — elevation is a property of
+   * the engine, and the intent table names which engine serves each intent. Google reports none,
+   * which is why a mixed trip's climb figure covers only part of the route.
+   */
+  readonly reportsElevation: (intent: LegIntent) => boolean | null
 }
 
 export function useRoutingCapabilities(client: CapabilitiesReader): RoutingCapabilitiesState {
@@ -92,6 +100,11 @@ export function useRoutingCapabilities(client: CapabilitiesReader): RoutingCapab
         // Straight off the intent table: the backend resolves intent to provider to capability,
         // so there is nothing for the frontend to work out and nothing to go stale.
         capabilities?.intents[intent]?.reports_trustworthy_duration ?? null,
+      reportsElevation: (intent: LegIntent): boolean | null => {
+        const provider = capabilities?.intents[intent]?.provider
+        if (provider === undefined) return null
+        return capabilities?.providers.find((each) => each.name === provider)?.elevation ?? null
+      },
       reportsSurface: (intent: LegIntent): boolean | null => {
         const provider = capabilities?.intents[intent]?.provider
         if (provider === undefined) return null

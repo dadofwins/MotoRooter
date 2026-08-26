@@ -23,6 +23,7 @@ function picker(overrides: Partial<Parameters<typeof LegModePicker>[0]> = {}) {
       to="Blewett Pass"
       reportsSurface={() => true}
       reportsTrustworthyDuration={() => true}
+      reportsElevation={() => true}
       onChange={vi.fn()}
       {...overrides}
     />
@@ -132,5 +133,26 @@ describe('LegModePicker', () => {
     for (const option of screen.getAllByRole('option')) {
       expect(option.textContent ?? '').not.toMatch(/riding time|estimate/i)
     }
+  })
+
+  it('says a mode costs the climb figure too, since it is the same engine that reports neither', () => {
+    // Unlike the time note, this *is* a cost at the moment of choosing — the same shape as the
+    // surface warning, and caused by the same thing: Google measures no elevation, so choosing
+    // Fast for a mountain crossing means no climb figure for that segment at all.
+    render(picker({ intent: 'highway_connector', reportsElevation: () => false }))
+
+    expect(screen.getByText(/climb/i)).toBeInTheDocument()
+  })
+
+  it('says nothing about climb when the engine measures it', () => {
+    render(picker({ intent: 'unpaved', reportsElevation: () => true }))
+
+    expect(screen.queryByText(/climb/i)).not.toBeInTheDocument()
+  })
+
+  it('does not claim a loss the table has not confirmed', () => {
+    render(picker({ intent: 'highway_connector', reportsElevation: () => null }))
+
+    expect(screen.queryByText(/climb/i)).not.toBeInTheDocument()
   })
 })

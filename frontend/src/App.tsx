@@ -45,6 +45,7 @@ import {
 import { ReplanProgress } from './trip/ReplanProgress'
 import { RoutePoints } from './trip/RoutePoints'
 import { CategoryPicker } from './trip/CategoryPicker'
+import { climbSummary } from './trip/climbSummary'
 import { GpxExport } from './trip/GpxExport'
 import { useDiscoveryCategories } from './trip/useDiscoveryCategories'
 import { needsReplan, useReplan } from './trip/useReplan'
@@ -52,7 +53,7 @@ import { useRouteLegs } from './trip/useRouteLegs'
 import { useRoutingCapabilities } from './trip/useRoutingCapabilities'
 import { clearTripFromUrl, hasTripInUrl, useStoredTrip, useTripSave } from './trip/useTripDocument'
 import { useVisitedTrips } from './trip/useVisitedTrips'
-import { formatDistance, formatDuration } from './units/format'
+import { formatClimb, formatDistance, formatDuration } from './units/format'
 import { useDistanceUnit } from './units/useDistanceUnit'
 
 /** Only the calls the shell makes, so a test double stays small. */
@@ -520,6 +521,17 @@ function TripSession({
   const distanceM = shownLegs.reduce((total, leg) => total + (leg.routed?.distance_m ?? 0), 0)
 
   /**
+   * How much the trip climbs, and how much of it nobody measured.
+   *
+   * Shown again after months of suppression, because the discrepancy behind that decision turned
+   * out to be a sentinel zero in ORS's elevation lookup rather than anything computed wrongly.
+   * Reported beside its own coverage because Google measures no elevation at all: on a mixed trip
+   * the figure can cover a fraction of the route, and passing that off as the trip's climb would
+   * understate it several times over.
+   */
+  const climb = useMemo(() => climbSummary(shownLegs), [shownLegs])
+
+  /**
    * The riding time to show, and where it may come from.
    *
    * Per-leg estimates when this session routed every leg. Otherwise the figure the backend
@@ -626,6 +638,17 @@ function TripSession({
               {shownDurationS !== null && ` · ${formatDuration(shownDurationS)}`}
               {isRouting && ' · routing…'}
             </p>
+            {climb.ascentM !== null && (
+              <p className="route-summary__climb">
+                {`${formatClimb(climb.ascentM, unit)} of climb`}
+                {climb.unmeasuredDistanceM > 0 &&
+                  // Unknown stays unknown. The alternative is a figure that looks like the whole
+                  // trip's climb while describing part of it, which is worse than no figure —
+                  // a rider planning around 1,200 m who rides 3,000 has a bad day.
+                  ` · ${formatDistance(climb.unmeasuredDistanceM, unit)} unmeasured`}
+              </p>
+            )}
+
             {shownDurationS !== null && shownDurationIsEstimated && (
               // Stated, not warned about. On dirt our figure is the *better* one — hosted ORS
               // reported 143 min for a 40 km leg that takes about 46 — so the honest word is
@@ -739,6 +762,7 @@ function TripSession({
           legs={structure}
           reportsSurface={capabilities.reportsSurface}
           reportsTrustworthyDuration={capabilities.reportsTrustworthyDuration}
+          reportsElevation={capabilities.reportsElevation}
           onIntentChange={setLegIntent}
         />
 

@@ -1246,6 +1246,95 @@ describe('App arriving', () => {
   })
 })
 
+describe('how much the trip climbs', () => {
+  /**
+   * Suppressed for months on a real discrepancy, now explained: ORS returned an exact 0 where its
+   * elevation lookup failed, and twelve such points in 2,763 accounted for 3,124 m. With that
+   * filtered the figure is worth showing — a 3,600 m day and a 1,500 m day are different rides
+   * over the same distance.
+   *
+   * The care needed is that Google reports no elevation at all, so on a mixed trip the figure
+   * covers only part of the route. Unknown stays unknown, exactly as it does for surface.
+   */
+  function withLegs(ascents: readonly (number | null)[]) {
+    window.history.replaceState(null, '', '/?trip=wabdr-north')
+    const fake = createFakeMaps()
+    const router = fakeRouter()
+    const waypoints = ascents.map((_a, index) => waypointFixture(47 + index * 0.5, -120))
+    waypoints.push(waypointFixture(47 + ascents.length * 0.5, -120))
+    router.getTrip.mockResolvedValue(
+      tripFixture({
+        slug: 'wabdr-north',
+        name: 'WABDR North',
+        waypoints,
+        legs: ascents.map((ascent, index) =>
+          tripLeg({
+            start_waypoint_index: index,
+            end_waypoint_index: index + 1,
+            routed: routeLeg({
+              ascent_m: ascent,
+              distance_m: 40_000,
+              routed_from: {
+                intent: 'unpaved',
+                waypoints: [
+                  waypoints[index]?.coordinate ?? { lat: 0, lon: 0 },
+                  waypoints[index + 1]?.coordinate ?? { lat: 0, lon: 0 },
+                ],
+              },
+            }),
+          }),
+        ),
+      }),
+    )
+    render(<App mapLoader={fake.loader} mapId="motorooter-test-vector" client={router} />)
+    return { fake, router }
+  }
+
+  it('shows the climb when every leg measured it', async () => {
+    const { fake } = withLegs([800, 700])
+    await mapReady(fake)
+    // Miles is the default, so metres need the toggle — which also exercises the unit path
+    // rather than asserting on whichever unit happens to be default.
+    fireEvent.click(screen.getByRole('button', { name: 'Kilometres' }))
+
+    expect(await screen.findByText(/1,500 m/)).toBeInTheDocument()
+  })
+
+  it('says how far went unmeasured rather than passing it off as flat', async () => {
+    // The mixed-trip case. Google reports no elevation, so a figure covering 40 km of 120 must
+    // not read as the whole trip's climb — it would understate it threefold.
+    const { fake } = withLegs([1200, null, null])
+    await mapReady(fake)
+    fireEvent.click(screen.getByRole('button', { name: 'Kilometres' }))
+
+    expect(await screen.findByText(/1,200 m/)).toBeInTheDocument()
+    const climb = document.querySelector('.route-summary__climb')?.textContent ?? ''
+    expect(climb).toMatch(/unmeasured|not measured/i)
+    expect(climb).toMatch(/80 km/)
+  })
+
+  it('says nothing at all when no engine measured any of it', async () => {
+    // Zero would be a claim about a route nobody has measured, and a trip routed entirely through
+    // Google is the common case for Fast and Twisties.
+    const { fake } = withLegs([null, null])
+    await mapReady(fake)
+    await waitFor(() => {
+      expect(screen.getByText(/points placed/)).toBeInTheDocument()
+    })
+
+    expect(document.querySelector('.route-summary__climb')).toBeNull()
+  })
+
+  it('reads in feet for a rider in miles, not converted as a distance', async () => {
+    // 3,600 m is 11,800 ft. Converting climb by 1609 would show "2.2" — a plausible-looking
+    // small number rather than an obvious error.
+    const { fake } = withLegs([3600])
+    await mapReady(fake)
+
+    expect(await screen.findByText(/11,800 ft/)).toBeInTheDocument()
+  })
+})
+
 describe('where the riding time came from', () => {
   /**
    * The field exists because backend argued for it in these terms: a rider must not get a number
@@ -1705,7 +1794,9 @@ describe('choosing how a segment routes', () => {
 
     fireEvent.change(screen.getByRole('combobox'), { target: { value: 'highway_connector' } })
 
-    expect(await screen.findByText(/no dirt or paved breakdown/i)).toBeInTheDocument()
+    // One note covering both, because Google reports neither surface nor elevation — the real
+    // capability table says so, which is why this reads as one cause rather than two problems.
+    expect(await screen.findByText(/no surface or climb data/i)).toBeInTheDocument()
   })
 })
 

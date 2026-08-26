@@ -143,6 +143,13 @@ function createFakeMaps() {
     }
     /** Counted, since whether the camera re-frames is now a question about the whole path. */
     readonly fitted: unknown[] = []
+    readonly centred: unknown[] = []
+    setCenter(at: unknown): void {
+      this.centred.push(at)
+    }
+    setZoom(): void {
+      // The zoom that goes with a centre; the value is asserted in MapCanvas's own tests.
+    }
     fitBounds(bounds: unknown): void {
       this.fitted.push(bounds)
     }
@@ -3175,5 +3182,103 @@ describe('App framing what the assistant plots', () => {
     await waitFor(() => {
       expect(fake.maps[0]?.fitted.length).toBeGreaterThan(framedOnce)
     })
+  })
+})
+
+/**
+ * Opening where the rider is.
+ *
+ * Tim: *"is it easy to zoom roughly to the browser location when loading up the page"*. The
+ * decision that matters is when to ask, and it is made in `useBrowserLocation`; what the shell
+ * owes is that a trip always outranks a position, and that the control only appears where
+ * pressing it could work.
+ */
+describe('App and the browser location', () => {
+  const AT_HOME = { lat: 47.61, lon: -122.33 }
+
+  function locator(state: PermissionState | 'unsupported', at: typeof AT_HOME | null = AT_HOME) {
+    return {
+      permission: () => Promise.resolve(state),
+      current: vi.fn(() => Promise.resolve(at)),
+    }
+  }
+
+  it('opens where the rider is when they have already said yes', async () => {
+    window.history.replaceState(null, '', '/')
+    const fake = createFakeMaps()
+    render(
+      <App
+        mapLoader={fake.loader}
+        mapId="motorooter-test-vector"
+        client={fakeRouter()}
+        locator={locator('granted')}
+      />,
+    )
+    await mapReady(fake)
+
+    await waitFor(() => expect(fake.maps[0]?.centred).toHaveLength(1))
+  })
+
+  it('offers to find them rather than asking on load', async () => {
+    // A prompt on page load asks for something before the app has shown anything worth granting
+    // it for, and it is the kind of thing people refuse once and never revisit.
+    window.history.replaceState(null, '', '/')
+    const fake = createFakeMaps()
+    const from = locator('prompt')
+    render(
+      <App mapLoader={fake.loader} mapId="motorooter-test-vector" client={fakeRouter()} locator={from} />,
+    )
+    await mapReady(fake)
+
+    const button = await screen.findByRole('button', { name: /where i am|locate/i })
+    expect(from.current).not.toHaveBeenCalled()
+
+    fireEvent.click(button)
+
+    await waitFor(() => expect(fake.maps[0]?.centred).toHaveLength(1))
+  })
+
+  it('offers nothing when the answer is already no', async () => {
+    // Which is also the plain-http case: an insecure origin reports denied rather than prompt.
+    window.history.replaceState(null, '', '/')
+    const fake = createFakeMaps()
+    render(
+      <App
+        mapLoader={fake.loader}
+        mapId="motorooter-test-vector"
+        client={fakeRouter()}
+        locator={locator('denied')}
+      />,
+    )
+    await mapReady(fake)
+
+    await waitFor(() => expect(fake.maps).toHaveLength(1))
+    expect(screen.queryByRole('button', { name: /where i am|locate/i })).not.toBeInTheDocument()
+  })
+
+  it('leaves a loaded trip where it is, wherever the rider happens to be', async () => {
+    window.history.replaceState(null, '', '/?trip=wabdr-north')
+    const fake = createFakeMaps()
+    const router = fakeRouter()
+    router.getTrip.mockResolvedValue(
+      tripFixture({
+        slug: 'wabdr-north',
+        waypoints: [waypointFixture(47, -120), waypointFixture(48, -120)],
+      }),
+    )
+    render(
+      <App
+        mapLoader={fake.loader}
+        mapId="motorooter-test-vector"
+        client={router}
+        locator={locator('granted')}
+      />,
+    )
+    await mapReady(fake)
+    await screen.findByText(/2 points placed/)
+
+    // The route took the camera; the position did not take it back.
+    await waitFor(() => expect(fake.maps[0]?.fitted.length).toBeGreaterThan(0))
+    expect(fake.maps[0]?.centred).toHaveLength(0)
   })
 })

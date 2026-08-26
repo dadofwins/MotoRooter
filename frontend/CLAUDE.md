@@ -203,6 +203,24 @@ Never edit anything under `backend/`.
   and did nothing wherever a Map ID is set, which is production. A fake that emitted the event
   hid it, and no diff could have shown it.
 
+- **What the browser's geolocation actually reports, checked 2026-08-26.**
+
+  The permission question is the whole design — a prompt on page load asks for something before
+  the app has shown anything worth granting it for. Measured in headless Chrome, with the granted
+  case set up over the DevTools protocol:
+
+  | origin and history | `permissions.query` | `getCurrentPosition` |
+  |---|---|---|
+  | localhost, never asked | `prompt` | prompts |
+  | localhost, already granted | `granted` | resolves silently, no prompt |
+  | plain `http://` on a LAN address | **`denied`** | "Only secure origins are allowed" |
+
+  The third row is why `browserLocation.ts` has no `isSecureContext` branch: an insecure origin
+  already reports `denied`, so the rule for "the rider said no" covers it. Worth having checked —
+  `navigator.geolocation` is still *present* there, so a presence test would have said all was
+  well right up to a deployment served over plain HTTP. **And localhost is a secure context**, so
+  dev never sees the failure.
+
 - **Verify with the exit code, never by reading the output.** `make check` prints ruff's
   "All checks passed!" from the backend step and can still exit non-zero on the frontend
   lint that follows. `make check; echo $?` is the only honest check, and piping it through

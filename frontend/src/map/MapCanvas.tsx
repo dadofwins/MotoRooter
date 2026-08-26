@@ -229,6 +229,15 @@ export interface MapCanvasProps {
   /** Initial camera only; later changes do not move a map the user may be panning. */
   readonly center?: Coordinate
   readonly zoom?: number
+  /**
+   * Somewhere to look while there is nothing better — the rider's own position, in practice.
+   *
+   * Applied only while no route has ever been framed. A trip on screen is where they want to be
+   * looking, and a position arriving late must not pull the camera off it; a route arriving
+   * *after* this still frames, because being centred somewhere is not the same as having framed
+   * a route.
+   */
+  readonly focus?: Coordinate
   readonly mapId?: string
   readonly colorScheme?: MapColorScheme
   /** A click on the basemap, in domain coordinates. The mouse path for setting points. */
@@ -289,6 +298,16 @@ const DRAG_THRESHOLD_PX = 5
  */
 const POST_DRAG_CLICK_MS = 250
 
+/**
+ * How close to zoom when showing the rider where they are.
+ *
+ * "Roughly" was the word in the request, and roughly is right: this is a hint about where to
+ * start, not a claim about precision. Around a hundred kilometres across — a day's ride, so the
+ * roads they might actually plan on are on screen — against the opening camera's whole-BDR-country
+ * view, which is useful only for knowing the app works.
+ */
+const FOCUS_ZOOM = 9
+
 /** A waypoint's identity for the camera's purposes: where it is, to about a metre. */
 function waypointKey(at: Coordinate): string {
   return `${at.lat.toFixed(5)},${at.lon.toFixed(5)}`
@@ -337,6 +356,7 @@ export function MapCanvas({
   onContextMenu,
   onPoiOpen,
   onClusterOpen,
+  focus,
 }: MapCanvasProps): React.JSX.Element {
   const containerRef = useRef<HTMLDivElement>(null)
   const mapRef = useRef<google.maps.Map | null>(null)
@@ -859,6 +879,16 @@ export function MapCanvas({
       }
     }
   }, [maps, clusters, hasMapId, fannedKey, currentZoom])
+
+  useEffect(() => {
+    const map = mapRef.current
+    if (maps === null || map === null || focus === undefined) return
+    // Only while the camera has no better claim. `framedOn` is the record of a route having
+    // taken it, so this reads that rather than keeping a second flag that could disagree.
+    if (framedOn.current !== null) return
+    map.setCenter(toLatLng(focus))
+    map.setZoom(FOCUS_ZOOM)
+  }, [maps, focus])
 
   useEffect(() => {
     const map = mapRef.current

@@ -14,8 +14,27 @@ install: ## Install backend and frontend dependencies
 	cd backend && uv sync
 	cd frontend && npm install
 
-dev: ## Run backend and frontend dev servers together
+dev: port-check ## Run backend and frontend dev servers together
 	$(MAKE) -j2 dev-backend dev-frontend
+
+port-check: ## Fail early and legibly if :8000 is taken, before anything starts.
+	@# A prerequisite, not a check inside dev-backend, because `make -j2` runs the two
+	@# servers concurrently: the backend's refusal killed the whole target and took the
+	@# frontend with it, so the symptom was "the frontend does not work" and the cause
+	@# scrolled past interleaved with vite's startup banner. Tim reported exactly that.
+	@if ss -ltn 2>/dev/null | grep -q ':8000 ' || lsof -i :8000 >/dev/null 2>&1; then \
+		echo ""; \
+		echo "  Something is already listening on :8000, so the API will not start —"; \
+		echo "  and because both servers start together, the frontend will not either."; \
+		echo ""; \
+		echo "  Usually a dev server left running in another worktree. It would serve"; \
+		echo "  the UI happily while being older than your branch, which is worse than"; \
+		echo "  not starting: chat 501s, routes look wrong, nothing says why."; \
+		echo ""; \
+		echo "      pkill -f 'uvicorn motorooter'   &&   make dev"; \
+		echo ""; \
+		exit 1; \
+	fi
 
 dev-backend: ## API on :8000. Uses real providers if backend/.env has keys, else FakeProvider.
 	@# FakeProvider interpolates STRAIGHT LINES between waypoints. That is fine for testing

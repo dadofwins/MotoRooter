@@ -1060,10 +1060,11 @@ body {
 }
 
 /* The same glyph the pin uses, so matching a row to the map is not a puzzle. */
-.places__glyph {
+/* The mark leading a row, and the one beside the kind in the detail pane. Fixed so a column of
+   rows lines up whatever shape each place turns out to be. */
+.places__row .poi--mark,
+.poi-pane__kind .poi--mark {
   flex: none;
-  width: 1rem;
-  text-align: center;
 }
 
 .places__body {
@@ -1710,6 +1711,9 @@ body {
 }
 
 .poi-pane__kind {
+  display: flex;
+  gap: 0.375rem;
+  align-items: center;
   margin: 0.125rem 0 0.75rem;
   font-size: 0.8125rem;
   color: var(--ink-muted);

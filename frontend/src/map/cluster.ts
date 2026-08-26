@@ -64,6 +64,22 @@ export function pixelsAt(coordinate: Coordinate, zoom: number): PixelPoint {
   }
 }
 
+/**
+ * Back from map pixels to a coordinate.
+ *
+ * The inverse of `pixelsAt`, and the fan needs it: opening a group is reasoned about in pixels
+ * — pins are a fixed size on screen — and drawn in coordinates, which is the only thing the map
+ * accepts.
+ */
+export function coordinateAt(point: PixelPoint, zoom: number): Coordinate {
+  const scale = WORLD_PX * 2 ** zoom
+  const y = 0.5 - point.y / scale
+  return {
+    lat: (Math.atan(Math.sinh(2 * Math.PI * y)) * 180) / Math.PI,
+    lon: (point.x / scale) * 360 - 180,
+  }
+}
+
 export interface PoiCluster {
   /**
    * Identity for the marker layer, derived from the members rather than from a position in a

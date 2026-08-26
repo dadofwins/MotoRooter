@@ -127,32 +127,82 @@ describe('the category list', () => {
  * map is silently lying about how much it found.
  */
 describe('createClusterPin', () => {
+  function group(...categories: PoiCategory[]): Poi[] {
+    return categories.map((category, index) =>
+      poi({ id: `p${String(index)}`, category, name: `place ${String(index)}` }),
+    )
+  }
+
   it('says how many places are in it', () => {
-    expect(createClusterPin(7).textContent).toBe('7')
+    expect(createClusterPin(group('campground', 'food', 'fuel')).textContent).toBe('3')
   })
 
   it('names itself for a screen reader, in words rather than a bare number', () => {
     // "7" alone announces as a number with no noun. A rider using a screen reader on a map
     // needs to know it is seven places, not seven of something unnamed.
-    expect(createClusterPin(7).getAttribute('aria-label')).toMatch(/7 places/i)
-  })
+    const seven = group('campground', 'food', 'fuel', 'water', 'hotel', 'viewpoint', 'mechanic')
 
-  it('says "places" plurally only when it means it', () => {
-    // A cluster of two is the common case and the smallest one that exists; a cluster of one is
-    // drawn as the place itself, so this never has to say "1 places".
-    expect(createClusterPin(2).getAttribute('aria-label')).toMatch(/2 places/i)
+    expect(createClusterPin(seven).getAttribute('aria-label')).toMatch(/7 places/i)
   })
 
   it('is a button, because it is the only way to reach what is underneath', () => {
-    // Not decoration and not an image: everything in the cluster is unreachable except through
+    // Not decoration and not an image: everything in the group is unreachable except through
     // it, so it has to be announced as something you can operate.
-    expect(createClusterPin(3).getAttribute('role')).toBe('button')
+    expect(createClusterPin(group('campground', 'food')).getAttribute('role')).toBe('button')
   })
 
   it('stays legible when the group is big', () => {
     // Twelve was the largest group measured on a real corridor at the planning zoom. A pin whose
     // number overflows its own circle is worse than no number.
-    expect(createClusterPin(12).className).toMatch(/poi-cluster--wide/)
-    expect(createClusterPin(9).className).not.toMatch(/poi-cluster--wide/)
+    const twelve = group(...(Array.from({ length: 12 }, () => 'campground') as PoiCategory[]))
+    const nine = group(...(Array.from({ length: 9 }, () => 'campground') as PoiCategory[]))
+
+    expect(createClusterPin(twelve).className).toMatch(/poi-cluster--wide/)
+    expect(createClusterPin(nine).className).not.toMatch(/poi-cluster--wide/)
+  })
+
+  it('wears the colour of what is in it when that is one thing', () => {
+    // Tim's call, and it overrides the neutral slate this started as: a group of campgrounds is
+    // a purple thing, and saying so costs nothing.
+    const pin = createClusterPin(group('campground', 'wild_camp'))
+
+    expect(pin.style.background).toContain('--poi-stay')
+    expect(pin.style.background).not.toContain('--poi-supply')
+  })
+
+  it('combines the colours when the group is mixed', () => {
+    // "Say there's a purple one and an orange one being condensed, the icon will be half purple
+    // and half orange."
+    const pin = createClusterPin(group('campground', 'viewpoint'))
+
+    expect(pin.style.background).toContain('conic-gradient')
+    expect(pin.style.background).toContain('--poi-stay')
+    expect(pin.style.background).toContain('--poi-sight')
+    expect(pin.style.background).toContain('50%')
+  })
+
+  it('gives each colour the share of the group it actually has', () => {
+    // Equal slices would say a group of seven campgrounds and one viewpoint is half viewpoint,
+    // which is the wrong thing to tell someone deciding whether to open it.
+    const pin = createClusterPin(group('campground', 'campground', 'campground', 'viewpoint'))
+
+    expect(pin.style.background).toContain('75%')
+  })
+
+  it('slices by colour rather than by category, so no seam is invisible', () => {
+    // Nine categories share three colours. A slice per category would draw two purple wedges
+    // side by side and claim to have said something.
+    const pin = createClusterPin(group('campground', 'wild_camp', 'hotel', 'viewpoint'))
+
+    expect(pin.style.background.match(/var\(/g) ?? []).toHaveLength(2)
+  })
+
+  it('puts the colours in the same order every time', () => {
+    // The pin is redrawn whenever the map regroups. One that reshuffles its wedges between
+    // renders reads as two different places.
+    const one = createClusterPin(group('viewpoint', 'campground'))
+    const other = createClusterPin(group('campground', 'viewpoint'))
+
+    expect(one.style.background).toBe(other.style.background)
   })
 })

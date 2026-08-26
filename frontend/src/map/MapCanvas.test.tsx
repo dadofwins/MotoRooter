@@ -1,6 +1,7 @@
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
 import { MapCanvas } from './MapCanvas'
+import { FAN_MAX_MEMBERS } from './fan'
 import type { GoogleMaps } from './loadGoogleMaps'
 import { poi as placeFixture, routeLeg } from '../api/fixtures'
 import type { Coordinate, Poi, TripLeg, Waypoint } from '../api/types'
@@ -1298,18 +1299,24 @@ describe('MapCanvas clustering places', () => {
     expect(fake.clusterPins()).toHaveLength(0)
   })
 
-  it('reports a click on a crowd with what is in it and where it is', async () => {
-    // The count says how many; only the caller can say which, so the canvas hands over the
-    // members and the point to open a disclosure at.
+  it('reports a crowd too big to fan with what is in it and where it is', async () => {
+    // Past the fan's ceiling the caller opens a list, so the canvas hands over the members and
+    // the point to open it at. Below the ceiling it opens the group on the map itself.
     const fake = createFakeMaps()
     const onClusterOpen = vi.fn()
+    const many = Array.from({ length: 9 }, (_, index) =>
+      placeFixture({
+        id: `p${String(index)}`,
+        coordinate: { lat: 47.5 + index * 0.0004, lon: -120.5 + index * 0.0004 },
+      }),
+    )
 
     render(
       <MapCanvas
         mapId={MAP_ID}
         loader={fake.loader}
         zoom={12}
-        pois={CROWDED}
+        pois={many}
         onClusterOpen={onClusterOpen}
       />,
     )
@@ -1319,10 +1326,7 @@ describe('MapCanvas clustering places', () => {
       fake.clusterMarkers()[0]?.click({ x: 210, y: 130 })
     })
 
-    expect(onClusterOpen).toHaveBeenCalledWith({
-      members: CROWDED,
-      at: { x: 210, y: 130 },
-    })
+    expect(onClusterOpen).toHaveBeenCalledWith({ members: many, at: { x: 210, y: 130 } })
   })
 
   it('opens a lone place directly rather than through a crowd of one', async () => {
@@ -1354,6 +1358,233 @@ describe('MapCanvas clustering places', () => {
     const fake = createFakeMaps()
     const view = render(<MapCanvas mapId={MAP_ID} loader={fake.loader} zoom={12} pois={CROWDED} />)
     await waitFor(() => expect(fake.clusterPins()).toHaveLength(1))
+
+    view.unmount()
+
+    expect(fake.attached()).toHaveLength(0)
+  })
+})
+
+/**
+ * Opening a small group out into its members.
+ *
+ * Tim's call after the measurement: fan up to eight, list beyond that. A fan keeps the places on
+ * the map instead of moving them into a panel, and it only fits while the pins have room to be
+ * pins — twelve on a fixed radius sit 21px apart, which is narrower than a pin.
+ *
+ * A fanned pin is not where its place is. The leader line back to the group is what makes that a
+ * disclosed offset rather than a lie, so it is tested as hard as the pins are.
+ */
+describe('MapCanvas fanning a small group', () => {
+  /** Places about 250 m apart, which is one pin's width at a planning zoom. */
+  function crowd(count: number): Poi[] {
+    return Array.from({ length: count }, (_, index) =>
+      placeFixture({
+        id: `p${String(index)}`,
+        name: `place ${String(index)}`,
+        coordinate: { lat: 47.5 + index * 0.0004, lon: -120.5 + index * 0.0004 },
+      }),
+    )
+  }
+
+  async function withCrowd(count: number, onClusterOpen = vi.fn()) {
+    const fake = createFakeMaps()
+    render(
+      <MapCanvas
+        mapId={MAP_ID}
+        loader={fake.loader}
+        zoom={12}
+        pois={crowd(count)}
+        onClusterOpen={onClusterOpen}
+      />,
+    )
+    await waitFor(() => expect(fake.clusterPins()).toHaveLength(1))
+    return { fake, onClusterOpen }
+  }
+
+  it('opens a pair into its two places', async () => {
+    const { fake } = await withCrowd(2)
+
+    act(() => {
+      fake.clusterMarkers()[0]?.click({ x: 100, y: 100 })
+    })
+
+    await waitFor(() => expect(fake.poiPins()).toHaveLength(2))
+  })
+
+  it('draws a line from the group to each place it moved', async () => {
+    // The pins are not where their places are. Without the line that is a lie; with it, it is an
+    // offset the rider can see and follow back.
+    const { fake } = await withCrowd(3)
+    const before = fake.polylines.filter((line) => line.map !== null).length
+
+    act(() => {
+      fake.clusterMarkers()[0]?.click({ x: 100, y: 100 })
+    })
+
+    await waitFor(() => {
+      expect(fake.polylines.filter((line) => line.map !== null).length).toBe(before + 3)
+    })
+  })
+
+  it('hands a big group to the caller instead, because a fan of nine overlaps itself', async () => {
+    const onClusterOpen = vi.fn()
+    const { fake } = await withCrowd(9, onClusterOpen)
+
+    act(() => {
+      fake.clusterMarkers()[0]?.click({ x: 100, y: 100 })
+    })
+
+    expect(onClusterOpen).toHaveBeenCalled()
+    expect(fake.poiPins()).toHaveLength(0)
+  })
+
+  it('fans the largest group it will fan, and lists the next one up', async () => {
+    // The threshold itself, tested at both sides of it rather than at a number written here.
+    const fanned = await withCrowd(FAN_MAX_MEMBERS)
+    act(() => {
+      fanned.fake.clusterMarkers()[0]?.click({ x: 100, y: 100 })
+    })
+    await waitFor(() => expect(fanned.fake.poiPins()).toHaveLength(FAN_MAX_MEMBERS))
+    expect(fanned.onClusterOpen).not.toHaveBeenCalled()
+
+    const listed = await withCrowd(FAN_MAX_MEMBERS + 1)
+    act(() => {
+      listed.fake.clusterMarkers()[0]?.click({ x: 100, y: 100 })
+    })
+    expect(listed.onClusterOpen).toHaveBeenCalled()
+  })
+
+  it('opens a fanned place when it is clicked, the same as any other pin', async () => {
+    const fake = createFakeMaps()
+    const onPoiOpen = vi.fn()
+    const places = crowd(2)
+    render(
+      <MapCanvas
+        mapId={MAP_ID}
+        loader={fake.loader}
+        zoom={12}
+        pois={places}
+        onPoiOpen={onPoiOpen}
+      />,
+    )
+    await waitFor(() => expect(fake.clusterPins()).toHaveLength(1))
+    act(() => {
+      fake.clusterMarkers()[0]?.click({ x: 100, y: 100 })
+    })
+    await waitFor(() => expect(fake.poiMarkers()).toHaveLength(2))
+
+    act(() => {
+      fake.poiMarkers()[0]?.click()
+    })
+
+    expect(onPoiOpen).toHaveBeenCalledWith(places[0])
+  })
+
+  it('gives a fanned place its right-click, so adding one to the route still works', async () => {
+    // The regression clustering introduced: every place in a group lost the add-to-route idiom,
+    // because the group's own pin was the only thing left to click.
+    const fake = createFakeMaps()
+    const onContextMenu = vi.fn()
+    const places = crowd(2)
+    render(
+      <MapCanvas
+        mapId={MAP_ID}
+        loader={fake.loader}
+        zoom={12}
+        pois={places}
+        onContextMenu={onContextMenu}
+      />,
+    )
+    await waitFor(() => expect(fake.clusterPins()).toHaveLength(1))
+    act(() => {
+      fake.clusterMarkers()[0]?.click({ x: 100, y: 100 })
+    })
+    await waitFor(() => expect(fake.poiMarkers()).toHaveLength(2))
+
+    act(() => {
+      fake.poiMarkers()[1]?.contextMenu({ x: 12, y: 34 })
+    })
+
+    expect(onContextMenu).toHaveBeenCalledWith({
+      kind: 'poi',
+      poi: places[1],
+      at: { x: 12, y: 34 },
+    })
+  })
+
+  it('keeps the group pin as the hub the lines run back to', async () => {
+    // Found by rendering it: the fan first shipped drawing only the members, so the leader lines
+    // converged on nothing and there was no way to close what had been opened. A picture drawn
+    // by hand had a hub in it; the code did not.
+    const { fake } = await withCrowd(3)
+
+    act(() => {
+      fake.clusterMarkers()[0]?.click({ x: 100, y: 100 })
+    })
+
+    await waitFor(() => expect(fake.poiPins()).toHaveLength(3))
+    expect(fake.clusterPins()).toHaveLength(1)
+  })
+
+  it('closes the fan when the rider clicks the group again', async () => {
+    // The obvious affordance: the thing that opened it closes it. Without this the only way out
+    // is a click on the map, which is a different gesture in a different place.
+    const { fake } = await withCrowd(3)
+    act(() => {
+      fake.clusterMarkers()[0]?.click({ x: 100, y: 100 })
+    })
+    await waitFor(() => expect(fake.poiPins()).toHaveLength(3))
+
+    act(() => {
+      fake.clusterMarkers()[0]?.click({ x: 100, y: 100 })
+    })
+
+    await waitFor(() => expect(fake.clusterPins()).toHaveLength(1))
+    expect(fake.poiPins()).toHaveLength(0)
+  })
+
+  it('closes the fan again when the rider clicks the map', async () => {
+    const { fake } = await withCrowd(3)
+    act(() => {
+      fake.clusterMarkers()[0]?.click({ x: 100, y: 100 })
+    })
+    await waitFor(() => expect(fake.poiPins()).toHaveLength(3))
+
+    act(() => {
+      fake.maps[0]?.click({ lat: 47.2, lon: -120.9 })
+    })
+
+    await waitFor(() => expect(fake.clusterPins()).toHaveLength(1))
+    expect(fake.poiPins()).toHaveLength(0)
+  })
+
+  it('closes the fan when the rider zooms, because the group may not exist any more', async () => {
+    const { fake } = await withCrowd(3)
+    act(() => {
+      fake.clusterMarkers()[0]?.click({ x: 100, y: 100 })
+    })
+    await waitFor(() => expect(fake.poiPins()).toHaveLength(3))
+
+    act(() => {
+      fake.maps[0]?.zoomTo(16)
+    })
+
+    // Separated by the zoom rather than by the fan, and no leader lines left pointing at a group
+    // that is no longer there.
+    await waitFor(() => expect(fake.polylines.filter((line) => line.map !== null)).toHaveLength(0))
+  })
+
+  it('leaves nothing attached when a fan is open at unmount', async () => {
+    const fake = createFakeMaps()
+    const view = render(
+      <MapCanvas mapId={MAP_ID} loader={fake.loader} zoom={12} pois={crowd(4)} />,
+    )
+    await waitFor(() => expect(fake.clusterPins()).toHaveLength(1))
+    act(() => {
+      fake.clusterMarkers()[0]?.click({ x: 100, y: 100 })
+    })
+    await waitFor(() => expect(fake.poiPins()).toHaveLength(4))
 
     view.unmount()
 

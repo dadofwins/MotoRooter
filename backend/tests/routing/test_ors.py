@@ -18,6 +18,7 @@ from motorooter.routing.providers.ors import (
     ORS_BASE_URL,
     ORS_DEFAULT_SNAP_RADIUS_M,
     OrsProvider,
+    ascent_from,
 )
 from tests.routing.contract import RoutingProviderContract
 
@@ -177,12 +178,19 @@ class TestResponseParsing:
         leg = await provider.route(pdx_hood)
         assert (leg.distance_m, leg.duration_s) == (1234.0, 567.0)
 
-    async def test_parses_ascent_when_present(self, provider, mock_ors, pdx_hood):
+    async def test_ascent_comes_from_the_elevations_not_the_property(
+        self, provider, mock_ors, pdx_hood
+    ):
+        """`properties.ascent` is no longer read. It is self-consistent with the elevations
+        ORS returns and both are wrong together when a lookup fails, so the number is
+        computed from elevations we have filtered — see `TestElevationSentinels`."""
         mock_ors.route(DIRECTIONS_URL).respond(
-            json=ors_geojson([[-122.6784, 45.5152], [-121.7113, 45.3311]], ascent=1500.0)
+            json=ors_geojson(
+                [[-122.6784, 45.5152, 100.0], [-121.7113, 45.3311, 1600.0]], ascent=9999.0
+            )
         )
         leg = await provider.route(pdx_hood)
-        assert leg.ascent_m == 1500.0
+        assert leg.ascent_m == pytest.approx(1500.0)
 
     async def test_ascent_is_none_when_absent(self, provider, mock_ors, pdx_hood):
         mock_ors.route(DIRECTIONS_URL).respond(
@@ -389,3 +397,78 @@ class TestSnapRadius:
         default anyone should get by typo."""
         with pytest.raises(ValueError):
             OrsProvider(api_key="k", snap_radius_m=0.0)
+
+
+class TestElevationSentinels:
+    """ORS returns 0 when its elevation lookup fails, and the ascent it reports believes it.
+
+    Measured on two live corridors. `cycling-mountain` returned twelve zero-elevation points
+    out of 2,763 on Ellensburg-Cashmere and four of 311 on Chinook Pass; `driving-car`
+    returned none on either. Each excursion to sea level and back adds twice the local
+    elevation to a cumulative sum, so twelve points inflated the reported ascent from 3,605 m
+    to 6,729 m — and 229 m/km over a paved highway pass, which is a sustained 23% gradient.
+
+    ORS is self-consistent about it: its reported `ascent` equals a naive sum over its own
+    elevations to the metre. The data is what is wrong, so the fix is to stop believing that
+    one field and compute ascent from elevations we have filtered.
+
+    **Zero is only a sentinel when it is implausible.** Sea level is a real elevation, and a
+    coastal route must not have its geometry treated as corrupt — so what marks a sentinel is
+    the discontinuity, not the value.
+    """
+
+    @staticmethod
+    def _positions(elevations: list[float]) -> list[list[float]]:
+        return [[-121.0 + i * 0.001, 47.0, e] for i, e in enumerate(elevations)]
+
+    def test_a_clean_climb_is_summed_naively(self):
+        """Same method as the reference figure: positive deltas, no smoothing, no threshold."""
+        assert ascent_from(self._positions([100.0, 150.0, 120.0, 200.0])) == pytest.approx(130.0)
+
+    def test_a_sentinel_zero_is_ignored(self):
+        """The 1,200 m plunge and recovery is a failed lookup, not a cliff."""
+        clean = self._positions([1200.0, 1210.0, 1220.0])
+        with_sentinel = self._positions([1200.0, 0.0, 1210.0, 1220.0])
+        assert ascent_from(with_sentinel) == pytest.approx(ascent_from(clean))
+
+    def test_several_sentinels_are_ignored(self):
+        assert ascent_from(self._positions([1200.0, 0.0, 1210.0, 0.0, 1220.0])) == pytest.approx(
+            20.0
+        )
+
+    def test_sea_level_is_not_a_sentinel(self):
+        """A coastal route legitimately touches zero, and its geometry is not corrupt."""
+        assert ascent_from(self._positions([0.0, 5.0, 0.0, 10.0])) == pytest.approx(15.0)
+
+    def test_a_route_that_starts_at_zero_is_kept(self):
+        assert ascent_from(self._positions([0.0, 1.0, 2.0])) == pytest.approx(2.0)
+
+    def test_a_leading_sentinel_is_ignored(self):
+        """Nothing before it to compare against, so the judgement is against what follows."""
+        assert ascent_from(self._positions([0.0, 1500.0, 1510.0])) == pytest.approx(10.0)
+
+    def test_positions_without_elevation_give_nothing(self):
+        assert ascent_from([[-121.0, 47.0], [-120.9, 47.0]]) is None
+
+    def test_an_empty_route_gives_nothing(self):
+        assert ascent_from([]) is None
+
+
+class TestAscentIsComputedNotTrusted:
+    async def test_the_reported_ascent_is_not_used_when_it_disagrees(
+        self, mock_ors, provider, pdx_hood
+    ):
+        """ORS reports its own inflated figure. We compute from the elevations instead."""
+        body = ors_geojson(
+            coordinates=[[-121.0, 47.0, 1200.0], [-121.0, 47.001, 0.0], [-121.0, 47.002, 1210.0]],
+            ascent=2410.0,
+        )
+        mock_ors.route(DIRECTIONS_URL).respond(json=body)
+        leg = await provider.route(pdx_hood)
+        assert leg.ascent_m == pytest.approx(10.0)
+
+    async def test_no_elevation_means_no_ascent(self, mock_ors, provider, pdx_hood):
+        """Elevation is opt-in; a leg routed without it should not claim a climb of zero."""
+        body = ors_geojson(coordinates=[[-121.0, 47.0], [-121.0, 47.001]])
+        mock_ors.route(DIRECTIONS_URL).respond(json=body)
+        assert (await provider.route(pdx_hood)).ascent_m is None

@@ -280,3 +280,34 @@ class TestTheRegistry:
         """An agent with no tools is a chat box, and silently so."""
         with pytest.raises(ToolCallFailed):
             ToolRegistry([])
+
+
+class TestABudgetSizedForRealWork:
+    """`max_turns` was set before any tool existed, and its docstring said so: "enough for
+    search, resolve, judge and a summary". That describes a discovery run.
+
+    Measured against a real model on Tim's own request — a three-day trip from Woodinville —
+    the assistant added seven waypoints one per turn and was cut off mid-route with
+    "stopped after 8 turns without finishing". Building a multi-day route is legitimately a
+    dozen additions plus reads plus a summary, so the ceiling was not protecting against
+    runaway work; it was stopping ordinary work.
+
+    `max_tool_calls` still bounds the total, which is the limit that actually guards spend.
+    """
+
+    async def test_a_dozen_tool_calls_can_finish(self, registry):
+        replies = [
+            AssistantMessage(
+                content=None,
+                tool_calls=(ToolCall(id=f"c{i}", name="echo", arguments='{"text": "x"}'),),
+            )
+            for i in range(12)
+        ]
+        replies.append(AssistantMessage(content="Done."))
+        events = await collect(agent_for(*replies, registry=registry))
+        assert events[-1].kind == "done"
+        assert events[-1].truncated is False, "a route-sized run must not be cut off"
+
+    def test_the_ceiling_is_above_a_realistic_route(self):
+        """Seven waypoints was not a runaway; it was a short trip."""
+        assert AgentLimits().max_turns >= 15

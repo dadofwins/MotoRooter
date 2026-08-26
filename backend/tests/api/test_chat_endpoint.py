@@ -42,6 +42,23 @@ def a_trip() -> Trip:
     )
 
 
+class _StubLookup:
+    """Resolves any name to one real-looking place, so the endpoint test is about the
+    stream rather than about Places."""
+
+    async def search(self, text, *, near=None, limit=5):
+        from motorooter.planning.discovery.lookup import FoundPlace
+
+        return (
+            FoundPlace(
+                name="Blewett Pass",
+                place_id="ChIJ_bp",
+                coordinate=Coordinate(lat=47.34, lon=-120.58),
+                kinds=("route",),
+            ),
+        )
+
+
 def says(*replies: AssistantMessage) -> FakeLlmClient:
     return FakeLlmClient(replies=replies, repeat_last=True)
 
@@ -57,6 +74,9 @@ def client_with():
         asyncio.run(store.create(seed or a_trip()))
         app = create_app(RoutingSettings(offline=True), trip_store=store)
         app.state.chat_model = model
+        # Offline builds no Places client, and `add_waypoint` now needs one: a name is
+        # resolved to a real place before anything is pinned, which is the point of it.
+        app.state.place_lookup = _StubLookup()
         return TestClient(app), store
 
     return build
@@ -137,7 +157,7 @@ class TestToolCalls:
                         ToolCall(
                             id="c1",
                             name="add_waypoint",
-                            arguments='{"lat": 47.05, "lon": -121.05}',
+                            arguments='{"name": "Blewett Pass"}',
                         ),
                     ),
                 ),

@@ -221,6 +221,53 @@ class ChatEvent(BaseModel):
     )
 
 
+class GeocodeResult(BaseModel):
+    """One place a search text resolved to, verified against Google Places."""
+
+    name: str = Field(description="What Places calls it, not what was typed.")
+    place_id: str = Field(
+        description=(
+            "Google's identifier. The only field here that may be stored, and the way to "
+            "refer to this place later without re-resolving it."
+        )
+    )
+    address: str | None = Field(
+        default=None,
+        description=(
+            "Places' formatted address, e.g. 'Leavenworth, WA 98826, USA'. **This is what "
+            "makes a list of same-named places choosable** — without it three real "
+            "Leavenworths render as three identical rows. Null when Places has none, which "
+            "a natural feature often will not; fall back to `kinds` there. Display only, "
+            "per-request, never stored."
+        ),
+    )
+    coordinate: Coordinate
+    kinds: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Places' own types, e.g. `locality`, `natural_feature`. For choosing an icon "
+            "and for telling a town from a mountain pass when names collide."
+        ),
+    )
+
+
+class GeocodeResponse(BaseModel):
+    """Places matching a search text, best first.
+
+    **Several results, not one.** A name is a claim until something verifies it, and plenty of
+    names verify to more than one real place — Leavenworth is a town in Washington, a town in
+    Kansas and a district of Bavaria. Returning the list and letting the caller choose keeps
+    the choice with whoever has the context, rather than resolving an ambiguity silently and
+    plausibly.
+
+    Empty when nothing matched. That is an ordinary answer, not an error.
+    """
+
+    results: list[GeocodeResult] = Field(
+        description="Best first. Empty if the text matched nothing."
+    )
+
+
 class PoiDetailResponse(BaseModel):
     """Places-backed display data for the POI dialog.
 

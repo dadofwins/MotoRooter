@@ -14,7 +14,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from motorooter.api.exception_handlers import register_exception_handlers
-from motorooter.api.routers import places, routing, trips
+from motorooter.api.routers import geocode, places, routing, trips
 from motorooter.api.schemas import HealthResponse
 from motorooter.api.services import build_optional_services
 from motorooter.api.streaming import apply_streaming_media_types
@@ -83,6 +83,7 @@ def create_app(
     app.include_router(routing.router)
     app.include_router(trips.router)
     app.include_router(places.router)
+    app.include_router(geocode.router)
 
     _mount_frontend(app)
     _install_openapi_postprocess(app)

@@ -37,54 +37,41 @@ if the generated files drift.
 
 ## Status
 
-**Built and merged.** Backend: the routing layer end to end (models, provider protocol, shared
-adapter contract suite, `FakeProvider`, ORS and Google adapters, polyline codec, registry,
-policy resolver, caching/retry/quota decorators, config factory). Trip and POI models, slug
-validation, `TripStore` with in-memory and Cloud Storage implementations, compare-and-swap on
-writes. Leg stitching, the trip-level router, `RouteFingerprint`. The REST API with generated
-TypeScript types and an `ErrorCode` union. Rate limiting that separates "too fast" from "budget
-spent". Route metrics (twistiness, detour ratio, distance-to-route) with thresholds pinned to
-real geometry. The LLM tool-calling core. Discovery end to end — corridor anchors, Brave search,
-LLM extraction, Places resolution, category-from-Places, and the judge — behind `POST
-/api/trips/{slug}/replan`. Derived durations and POI detail.
+**M0 and M1 have passed. M2 (GPX export) is built and awaiting the hardware test.**
 
-Frontend: typed API client, `DragScheduler`, the Google Maps canvas, drag-to-reroute complete
-(throttled, handle-only feedback, stale-response rejection, guaranteed drag-end commit). POI
-pins with add-to-route and the Places detail dialog. Surface summary. Miles by default with a
-km toggle, and time estimates. Trip lifecycle — save, load, share by link — and the front door:
-a per-browser recent-trips list and a create path that carries the rider's chosen name.
+Everything in the plan is merged and green: the routing layer, trips and persistence, the
+four-stage discovery pipeline, the LLM tool layer with six tools behind a streaming chat
+endpoint, multi-leg trips with per-segment routing modes, drag-to-reroute, POI discovery and
+the Places detail dialog, and GPX export.
 
-Discovery runs in **19.1 s live** (was ten minutes and stalling), and the front door
-auto-opens a returning rider's only trip with New trip always reachable.
+**The one thing left is Tim's.** Load an exported GPX onto a real unit.
+`GARMIN_TRACK_POINT_LIMIT = 10_000` is the figure most commonly documented for modern units,
+not one anybody measured — older handhelds cut at 500 per segment. It is a single constant so
+that his answer changes a number rather than an algorithm, and decimation is correct at any
+limit, so being wrong costs fidelity rather than correctness.
 
-**Shelved, not rejected:** `be/road-expansion` (roads-as-leads). Measured as finding *fewer*
-POIs than baseline for 1.4–2.3× the searches — but against a funnel discarding 84% of
-candidates upstream, so the number says nothing about the mechanism, which demonstrably works.
-Re-measure after anchor naming is fixed. Do not review or merge it before then.
+### The pattern that actually cost this project
 
-**In flight:** `be/anchor-naming` (the Stage 0 fix — the highest-value item in the backend
-queue), `fe/multi-leg-structure`.
+Eight components were merged **correct, tested, green, and called by nobody**: `createApiClient`,
+POI pins with no data source, `routed_from` unstamped on the fast path, the chat client method
+living only on a stale branch, `PlaceDetails` never assigned to `app.state`, `trip_router`
+hand-rolling a copy instead of calling `stamped`, the leg endpoint ignoring
+`duration_is_trustworthy`, and three duration fields with no reader. Every one passed review,
+because a diff cannot show what does not call it.
 
-**Stubbed with frozen schemas** (501, so the frontend builds against real shapes): GPX export,
-and the chat endpoint `POST /api/trips/{slug}/chat`.
+Two structural answers landed, and they are the shape to extend rather than trusting review to
+catch the ninth:
 
-**Not built, and bigger than it looks: the assistant cannot actually do anything.** M1 item 1
-needs three pieces and has one. The `Tool` base class, `ToolRegistry` and the `Agent` loop are
-merged and well tested — but **no concrete `Tool` subclass exists anywhere in `src/`,
-`ToolRegistry` is constructed only in tests, `Agent(...)` is never constructed outside tests,
-and `POST /api/trips/{slug}/chat` still raises `NotImplementedYet`.** So the framework is
-complete and has zero capabilities and zero production callers. This is the
-"correct but unreachable" pattern this project keeps producing, and it was previously recorded
-here as though the layer were done.
+- **Backend:** optional services are declared in one place and **a name declared but not built
+  raises at startup**.
+- **Frontend:** `src/api/coverage.test.ts` asserts every contract field is either read by app
+  code or listed as deliberately unread **with a reason**. It cannot know whether a field
+  *should* be read; it insists the answer is written down, which turns "nobody noticed" into
+  "somebody decided".
 
-What M1 item 1 actually requires: concrete tools that are thin wrappers over the same service
-functions the REST endpoints call, the agent wired into the streaming chat endpoint, and the
-frontend rail. The rail can be built against the frozen contract in parallel.
-
-**Also not built:** `Trip.default_intent`, the routing-mode picker, forward geocoding, the
-settings dialog (gear icon, miles/km), GPX export.
-
-Update this section as reality changes, and do not describe a component as existing until it does.
+Update this section as reality changes, and do not describe a component as existing until it
+does — this section has twice described work as unbuilt that had shipped, and once described the
+LLM layer as done when it had no tools.
 
 ## Stack
 

@@ -26,9 +26,9 @@ from collections.abc import Callable, Sequence
 
 from motorooter.llm.messages import Message, SystemMessage, UserMessage
 from motorooter.llm.protocol import LlmClient
+from motorooter.planning.discovery.corridor import SearchCorridor
 from motorooter.planning.discovery.evidence import assemble
 from motorooter.planning.discovery.models import Evidence, ResolvedCandidate, ScoredCandidate
-from motorooter.routing.models import RouteLeg
 
 logger = logging.getLogger(__name__)
 
@@ -82,7 +82,7 @@ class CandidateJudge:
     async def judge(
         self,
         resolved: Sequence[ResolvedCandidate],
-        leg: RouteLeg,
+        leg: SearchCorridor,
         *,
         on_progress: Callable[[int, int], None] | None = None,
     ) -> tuple[ScoredCandidate, ...]:

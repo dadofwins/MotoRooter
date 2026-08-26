@@ -27,10 +27,11 @@ from typing import Protocol
 
 from motorooter.planning.discovery.selection import above_the_floor, worth_routing_through
 from motorooter.planning.insertion import insert_in_route_order
+from motorooter.planning.stitching import search_corridor
 from motorooter.routing.errors import RouteIncomplete
 from motorooter.routing.models import LegIntent, RouteLeg
 from motorooter.trips.models import Poi, Trip, TripLeg, Waypoint
-from motorooter.trips.service import changed_legs, edit_trip, legs_for, longest_routed_leg
+from motorooter.trips.service import changed_legs, edit_trip, legs_for
 from motorooter.trips.store import TripStore
 
 
@@ -96,18 +97,22 @@ async def route_through_best(
         RoutingError: the proposed route cannot be joined. Nothing is written.
     """
     trip = await store.get(slug)
-    leg = longest_routed_leg(trip)
-    if leg is None:
+    corridor = search_corridor(trip)
+    if corridor is None:
         raise RouteIncomplete(trip.unrouted_leg_indices or (0,))
 
-    chosen = worth_routing_through(trip.pois, leg=leg, limit=limit)
+    # The whole route on both counts. Positions are measured along the joined corridor, so a
+    # place found on the last leg is inserted where the rider meets it rather than against
+    # whichever single leg happened to be chosen; and the budget is per leg, because that is
+    # where the extra distance lands.
+    chosen = worth_routing_through(trip.pois, legs=trip.routed_legs, limit=limit)
     if not chosen:
         return RoutedThrough(trip=trip, added=(), left_out=_left_out(trip.pois, ()))
 
     waypoints = insert_in_route_order(
         trip.waypoints,
         [Waypoint(coordinate=place.coordinate, name=place.name) for place in chosen],
-        geometry=leg.geometry,
+        geometry=corridor.geometry,
     )
     saved = await edit_trip(
         store,

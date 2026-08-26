@@ -13,7 +13,7 @@ handlers turn them into status codes.
 from collections.abc import Sequence
 from itertools import pairwise
 
-from motorooter.routing.models import LegIntent, RouteLeg
+from motorooter.routing.models import LegIntent
 from motorooter.trips.errors import TripModifiedConcurrently
 from motorooter.trips.models import Poi, Trip, TripLeg, Waypoint, utc_now
 from motorooter.trips.store import TripStore
@@ -30,19 +30,6 @@ would spend requests without converging.
 
 MINIMUM_WAYPOINTS = 2
 """Below this there is no route to compute, so there are no legs either."""
-
-
-def longest_routed_leg(trip: Trip) -> RouteLeg | None:
-    """The leg worth measuring a trip against, or `None` if nothing has routed.
-
-    The longest rather than the first: a trip is frequently one long ride and a short
-    connector, and the connector is the wrong half of the map to search along and the wrong
-    length to budget a detour against. Shared because it was written twice and the second
-    copy — the assistant's — took the first leg instead, which on a trip that opens with a
-    two-kilometre hop meant discovering places around the rider's driveway.
-    """
-    routed = trip.routed_legs
-    return max(routed, key=lambda leg: leg.distance_m) if routed else None
 
 
 def legs_for(trip: Trip, waypoints: Sequence[Waypoint]) -> tuple[TripLeg, ...]:

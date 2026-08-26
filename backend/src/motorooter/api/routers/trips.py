@@ -34,12 +34,13 @@ from motorooter.chat.tools import TripTools
 from motorooter.gpx import trip_to_gpx
 from motorooter.llm.agent import Agent
 from motorooter.llm.messages import AssistantMessage, Message, SystemMessage, UserMessage
+from motorooter.planning.discovery.corridor import SearchCorridor
 from motorooter.planning.discovery.pipeline import DiscoveryPipeline
 from motorooter.planning.route_through import route_through_best
+from motorooter.planning.stitching import search_corridor
 from motorooter.routing.errors import RouteIncomplete
-from motorooter.routing.models import RouteLeg
 from motorooter.trips.models import PoiCategory, Trip, TripSummary, utc_now
-from motorooter.trips.service import edit_trip, longest_routed_leg
+from motorooter.trips.service import edit_trip
 from motorooter.trips.slug import slugify, validate_slug
 
 router = APIRouter(prefix="/api/trips", tags=["trips"], responses=ERROR_RESPONSES)
@@ -164,18 +165,20 @@ async def replan(
     if discovery is None:
         raise NotImplementedYet("discovery (no search, model or Places credentials configured)")
 
-    leg = longest_routed_leg(trip)
-    if leg is None:
+    corridor = search_corridor(trip)
+    if corridor is None:
         raise RouteIncomplete(trip.unrouted_leg_indices or (0,))
 
     return StreamingResponse(
-        _stream(discovery, leg, request.categories),
+        _stream(discovery, corridor, request.categories),
         media_type=STREAMING_MEDIA_TYPE,
     )
 
 
 async def _stream(
-    discovery: DiscoveryPipeline, leg: RouteLeg, categories: Sequence[PoiCategory]
+    discovery: DiscoveryPipeline,
+    corridor: SearchCorridor,
+    categories: Sequence[PoiCategory],
 ) -> AsyncIterator[bytes]:
     """One `ReplanEvent` per line.
 
@@ -185,7 +188,7 @@ async def _stream(
     `stage: done` with a failure message can.
     """
     try:
-        async for step in discovery.run(leg, list(categories)):
+        async for step in discovery.run(corridor, list(categories)):
             event = ReplanEvent(
                 stage=step.stage,
                 message=step.message,

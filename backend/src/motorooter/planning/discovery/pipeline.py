@@ -44,6 +44,7 @@ from motorooter.planning.discovery.concurrency import DEFAULT_CONCURRENCY
 from motorooter.planning.discovery.corridor import (
     DEFAULT_MAX_ANCHORS,
     DISCOVERY_ANCHOR_SPACING_M,
+    SearchCorridor,
     anchors,
 )
 from motorooter.planning.discovery.dedupe import DeduplicatingSearchSource
@@ -64,7 +65,7 @@ from motorooter.planning.discovery.naming import PlaceNamer
 from motorooter.planning.discovery.protocol import SearchSource
 from motorooter.planning.discovery.queries import SearchQuery, queries_for
 from motorooter.planning.discovery.resolve import PlacesResolver
-from motorooter.routing.models import Coordinate, RouteLeg
+from motorooter.routing.models import Coordinate
 from motorooter.trips.models import Poi, PoiCategory
 
 logger = logging.getLogger(__name__)
@@ -221,7 +222,7 @@ class DiscoveryPipeline:
 
     async def run(
         self,
-        leg: RouteLeg,
+        leg: SearchCorridor,
         categories: Sequence[PoiCategory],
         *,
         max_anchors: int = DEFAULT_MAX_ANCHORS,
@@ -513,7 +514,7 @@ class DiscoveryPipeline:
     async def _resolve(
         self,
         candidates: Sequence[Candidate],
-        leg: RouteLeg,
+        leg: SearchCorridor,
         counts: _Counts,
         concurrency: int = DEFAULT_CONCURRENCY,
     ) -> tuple[ResolvedCandidate, ...]:
@@ -526,6 +527,11 @@ class DiscoveryPipeline:
             )
             resolved = await self._classifier.classify(resolved)
         except (DiscoveryError, LlmError) as exc:
+            # Logged as well as counted. The summary says "1 stage failures" and stops there,
+            # which is enough to know something went wrong and not enough to know what — two
+            # live runs were spent inferring a classifier timeout that this line would have
+            # named. Server-side only; the rider gets the count.
+            logger.warning("resolve stage failed for %d candidates: %s", len(candidates), exc)
             counts.failures.append(f"resolve: {exc}")
             return ()
 
@@ -542,7 +548,7 @@ class DiscoveryPipeline:
     async def _score(
         self,
         resolved: Sequence[ResolvedCandidate],
-        leg: RouteLeg,
+        leg: SearchCorridor,
         counts: _Counts,
         on_progress: Callable[[int, int], None] | None = None,
     ) -> tuple[ScoredCandidate, ...]:

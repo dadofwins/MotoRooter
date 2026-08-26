@@ -40,6 +40,7 @@ from motorooter.planning.discovery.errors import DiscoveryError
 from motorooter.planning.discovery.lookup import FoundPlace, PlaceLookup
 from motorooter.planning.discovery.pipeline import DiscoveryPipeline
 from motorooter.planning.route_through import LegRouter, route_through_best
+from motorooter.planning.stitching import search_corridor
 from motorooter.routing.errors import RouteIncomplete, RoutingError
 from motorooter.routing.models import LegIntent
 from motorooter.trips.models import Poi, PoiCategory, Trip, TripLeg, Waypoint
@@ -572,14 +573,14 @@ class FindPlaces(_TripTool):
             raise ToolCallFailed(msg) from exc
 
         trip = await self._trip()
-        routed = [leg.routed for leg in trip.legs if leg.routed is not None]
-        if not routed:
+        corridor = search_corridor(trip)
+        if corridor is None:
             msg = "the trip has no routed geometry yet, so there is no corridor to search"
             raise ToolCallFailed(msg)
 
         found: tuple[Poi, ...] = ()
         summary = ""
-        async for progress in self._discovery.run(routed[0], categories):
+        async for progress in self._discovery.run(corridor, categories):
             if progress.pois:
                 found = progress.pois
             summary = progress.message

@@ -462,3 +462,71 @@ describe('the progress log', () => {
     }
   })
 })
+
+/**
+ * Narrowing what a run looks for.
+ *
+ * Discovery fans out one metered search per anchor **per category**, so this is not a tidiness
+ * feature — it is the difference between a cheap run and an expensive one, and the mouse could
+ * not express it at all until now.
+ */
+describe('useReplan with chosen categories', () => {
+  it('asks only for the kinds the rider chose', async () => {
+    const client = {
+      replan: vi.fn(
+        // eslint-disable-next-line require-yield
+        async function* (_slug: string, _request: ReplanRequest, _options?: RequestOptions) {
+          await new Promise(() => undefined)
+        },
+      ),
+    }
+    const { result } = renderHook(() => useReplan(client))
+
+    await act(async () => {
+      result.current.start('wabdr-north', ['wild_camp', 'campground'])
+      await Promise.resolve()
+    })
+
+    expect(client.replan.mock.calls[0]?.[1].categories).toEqual(['wild_camp', 'campground'])
+  })
+
+  it('leaves the field off entirely when the caller says nothing', async () => {
+    // Absent rather than empty: an empty list is a request to search for nothing, and the
+    // backend's own default is a better answer than a list this hook invented.
+    const client = {
+      replan: vi.fn(
+        // eslint-disable-next-line require-yield
+        async function* (_slug: string, _request: ReplanRequest, _options?: RequestOptions) {
+          await new Promise(() => undefined)
+        },
+      ),
+    }
+    const { result } = renderHook(() => useReplan(client))
+
+    await act(async () => {
+      result.current.start('wabdr-north')
+      await Promise.resolve()
+    })
+
+    expect(client.replan.mock.calls[0]?.[1]).not.toHaveProperty('categories')
+  })
+
+  it('still preserves the places a rider pinned', async () => {
+    const client = {
+      replan: vi.fn(
+        // eslint-disable-next-line require-yield
+        async function* (_slug: string, _request: ReplanRequest, _options?: RequestOptions) {
+          await new Promise(() => undefined)
+        },
+      ),
+    }
+    const { result } = renderHook(() => useReplan(client))
+
+    await act(async () => {
+      result.current.start('wabdr-north', ['wild_camp'])
+      await Promise.resolve()
+    })
+
+    expect(client.replan.mock.calls[0]?.[1].preserve_pinned).toBe(true)
+  })
+})

@@ -1242,6 +1242,41 @@ describe('App arriving', () => {
   })
 })
 
+describe('choosing what discovery looks for', () => {
+  it('sends only the kinds the rider chose', async () => {
+    // The last mouse-equivalence gap: `find_places` takes categories and the mouse could only
+    // say "everything", so "find me more restaurants" worked by typing and not by clicking.
+    const fake = createFakeMaps()
+    const router = fakeRouter()
+    render(<App mapLoader={fake.loader} mapId="motorooter-test-vector" client={router} />)
+    await mapReady(fake)
+    fake.clickMap(47.0, -120.0)
+    fake.clickMap(48.0, -120.5)
+    await waitFor(() => expect(router.createTrip).toHaveBeenCalled(), { timeout: 3000 })
+
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Food' }))
+    fireEvent.click(screen.getByRole('button', { name: /find places/i }))
+
+    await waitFor(() => expect(router.replan).toHaveBeenCalled())
+    const sent = router.replan.mock.calls[0]?.[1].categories ?? []
+    expect(sent).toContain('food')
+    // Off by default on purpose: a fuel station every 25 km is not information, and it is one
+    // of the most expensive things to search for.
+    expect(sent).not.toContain('fuel')
+  })
+
+  it('says what the narrowing buys, because otherwise there is no reason to do it', async () => {
+    const fake = createFakeMaps()
+    render(<App mapLoader={fake.loader} mapId="motorooter-test-vector" client={fakeRouter()} />)
+    await mapReady(fake)
+    fake.clickMap(47.0, -120.0)
+    fake.clickMap(48.0, -120.5)
+
+    expect(await screen.findByText(/5 of 9 kinds/)).toBeInTheDocument()
+    expect(screen.getByText(/fewer searches/i)).toBeInTheDocument()
+  })
+})
+
 describe('deciding about the places discovery found', () => {
   /** A trip already carrying discovered places, which is what a replan leaves behind. */
   function withPlaces() {

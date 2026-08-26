@@ -345,6 +345,12 @@ export interface components {
             live_update_interval_ms?: number | null;
             /** Provider */
             provider: string;
+            /**
+             * Reports Trustworthy Duration
+             * @description Whether this intent's engine returns a duration worth showing. False means the figure shown is derived from distance and surface, not reported: hosted ORS routes dirt through a bicycle profile and its times are bicycle times. Resolved here rather than client-side, for the same reason as the throttle — a hand-kept intent-to-engine map goes stale the day the policy table moves.
+             * @default false
+             */
+            reports_trustworthy_duration: boolean;
         };
         /**
          * LegIntent
@@ -477,6 +483,11 @@ export interface components {
              * @default false
              */
             reports_surface: boolean;
+            /**
+             * Reports Trustworthy Duration
+             * @default false
+             */
+            reports_trustworthy_duration: boolean;
         };
         /**
          * ReplanEvent
@@ -554,6 +565,11 @@ export interface components {
             ascent_m?: number | null;
             /** Distance M */
             distance_m: number;
+            /**
+             * Duration Is Trustworthy
+             * @default false
+             */
+            duration_is_trustworthy: boolean;
             /** Duration S */
             duration_s: number;
             /** Geometry */
@@ -655,17 +671,30 @@ export interface components {
              */
             created_at: string;
             /**
+             * Duration Is Estimated
+             * @description Whether any part of the total was derived rather than reported.
+             *
+             *     True unless every routed leg carried a trustworthy duration, and true for a trip
+             *     with no geometry at all — claiming exactness for a total of zero is worse than
+             *     admitting it is a guess. A number that looks exact when half of it is derived is the
+             *     failure this exists to prevent.
+             */
+            readonly duration_is_estimated: boolean;
+            /**
              * Edited At
              * Format: date-time
              */
             edited_at: string;
             /**
              * Estimated Duration S
-             * @description Riding time derived from distance and surface.
+             * @description Riding time, taking the best available figure for each leg.
              *
-             *     Not the provider's figure. Hosted ORS routes dirt through a bicycle profile and
-             *     reports bicycle times, so `RouteLeg.duration_s` is honest about what the engine said
-             *     and useless for telling a rider how long their day is.
+             *     Per leg, not per trip. Hosted ORS routes dirt through a bicycle profile and reports
+             *     bicycle times — 8 hours for 133 km — so its figure is useless and the speed table
+             *     wins. Google runs a car profile, and on 177 km of highway its figure beats the table
+             *     by half an hour. Applying either rule to the whole trip gets the other half wrong,
+             *     and the trusted-everywhere direction is the dangerous one: it would time a technical
+             *     unpaved section as though it were pavement.
              */
             readonly estimated_duration_s: number;
             /**
@@ -752,6 +781,11 @@ export interface components {
              * Format: date-time
              */
             created_at: string;
+            /**
+             * Duration Is Estimated
+             * @default true
+             */
+            duration_is_estimated: boolean;
             /**
              * Edited At
              * Format: date-time

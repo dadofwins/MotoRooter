@@ -2,6 +2,7 @@ import { render, screen } from '@testing-library/react'
 import { describe, expect, it } from 'vitest'
 import { SurfaceSummary } from './SurfaceSummary'
 import type { Coordinate, RouteLeg, TripLeg } from '../api/types'
+import { routeLeg } from '../api/fixtures'
 
 /**
  * The surface breakdown in words.
@@ -25,15 +26,12 @@ function leg(spans: RouteLeg['surface_spans'], distanceM: number): TripLeg {
     start_waypoint_index: 0,
     end_waypoint_index: 1,
     provider_override: null,
-    routed: {
+    routed: routeLeg({
       geometry,
       distance_m: distanceM,
-      duration_s: 60,
       provider: 'ors',
-      intent: 'unpaved',
       surface_spans: spans,
-      ascent_m: null,
-    },
+    }),
   }
 }
 

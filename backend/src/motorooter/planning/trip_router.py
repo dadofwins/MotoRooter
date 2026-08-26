@@ -48,6 +48,7 @@ from motorooter.routing.models import (
     RouteFingerprint,
     RouteLeg,
     RouteRequest,
+    stamped,
 )
 from motorooter.routing.policy import PolicyResolver
 from motorooter.trips.models import Trip, TripLeg
@@ -275,13 +276,18 @@ class TripRouter:
             routed = await provider.route(request)
         except Exception as exc:  # noqa: BLE001 -- deliberate; see docstring
             return exc
-        # Stamped here rather than in each adapter: the fingerprint describes the request,
-        # which this layer owns, and asking every provider to attach one would be both
-        # duplicated and easy to forget in a new adapter.
-        return routed.model_copy(
-            update={
-                "routed_from": RouteFingerprint.of(request, provider_override=leg.provider_override)
-            }
+        # Stamped here rather than in each adapter: what is stamped describes the request,
+        # which this layer owns, and asking every provider to attach it would be duplicated
+        # and easy to forget in a new adapter.
+        #
+        # Through `stamped` rather than by hand. This site built its own `model_copy` and so
+        # was the one place a new stamped field would be silently omitted — which is the
+        # exact failure `stamped` was written for, one field earlier.
+        return stamped(
+            routed,
+            request,
+            provider_override=leg.provider_override,
+            duration_is_trustworthy=provider.capabilities.reports_trustworthy_duration,
         )
 
     def _assemble(

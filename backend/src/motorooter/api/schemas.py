@@ -57,6 +57,16 @@ class IntentRouting(BaseModel):
             "preview-only: rubber-band locally and route only on release."
         ),
     )
+    reports_trustworthy_duration: bool = Field(
+        default=False,
+        description=(
+            "Whether this intent's engine returns a duration worth showing. False means "
+            "the figure shown is derived from distance and surface, not reported: hosted "
+            "ORS routes dirt through a bicycle profile and its times are bicycle times. "
+            "Resolved here rather than client-side, for the same reason as the throttle — "
+            "a hand-kept intent-to-engine map goes stale the day the policy table moves."
+        ),
+    )
 
 
 class RoutingCapabilitiesResponse(BaseModel):

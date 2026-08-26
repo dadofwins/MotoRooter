@@ -2,6 +2,7 @@ import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
 import { MapCanvas } from './MapCanvas'
 import type { GoogleMaps } from './loadGoogleMaps'
+import { routeLeg } from '../api/fixtures'
 import type { Coordinate, Poi, TripLeg, Waypoint } from '../api/types'
 
 /**
@@ -226,15 +227,7 @@ function leg(geometry: Coordinate[]): TripLeg {
     start_waypoint_index: 0,
     end_waypoint_index: 1,
     provider_override: null,
-    routed: {
-      geometry,
-      distance_m: 1,
-      duration_s: 1,
-      provider: 'fake',
-      intent: 'unpaved',
-      surface_spans: [],
-      ascent_m: null,
-    },
+    routed: routeLeg({ geometry: [...geometry], distance_m: 1, duration_s: 1 }),
   }
 }
 

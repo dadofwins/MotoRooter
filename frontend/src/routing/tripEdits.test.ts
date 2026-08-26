@@ -9,6 +9,7 @@ import {
 } from './tripEdits'
 import type { RouteEdit } from './tripEdits'
 import type { Coordinate, Poi, RouteLeg, TripLeg, Waypoint } from '../api/types'
+import { routeLeg } from '../api/fixtures'
 
 /**
  * The trip edits a drag performs.
@@ -28,15 +29,7 @@ function waypoint(lat: number, lon = -120): Waypoint {
 }
 
 function routed(geometry: readonly Coordinate[]): RouteLeg {
-  return {
-    geometry: [...geometry],
-    distance_m: 1000,
-    duration_s: 60,
-    provider: 'fake',
-    intent: 'unpaved',
-    surface_spans: [],
-    ascent_m: null,
-  }
+  return routeLeg({ geometry: [...geometry] })
 }
 
 function leg(start: number, end: number, geometry: readonly Coordinate[] = []): TripLeg {

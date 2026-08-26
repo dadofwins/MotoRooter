@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { polylineStyle, toRouteSegments } from './routeLayer'
 import type { Coordinate, RouteLeg, Surface, TripLeg } from '../api/types'
+import { routeLeg } from '../api/fixtures'
 
 /**
  * Turning a trip into drawable segments.
@@ -28,15 +29,7 @@ function leg(
     start_waypoint_index: 0,
     end_waypoint_index: 1,
     provider_override: null,
-    routed: {
-      geometry,
-      distance_m: 1000,
-      duration_s: 60,
-      provider: 'fake',
-      intent: 'unpaved',
-      surface_spans: spans,
-      ascent_m: null,
-    },
+    routed: routeLeg({ geometry: [...geometry], surface_spans: spans }),
     ...overrides,
   }
 }

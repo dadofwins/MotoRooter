@@ -35,5 +35,10 @@ class LegRoutingService:
         request = RouteRequest(
             waypoints=tuple(point.coordinate for point in waypoints), intent=intent
         )
-        leg = stamped(await provider.route(request), request, provider_override=provider_override)
+        leg = stamped(
+            await provider.route(request),
+            request,
+            provider_override=provider_override,
+            duration_is_trustworthy=provider.capabilities.reports_trustworthy_duration,
+        )
         return (leg,)

@@ -5,7 +5,9 @@ import { ApiError, ApiNotImplementedError } from './api/errors'
 import type { RequestOptions } from './api/client'
 import type { GoogleMaps } from './map/loadGoogleMaps'
 import {
+  intentRouting,
   poi as poiFixture,
+  providerCapabilities,
   routeLeg,
   routeLegResponse,
   trip as tripFixture,
@@ -80,7 +82,7 @@ function latLngEvent(coordinate: Coordinate): unknown {
 
 const CAPABILITIES: RoutingCapabilitiesResponse = {
   providers: [],
-  intents: { unpaved: { provider: 'ors', live_update_interval_ms: 0 } },
+  intents: { unpaved: intentRouting({ provider: 'ors', live_update_interval_ms: 0 }) },
 }
 
 interface FakeLine {
@@ -542,7 +544,7 @@ describe('App dragging the route', () => {
     const router = fakeRouter()
     router.routingCapabilities.mockResolvedValue({
       providers: [],
-      intents: { unpaved: { provider: 'ors', live_update_interval_ms: null } },
+      intents: { unpaved: intentRouting({ provider: 'ors', live_update_interval_ms: null }) },
     })
     render(<App mapLoader={fake.loader} mapId="motorooter-test-vector" client={router} />)
     await mapReady(fake)
@@ -1378,19 +1380,16 @@ describe('choosing how a segment routes', () => {
     const router = fakeRouter()
     router.routingCapabilities.mockResolvedValue({
       providers: [
-        {
+        providerCapabilities({
           name: 'google',
-          prefers_unpaved: false,
-          reports_surface: false,
-          map_matching: false,
           alternatives: true,
-          elevation: false,
           max_waypoints: 25,
           live_update_interval_ms: 1000,
-          daily_quota: null,
-        },
+        }),
       ],
-      intents: { highway_connector: { provider: 'google', live_update_interval_ms: 1000 } },
+      intents: {
+        highway_connector: intentRouting({ provider: 'google', live_update_interval_ms: 1000 }),
+      },
     })
     render(<App mapLoader={fake.loader} mapId="motorooter-test-vector" client={router} />)
     await mapReady(fake)
@@ -1441,8 +1440,8 @@ describe('dragging one leg of a multi-leg trip', () => {
   const MIXED_CAPABILITIES: RoutingCapabilitiesResponse = {
     providers: [],
     intents: {
-      highway_connector: { provider: 'google', live_update_interval_ms: 0 },
-      unpaved: { provider: 'ors', live_update_interval_ms: null },
+      highway_connector: intentRouting({ provider: 'google', live_update_interval_ms: 0 }),
+      unpaved: intentRouting({ provider: 'ors', live_update_interval_ms: null }),
     },
   }
 

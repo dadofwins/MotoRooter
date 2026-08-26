@@ -22,6 +22,11 @@ DEFAULT_CAPABILITIES = ProviderCapabilities(
     name="fake",
     prefers_unpaved=True,
     reports_surface=True,
+    # False on purpose, though a fixture duration is neither trustworthy nor not. Offline
+    # mode registers only this provider, so `make dev` and the whole suite run on it — and
+    # claiming trustworthy would mean the derived path, which is the code most likely to
+    # carry a bug, never executes outside production.
+    reports_trustworthy_duration=False,
     map_matching=True,
     alternatives=True,
     elevation=True,

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { summariseSurface, toWholePercentages } from './surfaceSummary'
 import type { Coordinate, RouteLeg, TripLeg } from '../api/types'
+import { routeLeg } from '../api/fixtures'
 
 /**
  * How much of a route is dirt, tarmac, and unsurveyed.
@@ -30,15 +31,12 @@ function leg(
     start_waypoint_index: 0,
     end_waypoint_index: 1,
     provider_override: null,
-    routed: {
+    routed: routeLeg({
       geometry,
       distance_m: distanceM,
-      duration_s: 60,
       provider: 'ors',
-      intent: 'unpaved',
       surface_spans: spans,
-      ascent_m: null,
-    },
+    }),
   }
 }
 

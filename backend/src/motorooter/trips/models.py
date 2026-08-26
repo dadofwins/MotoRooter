@@ -286,17 +286,40 @@ class Trip(BaseModel):
     @computed_field  # type: ignore[prop-decorator]
     @property
     def estimated_duration_s(self) -> float:
-        """Riding time derived from distance and surface.
+        """Riding time, taking the best available figure for each leg.
 
-        Not the provider's figure. Hosted ORS routes dirt through a bicycle profile and
-        reports bicycle times, so `RouteLeg.duration_s` is honest about what the engine said
-        and useless for telling a rider how long their day is.
+        Per leg, not per trip. Hosted ORS routes dirt through a bicycle profile and reports
+        bicycle times — 8 hours for 133 km — so its figure is useless and the speed table
+        wins. Google runs a car profile, and on 177 km of highway its figure beats the table
+        by half an hour. Applying either rule to the whole trip gets the other half wrong,
+        and the trusted-everywhere direction is the dangerous one: it would time a technical
+        unpaved section as though it were pavement.
         """
         return self.estimate_duration_s()
 
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def duration_is_estimated(self) -> bool:
+        """Whether any part of the total was derived rather than reported.
+
+        True unless every routed leg carried a trustworthy duration, and true for a trip
+        with no geometry at all — claiming exactness for a total of zero is worse than
+        admitting it is a guess. A number that looks exact when half of it is derived is the
+        failure this exists to prevent.
+        """
+        legs = self.routed_legs
+        return not legs or not all(leg.duration_is_trustworthy for leg in legs)
+
     def estimate_duration_s(self, speeds: RidingSpeeds = DEFAULT_RIDING_SPEEDS) -> float:
-        """Riding time under a given speed table, so the table can be varied in tests."""
-        return sum(estimate_leg_duration_s(leg, speeds) for leg in self.routed_legs)
+        """Riding time under a given speed table, so the table can be varied in tests.
+
+        The table only applies to legs whose provider is not trusted on duration; a trusted
+        leg contributes what its engine said, and no speed table overrides it.
+        """
+        return sum(
+            leg.duration_s if leg.duration_is_trustworthy else estimate_leg_duration_s(leg, speeds)
+            for leg in self.routed_legs
+        )
 
     def _surface_fraction(self, surface: Surface) -> float:
         measured = sum(leg.geometry_length_m for leg in self.routed_legs)
@@ -335,7 +358,18 @@ class TripSummary(BaseModel):
     """The same three shares the trip reports, so the index and the trip cannot disagree."""
 
     estimated_duration_s: float = 0.0
-    """Derived, never the provider's duration. See `Trip.estimated_duration_s`."""
+    """The best figure available per leg. See `Trip.estimated_duration_s`.
+
+    Was "derived, never the provider's duration", which stopped being true when duration
+    trustworthiness became a capability rather than a global rule.
+    """
+
+    duration_is_estimated: bool = True
+    """Whether any part of that total was derived rather than reported by its engine.
+
+    Carried into the summary so the trip list cannot show a figure the trip page would
+    caveat. Defaults true: an unset flag should read as a guess.
+    """
 
     needs_replan: bool
 
@@ -352,6 +386,7 @@ class TripSummary(BaseModel):
             total_unpaved_fraction=trip.total_unpaved_fraction,
             total_unknown_fraction=trip.total_unknown_fraction,
             estimated_duration_s=trip.estimated_duration_s,
+            duration_is_estimated=trip.duration_is_estimated,
             needs_replan=trip.needs_replan,
         )
 

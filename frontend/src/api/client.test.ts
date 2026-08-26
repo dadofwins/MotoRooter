@@ -1,4 +1,12 @@
 import { describe, expect, expectTypeOf, it, vi } from 'vitest'
+import {
+  intentRouting,
+  providerCapabilities,
+  routeLeg,
+  routeLegResponse,
+  trip as tripFixture,
+  tripSummary,
+} from './fixtures'
 import { createApiClient, type FetchLike } from './client'
 import { ApiError, ApiNetworkError, ApiNotImplementedError } from './errors'
 import { DragScheduler } from '../routing/dragScheduler'
@@ -73,57 +81,29 @@ function brokenBodyResponse(): Response {
 }
 
 /**
- * Figures the backend derives and always sends. They are required rather than optional
- * because a response never omits them — telling the client a number "might be absent" would
- * invite it to recompute, and a second implementation of "unknown surface does not count as
- * paved" is exactly the drift the generated contract exists to prevent.
+ * The shared builders, not local copies.
+ *
+ * This file kept its own `DERIVED_METRICS`, `TRIP`, `TRIP_SUMMARY` and leg literal, which is
+ * how a contract addition broke four files at once instead of one: `duration_is_estimated`
+ * and `duration_is_trustworthy` had to be added everywhere a shape was written out by hand.
+ * A builder per shape means the next field is one edit in `fixtures.ts`.
  */
-const DERIVED_METRICS = {
-  total_distance_m: 0,
-  total_paved_fraction: 0,
-  total_unpaved_fraction: 0,
-  total_unknown_fraction: 0,
-  estimated_duration_s: 0,
-} as const
+const TRIP: Trip = tripFixture()
 
-const TRIP: Trip = {
-  schema_version: 1,
-  slug: 'wabdr-north',
-  name: 'WABDR North',
-  created_at: '2026-08-25T18:00:00Z',
-  edited_at: '2026-08-25T18:00:00Z',
-  planned_at: null,
-  waypoints: [],
-  legs: [],
-  pois: [],
-  ...DERIVED_METRICS,
-}
+const TRIP_SUMMARY: TripSummary = tripSummary()
 
-const TRIP_SUMMARY: TripSummary = {
-  slug: 'wabdr-north',
-  name: 'WABDR North',
-  created_at: '2026-08-25T18:00:00Z',
-  edited_at: '2026-08-25T18:00:00Z',
-  needs_replan: false,
-  ...DERIVED_METRICS,
-}
-
-const LEG_RESPONSE: RouteLegResponse = {
-  leg: {
+const LEG_RESPONSE: RouteLegResponse = routeLegResponse({
+  leg: routeLeg({
     geometry: [
       { lat: 47.6, lon: -120.7 },
       { lat: 47.7, lon: -120.6 },
     ],
     distance_m: 14_200,
     duration_s: 900,
-    provider: 'fake',
-    intent: 'unpaved',
-    surface_spans: [],
-    ascent_m: null,
-  },
+  }),
   live_update_interval_ms: 3000,
   estimated_duration_s: 900,
-}
+})
 
 describe('request shape', () => {
   it('GETs health against the same origin by default', async () => {
@@ -189,24 +169,22 @@ describe('endpoints that exist today', () => {
   it('reads routing capabilities, which is where drag throttling comes from', async () => {
     const capabilities: RoutingCapabilitiesResponse = {
       providers: [
-        {
+        providerCapabilities({
           name: 'ors',
           prefers_unpaved: true,
           // Distinct from prefers_unpaved: that is what the engine will route *onto*,
           // this is what it can *tell you* about the result. Google is false for both
           // while meaning quite different things by each.
           reports_surface: true,
-          map_matching: false,
           alternatives: true,
           elevation: true,
-          max_waypoints: 50,
           live_update_interval_ms: 3000,
           daily_quota: 2000,
-        },
+        }),
       ],
       intents: {
-        unpaved: { provider: 'ors', live_update_interval_ms: 3000 },
-        highway_connector: { provider: 'google', live_update_interval_ms: 1000 },
+        unpaved: intentRouting({ provider: 'ors', live_update_interval_ms: 3000 }),
+        highway_connector: intentRouting({ provider: 'google', live_update_interval_ms: 1000 }),
       },
     }
     const fetchMock = stubFetch(json(capabilities))

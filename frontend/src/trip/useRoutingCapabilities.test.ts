@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { useRoutingCapabilities } from './useRoutingCapabilities'
 import type { RequestOptions } from '../api/client'
 import type { RoutingCapabilitiesResponse } from '../api/types'
+import { intentRouting, providerCapabilities } from '../api/fixtures'
 
 /**
  * Where the drag cadence comes from.
@@ -16,22 +17,20 @@ import type { RoutingCapabilitiesResponse } from '../api/types'
 
 const CAPABILITIES: RoutingCapabilitiesResponse = {
   providers: [
-    {
+    providerCapabilities({
       name: 'ors',
       prefers_unpaved: true,
       reports_surface: true,
-      map_matching: false,
       alternatives: true,
       elevation: true,
-      max_waypoints: 50,
       live_update_interval_ms: 3000,
       daily_quota: 2000,
-    },
+    }),
   ],
   intents: {
-    unpaved: { provider: 'ors', live_update_interval_ms: 3000 },
-    highway_connector: { provider: 'google', live_update_interval_ms: 1000 },
-    manual_track: { provider: 'ors', live_update_interval_ms: null },
+    unpaved: intentRouting({ provider: 'ors', live_update_interval_ms: 3000 }),
+    highway_connector: intentRouting({ provider: 'google', live_update_interval_ms: 1000 }),
+    manual_track: intentRouting({ provider: 'ors', live_update_interval_ms: null }),
   },
 }
 
@@ -154,17 +153,12 @@ describe('useRoutingCapabilities.reportsSurface', () => {
           ...CAPABILITIES,
           providers: [
             ...CAPABILITIES.providers,
-            {
+            providerCapabilities({
               name: 'google',
-              prefers_unpaved: false,
-              reports_surface: false,
-              map_matching: false,
               alternatives: true,
-              elevation: false,
               max_waypoints: 25,
               live_update_interval_ms: 1000,
-              daily_quota: null,
-            },
+            }),
           ],
         }),
       ),

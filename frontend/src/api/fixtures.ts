@@ -20,7 +20,9 @@
  */
 import type {
   Coordinate,
+  IntentRouting,
   Poi,
+  ProviderCapabilities,
   RouteLeg,
   RouteLegResponse,
   Trip,
@@ -47,6 +49,47 @@ export function routeLeg(overrides: Partial<RouteLeg> = {}): RouteLeg {
     provider: 'fake',
     intent: 'unpaved',
     routed_from: null,
+    duration_is_trustworthy: false,
+    ...overrides,
+  }
+}
+
+/**
+ * A provider's declared capabilities.
+ *
+ * Here rather than written out at call sites because this shape grows: `reports_surface`,
+ * `per_minute_quota` and `reports_trustworthy_duration` were each added to it, and each
+ * addition broke every literal at once in files the backend engineer may not edit. Four
+ * blocked handoffs so far, which is three more than the lesson costs.
+ *
+ * Defaults describe a modest engine that admits to nothing, so a test asserting a capability
+ * has to ask for it — and therefore says which capability it is about.
+ */
+export function providerCapabilities(
+  overrides: Partial<ProviderCapabilities> = {},
+): ProviderCapabilities {
+  return {
+    name: 'fake',
+    prefers_unpaved: false,
+    reports_surface: false,
+    reports_trustworthy_duration: false,
+    map_matching: false,
+    alternatives: false,
+    elevation: false,
+    max_waypoints: 50,
+    live_update_interval_ms: 0,
+    daily_quota: null,
+    per_minute_quota: null,
+    ...overrides,
+  }
+}
+
+/** How one intent resolves, as `GET /api/routing/capabilities` reports it. */
+export function intentRouting(overrides: Partial<IntentRouting> = {}): IntentRouting {
+  return {
+    provider: 'fake',
+    live_update_interval_ms: 0,
+    reports_trustworthy_duration: false,
     ...overrides,
   }
 }
@@ -79,6 +122,7 @@ const DERIVED_METRICS = {
   total_unpaved_fraction: 0,
   total_unknown_fraction: 0,
   estimated_duration_s: 0,
+  duration_is_estimated: true,
 } as const
 
 export function trip(overrides: Partial<Trip> = {}): Trip {

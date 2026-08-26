@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from '@testing-library/react'
+import { fireEvent, render, screen, within } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
 import { RoutePoints } from './RoutePoints'
 import { waypoint } from '../api/fixtures'
@@ -118,5 +118,63 @@ describe('RoutePoints', () => {
     const rows = screen.getAllByRole('listitem')
     expect(rows[0]?.textContent).toMatch(/placed by you/i)
     expect(rows[1]?.textContent).not.toMatch(/placed by you/i)
+  })
+})
+
+/**
+ * A round trip repeats a place, and the first real trip anyone planned was one.
+ *
+ * Tim: *"a 3 day trip starting in Woodinville, WA going east and coming back."* Coming back means
+ * the same coordinate appears twice — and these rows are keyed on the coordinate, which I changed
+ * them to when keying on the index cost a keyboard user their focus on every removal. That fix
+ * traded one defect for another: two identical keys let React associate a row with the wrong DOM
+ * node, which is the same class of bug wearing different clothes.
+ */
+describe('RoutePoints on a round trip', () => {
+  const home = waypoint(47.75, -122.16, { name: 'Woodinville' })
+  const away = waypoint(47.52, -120.46, { name: 'Cashmere' })
+
+  it('renders a route that returns to where it started', () => {
+    const warned: unknown[][] = []
+    const spy = vi.spyOn(console, 'error').mockImplementation((...args: unknown[]) => {
+      warned.push(args)
+    })
+    try {
+      render(<RoutePoints waypoints={[home, away, home]} onRemove={vi.fn()} />)
+
+      expect(screen.getAllByRole('listitem')).toHaveLength(3)
+      // React warns rather than throwing, so a duplicate key is silent in a passing suite until
+      // something reuses the wrong node.
+      expect(warned.flat().join(' ')).not.toMatch(/same key|duplicate key/i)
+    } finally {
+      spy.mockRestore()
+    }
+  })
+
+  it('removes the leg of the round trip the rider chose, not the other one', () => {
+    // The failure a duplicate key actually causes: the rows are interchangeable, so the wrong one
+    // answers. Woodinville appears at index 0 and index 2 and they are different stops.
+    const onRemove = vi.fn()
+    render(<RoutePoints waypoints={[home, away, home]} onRemove={onRemove} />)
+
+    const rows = screen.getAllByRole('listitem')
+    const last = rows.at(-1)
+    if (last === undefined) throw new Error('no rows')
+    fireEvent.click(within(last).getByRole('button'))
+
+    expect(onRemove).toHaveBeenCalledWith(2)
+  })
+
+  it('keeps a row stable when a different point is removed', () => {
+    // The property the coordinate key was introduced for, and which must survive the fix: taking
+    // out a point must not remount the rows below it and drop the focus a keyboard user holds.
+    const { rerender } = render(
+      <RoutePoints waypoints={[home, away, home]} onRemove={vi.fn()} />,
+    )
+    const before = screen.getAllByRole('listitem').at(-1)
+
+    rerender(<RoutePoints waypoints={[home, home]} onRemove={vi.fn()} />)
+
+    expect(screen.getAllByRole('listitem').at(-1)).toBe(before)
   })
 })

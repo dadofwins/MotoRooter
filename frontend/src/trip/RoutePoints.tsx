@@ -80,6 +80,25 @@ export function RoutePoints({
    * rail was rendered and examined. It earns its place only when the list is mixed, which is
    * exactly when a replan has added or moved points the rider did not place.
    */
+  /**
+   * A key that is both unique and stable, which the obvious two choices are not.
+   *
+   * The index remounts every row below a removal and costs a keyboard user the focus they were
+   * holding. The bare coordinate collides on a round trip — the first real trip anyone planned
+   * was "starting in Woodinville and coming back", so the same place appears twice and React
+   * associates a row with the wrong node.
+   *
+   * Numbering the repeats gives both: removing some other point leaves every key untouched, and
+   * two stops at the same place stay distinct.
+   */
+  const seenAt = new Map<string, number>()
+  const keys = waypoints.map((waypoint) => {
+    const place = `${String(waypoint.coordinate.lat)},${String(waypoint.coordinate.lon)}`
+    const repeat = seenAt.get(place) ?? 0
+    seenAt.set(place, repeat + 1)
+    return `${place}#${String(repeat)}`
+  })
+
   const mixedProvenance =
     waypoints.some((waypoint) => waypoint.pinned) &&
     waypoints.some((waypoint) => !waypoint.pinned)
@@ -94,10 +113,7 @@ export function RoutePoints({
             // Keyed on where the point is, not on its position in the list. Keying on the index
             // remounted every row below a removal, which cost a keyboard user the focus they
             // were holding mid-list.
-            <li
-              key={`${String(waypoint.coordinate.lat)},${String(waypoint.coordinate.lon)}`}
-              className="points__row"
-            >
+            <li key={keys[index]} className="points__row">
               <span className="points__index" aria-hidden="true">
                 {index + 1}
               </span>

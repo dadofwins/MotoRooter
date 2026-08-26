@@ -527,12 +527,6 @@ export interface components {
              */
             categories?: components["schemas"]["PoiCategory"][];
             /**
-             * Preserve Pinned
-             * @description Keep POIs the user pinned and legs they have not touched, rather than discarding the whole plan.
-             * @default true
-             */
-            preserve_pinned: boolean;
-            /**
              * Prompt
              * @description Free-text steer from the chat bar, e.g. 'prefer hot springs'.
              */

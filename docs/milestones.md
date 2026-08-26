@@ -7,61 +7,38 @@ and confirmed by Tim. See "Routing quality" in the root `CLAUDE.md`. Consequence
 is good enough, waypoint density is a hard requirement on the LLM, and provider durations are
 unusable.
 
-## M1 — MVP — the planning experience, end to end
+## M1 — MVP — **COMPLETE** (2026-08-26)
 
-Tim's definition, verbatim in intent, with where each item actually stands
-(**last audited 2026-08-25, against `main`, by reading the code rather than the queue**):
+All five of Tim's items work end to end against real providers.
 
-| # | Item | State |
+| # | Item | Where it lives |
 |---|---|---|
-| 1 | Type in the chat box and have tool calls execute | **In progress.** Rail merged; tools being built |
-| 2 | Click and drag a route | **Done** |
-| 3 | One button for a full generation: POIs, gas, campsites, hotels | **Done** |
-| 4 | See POIs, click one, get Places detail — images, ratings | **Done** |
-| 5 | Route through the found POIs, or add/ignore each | **Half.** Selective add works; the bulk button does not exist |
+| 1 | Chat box with executing tool calls | Rail bottom-right; six tools over `POST /trips/{slug}/chat` |
+| 2 | Click and drag a route | Per-leg, ~917 ms, cadence resolved per intent |
+| 3 | One button for a full generation | "Find places along the route", ~20 s |
+| 4 | POIs with Places detail — images, ratings | List in the rail and map pins, both opening the dialog |
+| 5 | Route through found POIs, or add/ignore each | Per-group bulk buttons, right-click add, Ignore |
 
-**What M1 is not.** No GPX export, no day splitting, no multi-day planning, no accounts.
+**Two deliberate departures from the literal wording**, both argued rather than assumed:
 
-### What is left, and nothing else is
+- Item 5 is **per group**, not one button over everything found. Twenty-nine places is a search
+  result, not an itinerary, and a single button nobody presses is the demo-shaped version of the
+  feature — which is why the gap survived unnoticed. The literal single button is a few lines if
+  Tim wants it too.
+- The landing screen **auto-opens** a returning rider's only trip, with a persistent "New trip"
+  control so create stays reachable. Tim's call.
 
-**Item 1 — the assistant.** `fe/chat-rail` is merged and streams; `POST /trips/{slug}/chat` is
-still 501 and no concrete `Tool` exists. Six tools agreed: `find_places`, `add_waypoint`,
-`remove_waypoint`, `set_leg_intent`, `add_poi_to_route`, `describe_trip`.
+### What M1 cost, worth remembering
 
-Two of those cannot ship yet, and the reason is the rule rather than the code. *Every tool the
-assistant can call must also be reachable by mouse.* Today `remove_waypoint` has only "Remove
-last point", and `set_leg_intent` has no per-leg control at all — so shipping either would make
-chat the only way to do something, in an app whose central design rule is that it must not be.
-The affordances are the blocker, not the tools.
+The long pole was never the feature work. It was that things were merged, green, and called by
+nobody — **six times**: `createApiClient`, POI pins with no data source, `routed_from` unstamped
+on the fast path, the chat client method living only on a stale branch, `PlaceDetails` never
+assigned to `app.state`, and `trip_router` hand-rolling a copy instead of calling `stamped`. A
+diff cannot show what does not call it, and every review passed.
 
-**Item 5 — the bulk button.** "One button to route through the found POIs" has no
-implementation. `addPoiToRoute` covers the selective half via right-click. This is the smallest
-remaining M1 item and the easiest to forget, because item 5 reads as done from the demo.
-
-### Also outstanding, not part of M1 but asked for
-
-- **Settings dialog** behind a gear icon, housing miles/km. **Low priority — Tim's call,
-  2026-08-25: "we can come back to it".** The miles/km toggle already works where it is, so
-  this is tidying rather than function. Do not spend M1 time on it.
-- Per-category discovery control, so "find me more restaurants" has a mouse equivalent at that
-  granularity. This one is *not* low priority despite sharing a home with the settings dialog —
-  it is the third mouse-equivalence gap, and `find_places` is the tool Tim named himself.
-
-### Resolved since this document was written
-
-- Derived trip duration — **done**, and then corrected: trustworthiness is a per-provider
-  capability, because Google's car profile beats our estimate on highway. See root `CLAUDE.md`.
-- The stitching gap threshold — **measured** on a real mixed google/ors trip: 0.5 m and 11.3 m
-  observed, bridged below 500 m.
-- Discovery speed — ten minutes and stalling, now 19.1 s live.
-- Anchor naming — was searching the wrong area entirely; 21 of 25 candidates dropped for
-  distance before the fix.
-
-### Still deferred, deliberately
-
-- GPX export, and the hardware test on a real GPS unit.
-- Ascent, until the 6,400–8,800 m against 3,188 m discrepancy is explained.
-- `be/road-expansion`, shelved pending re-measurement now that naming is fixed.
+The structural answer landed with `be/places-detail`: optional services are declared in one place
+and **a name declared but not built raises at startup**. Extend that shape rather than trusting
+review to catch the seventh.
 
 ## M2 and beyond — not yet scoped
 

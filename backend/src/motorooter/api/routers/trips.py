@@ -260,6 +260,7 @@ async def _chat_stream(
                 kind=step.kind,
                 message=step.message,
                 tool=step.tool,
+                progress=step.progress,
                 truncated=step.truncated,
                 trip_changed=changed,
             )

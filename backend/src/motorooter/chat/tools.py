@@ -29,7 +29,13 @@ from typing import Any, ClassVar, Protocol
 from pydantic import Field
 
 from motorooter.llm.errors import ToolCallFailed
-from motorooter.llm.tools import Tool, ToolArguments, ToolOutcome, ToolRegistry
+from motorooter.llm.tools import (
+    ProgressReport,
+    Tool,
+    ToolArguments,
+    ToolOutcome,
+    ToolRegistry,
+)
 from motorooter.planning.discovery.errors import DiscoveryError
 from motorooter.planning.discovery.lookup import FoundPlace, PlaceLookup
 from motorooter.planning.discovery.pipeline import DiscoveryPipeline
@@ -151,7 +157,7 @@ class DescribeTrip(_TripTool):
     )
     arguments: ClassVar[type] = DescribeTripArguments
 
-    async def run(self, arguments: Any) -> ToolOutcome:  # noqa: ANN401 -- narrowed by base
+    async def run(self, arguments: Any, on_progress: ProgressReport | None = None) -> ToolOutcome:  # noqa: ANN401 -- narrowed by base
         trip = await self._trip()
         lines = [f"Trip {trip.name!r} ({trip.slug})", _numbered(trip)]
 
@@ -231,7 +237,7 @@ class AddWaypoint(_TripTool):
     )
     arguments: ClassVar[type] = AddWaypointArguments
 
-    async def run(self, arguments: Any) -> ToolOutcome:  # noqa: ANN401 -- narrowed by base
+    async def run(self, arguments: Any, on_progress: ProgressReport | None = None) -> ToolOutcome:  # noqa: ANN401 -- narrowed by base
         trip = await self._trip()
         found = await self._find(arguments.name, trip)
         chosen = _choose(found, arguments.name, arguments.place_id)
@@ -263,7 +269,7 @@ class RemoveWaypoint(_TripTool):
     )
     arguments: ClassVar[type] = RemoveWaypointArguments
 
-    async def run(self, arguments: Any) -> ToolOutcome:  # noqa: ANN401 -- narrowed by base
+    async def run(self, arguments: Any, on_progress: ProgressReport | None = None) -> ToolOutcome:  # noqa: ANN401 -- narrowed by base
         trip = await self._trip()
         if arguments.index >= len(trip.waypoints):
             msg = (
@@ -308,7 +314,7 @@ class SetLegIntent(_TripTool):
     )
     arguments: ClassVar[type] = SetLegIntentArguments
 
-    async def run(self, arguments: Any) -> ToolOutcome:  # noqa: ANN401 -- narrowed by base
+    async def run(self, arguments: Any, on_progress: ProgressReport | None = None) -> ToolOutcome:  # noqa: ANN401 -- narrowed by base
         trip = await self._trip()
         try:
             intent = LegIntent(arguments.intent)
@@ -362,7 +368,7 @@ class AddPoiToRoute(_TripTool):
     )
     arguments: ClassVar[type] = AddPoiToRouteArguments
 
-    async def run(self, arguments: Any) -> ToolOutcome:  # noqa: ANN401 -- narrowed by base
+    async def run(self, arguments: Any, on_progress: ProgressReport | None = None) -> ToolOutcome:  # noqa: ANN401 -- narrowed by base
         trip = await self._trip()
         match = next((poi for poi in trip.pois if poi.place_id == arguments.place_id), None)
         if match is None:
@@ -409,7 +415,21 @@ class FindPlaces(_TripTool):
     )
     arguments: ClassVar[type] = FindPlacesArguments
 
-    async def run(self, arguments: Any) -> ToolOutcome:  # noqa: ANN401 -- narrowed by base
+    reports_progress: ClassVar[bool] = True
+    """The only tool slow enough to need it: tens of seconds against milliseconds."""
+
+    async def run(
+        self,
+        arguments: Any,  # noqa: ANN401 -- narrowed by the subclass's arguments model
+        on_progress: ProgressReport | None = None,
+    ) -> ToolOutcome:
+        """Search along the route, reporting as it goes.
+
+        The slowest thing the assistant can do — tens of seconds — and the only tool that
+        takes a progress callback. The pipeline has always emitted these events; this stage
+        used to consume the stream and keep only the last, so the same work that fills a bar
+        from the Replan button showed nothing at all in the chat rail.
+        """
         if self._discovery is None:
             msg = (
                 "place search is not available: this deployment has no search credentials "
@@ -436,6 +456,8 @@ class FindPlaces(_TripTool):
             if progress.pois:
                 found = progress.pois
             summary = progress.message
+            if on_progress is not None:
+                on_progress(progress.message, progress.progress)
 
         if not found:
             return ToolOutcome(content=f"Found nothing worth pinning. {summary}")

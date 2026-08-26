@@ -29,6 +29,7 @@ project, but a runaway loop is a *bug* that happens to spend money, and this is 
 place with the standing to stop it.
 """
 
+import asyncio
 import logging
 from collections.abc import AsyncIterator, Sequence
 from dataclasses import dataclass, field
@@ -36,15 +37,18 @@ from typing import Literal
 
 from motorooter.clock import Clock, SystemClock
 from motorooter.llm.errors import LlmError, ToolCallFailed
-from motorooter.llm.messages import Message, ToolMessage
+from motorooter.llm.messages import Message, ToolCall, ToolMessage
 from motorooter.llm.protocol import LlmClient
-from motorooter.llm.tools import ToolOutcome, ToolRegistry
+from motorooter.llm.tools import ProgressReport, ToolOutcome, ToolRegistry
 from motorooter.routing.errors import RoutingError
 from motorooter.trips.errors import TripError
 
 logger = logging.getLogger(__name__)
 
-EventKind = Literal["message", "tool_started", "tool_finished", "tool_failed", "done"]
+EventKind = Literal[
+    "message", "tool_started", "tool_progress", "tool_finished", "tool_failed", "done"
+]
+
 
 _DOMAIN_ERRORS = (ToolCallFailed, LlmError, RoutingError, TripError)
 """Failures whose messages we write, and which therefore may be shown to the model.
@@ -122,6 +126,14 @@ class AgentEvent:
     message: str = ""
     tool: str | None = None
     outcome: ToolOutcome | None = None
+
+    progress: float | None = None
+    """How far through the current tool, on a `tool_progress` event.
+
+    Within the tool, not within the turn. A turn's total work is decided by the model while
+    it is deciding it, so a turn-level fraction would be invented — the same reason the
+    discovery bar counts work units rather than anchors.
+    """
 
     truncated: bool = False
     """Set on the terminal `done` event when a limit stopped the run.
@@ -203,7 +215,26 @@ class Agent:
                 if budget.exhausted(self._clock.now()) is not None:
                     break
                 yield AgentEvent(kind="tool_started", tool=call.name)
-                event, result, ran = await self._invoke(budget, call.id, call.name, call.arguments)
+
+                if self._reports_progress(call.name):
+                    # Progress escapes through a queue because the tool is awaited: anything
+                    # it reports while running cannot be yielded from here until the await
+                    # returns, which is the thirty seconds a rider is waiting through.
+                    #
+                    # Only for tools that opt in. Running every tool in a task would change
+                    # exception semantics for all of them — a `BaseException` raised inside
+                    # a task does not surface the way an awaited one does, which an existing
+                    # test caught immediately.
+                    async for update, done in self._with_progress(budget, call):
+                        if done is None:
+                            yield update
+                        else:
+                            event, result, ran = done
+                else:
+                    event, result, ran = await self._invoke(
+                        budget, call.id, call.name, call.arguments
+                    )
+
                 conversation.append(self._record(budget, result))
                 executed += int(ran)
                 yield event
@@ -238,8 +269,53 @@ class Agent:
         budget.output_chars += len(content)
         return result.model_copy(update={"content": content})
 
+    def _reports_progress(self, name: str) -> bool:
+        """Whether the named tool accepts an `on_progress` callback.
+
+        Resolved here rather than inside `_invoke` so the caller knows, before it starts,
+        whether it needs the machinery that lets a running tool speak.
+        """
+        try:
+            return self._registry.get(name).reports_progress
+        except ToolCallFailed:
+            return False
+
+    async def _with_progress(
+        self, budget: _Budget, call: ToolCall
+    ) -> AsyncIterator[tuple[AgentEvent, tuple[AgentEvent, ToolMessage, bool] | None]]:
+        """Yield progress as it arrives, then the outcome last."""
+        updates: asyncio.Queue[AgentEvent | None] = asyncio.Queue()
+
+        def report(message: str, fraction: float | None) -> None:
+            updates.put_nowait(
+                AgentEvent(kind="tool_progress", tool=call.name, message=message, progress=fraction)
+            )
+
+        async def invoke() -> tuple[AgentEvent, ToolMessage, bool]:
+            try:
+                return await self._invoke(budget, call.id, call.name, call.arguments, report)
+            finally:
+                updates.put_nowait(None)
+
+        runner = asyncio.create_task(invoke())
+        try:
+            while True:
+                update = await updates.get()
+                if update is None:
+                    break
+                yield update, None
+            outcome = await runner
+            yield outcome[0], outcome
+        finally:
+            runner.cancel()
+
     async def _invoke(
-        self, budget: _Budget, call_id: str, name: str, arguments: str
+        self,
+        budget: _Budget,
+        call_id: str,
+        name: str,
+        arguments: str,
+        report: ProgressReport | None = None,
     ) -> tuple[AgentEvent, ToolMessage, bool]:
         """Run one tool call. The bool reports whether the tool actually executed."""
         if budget.withdrawn(name):
@@ -260,7 +336,7 @@ class Agent:
 
         budget.tool_calls += 1
         try:
-            outcome = await tool.run(parsed)
+            outcome = await tool.run(parsed, on_progress=report)
         except _DOMAIN_ERRORS as exc:
             budget.consecutive_failures[name] = budget.consecutive_failures.get(name, 0) + 1
             return (*self._failure(call_id, name, str(exc)), True)

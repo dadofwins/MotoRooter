@@ -21,7 +21,7 @@ from motorooter.clock import FakeClock
 from motorooter.llm.agent import Agent, AgentLimits
 from motorooter.llm.messages import AssistantMessage, ToolCall, ToolMessage, UserMessage
 from motorooter.llm.providers.fake import FakeLlmClient
-from motorooter.llm.tools import Tool, ToolArguments, ToolOutcome, ToolRegistry
+from motorooter.llm.tools import ProgressReport, Tool, ToolArguments, ToolOutcome, ToolRegistry
 from motorooter.routing.errors import NoRouteFound, ProviderUnavailable
 
 
@@ -40,7 +40,11 @@ class Boom(Tool):
         self._error = error
         self.call_count = 0
 
-    async def run(self, arguments: Args) -> ToolOutcome:
+    async def run(
+        self,
+        arguments: Args,
+        on_progress: ProgressReport | None = None,
+    ) -> ToolOutcome:
         self.call_count += 1
         raise self._error
 
@@ -53,7 +57,11 @@ class Big(Tool):
     def __init__(self, size: int) -> None:
         self._size = size
 
-    async def run(self, arguments: Args) -> ToolOutcome:
+    async def run(
+        self,
+        arguments: Args,
+        on_progress: ProgressReport | None = None,
+    ) -> ToolOutcome:
         return ToolOutcome(content="x" * self._size)
 
 
@@ -65,7 +73,11 @@ class Ok(Tool):
     def __init__(self) -> None:
         self.call_count = 0
 
-    async def run(self, arguments: Args) -> ToolOutcome:
+    async def run(
+        self,
+        arguments: Args,
+        on_progress: ProgressReport | None = None,
+    ) -> ToolOutcome:
         self.call_count += 1
         return ToolOutcome(content="fine")
 
@@ -222,7 +234,11 @@ class TestWorkIsBoundedNotJustTurns:
             description = "Takes time."
             arguments = Args
 
-            async def run(self, arguments: Args) -> ToolOutcome:
+            async def run(
+                self,
+                arguments: Args,
+                on_progress: ProgressReport | None = None,
+            ) -> ToolOutcome:
                 clock.advance(60.0)
                 return ToolOutcome(content="fine")
 
@@ -310,7 +326,11 @@ class TestAToolThatKeepsFailing:
             def __init__(self) -> None:
                 self.call_count = 0
 
-            async def run(self, arguments: Args) -> ToolOutcome:
+            async def run(
+                self,
+                arguments: Args,
+                on_progress: ProgressReport | None = None,
+            ) -> ToolOutcome:
                 self.call_count += 1
                 if self.call_count % 2 == 1:
                     msg = "transient"
@@ -370,7 +390,11 @@ class TestArgumentsAreStrict:
             def __init__(self) -> None:
                 self.seen: list[Search] = []
 
-            async def run(self, arguments: Search) -> ToolOutcome:
+            async def run(
+                self,
+                arguments: Search,
+                on_progress: ProgressReport | None = None,
+            ) -> ToolOutcome:
                 self.seen.append(arguments)
                 return ToolOutcome(content="ok")
 
@@ -405,7 +429,11 @@ class TestArgumentsAreStrict:
             description = "Search."
             arguments = Search
 
-            async def run(self, arguments: Search) -> ToolOutcome:
+            async def run(
+                self,
+                arguments: Search,
+                on_progress: ProgressReport | None = None,
+            ) -> ToolOutcome:
                 return ToolOutcome(content="ok")
 
         spec = ToolRegistry([SearchTool()]).specs()[0]
@@ -422,7 +450,11 @@ class TestArgumentsAreStrict:
             description = "Loose."
             arguments = Loose
 
-            async def run(self, arguments: Loose) -> ToolOutcome:
+            async def run(
+                self,
+                arguments: Loose,
+                on_progress: ProgressReport | None = None,
+            ) -> ToolOutcome:
                 return ToolOutcome(content="ok")
 
         with pytest.raises(Exception, match="extra"):

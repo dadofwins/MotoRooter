@@ -1884,8 +1884,10 @@ describe('what the rail puts first', () => {
     await mapReady(fake)
     await screen.findByRole('button', { name: /^Lone Fir/ })
 
-    // Replan and GPX are asks; chat is an ask; points and places are what came back.
-    expect(railOrder()).toEqual(['replan', 'gpx', 'chat', 'points', 'places'])
+    // Asks above answers, and chat first among the asks. Tim: "the chat area should go above
+    // 'N points placed' and 'find places along the route'" — he types first and clicks second,
+    // so the thing he types into leads.
+    expect(railOrder()).toEqual(['chat', 'replan', 'gpx', 'points', 'places'])
   })
 
   it('keeps the primary action ahead of the points list however long it gets', async () => {
@@ -2953,5 +2955,59 @@ describe('App with crowded places', () => {
     expect(
       await screen.findByRole('complementary', { name: /Mineral Springs/ }),
     ).toBeInTheDocument()
+  })
+})
+
+/**
+ * Where the chat sits in the rail.
+ *
+ * Tim: *"I think the chat area should go above 'N points placed' and 'find places along the
+ * route'."* Chat had already been moved above the outputs on the grounds that an ask is an input;
+ * this is the stronger version of the same rule, and it is him saying how he uses the app. He
+ * types first and clicks second, so the thing he types into comes first.
+ */
+describe('App rail order', () => {
+  async function railed() {
+    const fake = createFakeMaps()
+    render(<App mapLoader={fake.loader} mapId="motorooter-test-vector" client={fakeRouter()} />)
+    await mapReady(fake)
+    fake.clickMap(47.6, -120.7)
+    fake.clickMap(48.1, -120.2)
+    await screen.findByText(/2 points placed/)
+    return fake
+  }
+
+  /** True when `first` comes before `second` in the document. */
+  function precedes(first: Element, second: Element): boolean {
+    return (first.compareDocumentPosition(second) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0
+  }
+
+  it('puts the chat above the route summary', async () => {
+    await railed()
+
+    const chat = screen.getByRole('textbox', { name: /message|ask|chat/i })
+    const summary = screen.getByText(/2 points placed/)
+
+    expect(precedes(chat, summary)).toBe(true)
+  })
+
+  it('puts the chat above Replan, which is the other thing it outranks', async () => {
+    await railed()
+
+    const chat = screen.getByRole('textbox', { name: /message|ask|chat/i })
+    // Replan appears once the trip has a slug, which the save supplies a tick after the points.
+    const replan = await screen.findByRole('button', { name: /find places along the route/i })
+
+    expect(precedes(chat, replan)).toBe(true)
+  })
+
+  it('still opens with the greeting, which is the first thing on an empty trip', async () => {
+    // Moving the rail around is exactly how an opening line ends up below the fold, and this one
+    // was measured once already to check it was reachable at all.
+    const fake = createFakeMaps()
+    render(<App mapLoader={fake.loader} mapId="motorooter-test-vector" client={fakeRouter()} />)
+    await mapReady(fake)
+
+    expect(await screen.findByText(/Describe your trip/)).toBeInTheDocument()
   })
 })

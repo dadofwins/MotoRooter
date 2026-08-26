@@ -24,7 +24,7 @@ import type {
   HealthResponse,
   PoiDetailResponse,
   ReplanEvent,
-  ReplanInput,
+  ReplanRequest,
   RouteLegInput,
   RouteLegResponse,
   RoutingCapabilitiesResponse,
@@ -79,7 +79,7 @@ export interface ApiClient {
    */
   replan(
     slug: string,
-    request: ReplanInput,
+    request: ReplanRequest,
     options?: RequestOptions,
   ): AsyncGenerator<ReplanEvent, void, undefined>
   /**
@@ -389,7 +389,7 @@ export function createApiClient(options: ApiClientOptions = {}): ApiClient {
 
     async *replan(
       slug: string,
-      request: ReplanInput,
+      request: ReplanRequest,
       requestOptions?: RequestOptions,
     ): AsyncGenerator<ReplanEvent, void, undefined> {
       const response = await send(

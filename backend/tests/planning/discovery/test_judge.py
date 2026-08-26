@@ -356,3 +356,75 @@ class TestAnUnusableReplyIsRecorded:
         )
         await CandidateJudge(client).judge([resolved("A")], LEG)
         assert not caplog.records
+
+
+class TestScoringReportsProgress:
+    """ "Scoring 41 places" sat still for half a minute, which is Tim's complaint.
+
+    It cannot be forty-one calls: the judge compares candidates against each other, and
+    splitting the batch is what buys the ranking. So the call stays whole and the *reply* is
+    streamed, counting entries as they parse — one call, ranking intact, real increments.
+
+    The batch is also four times anything measured before. Road-expansion plus a three-day
+    corridor produced 41 candidates where the judge had only ever been exercised at 6 to 11.
+    """
+
+    @staticmethod
+    def _reply(count: int) -> str:
+        entries = ", ".join(
+            f'{{"index": {i}, "score": 0.8, "reason": "good"}}' for i in range(count)
+        )
+        return '{"scores": [' + entries + "]}"
+
+    class Streaming(FakeLlmClient):
+        """A model that emits its reply in fragments, as a real one does."""
+
+        def __init__(self, text: str, *, pieces: int = 12):
+            super().__init__(replies=(AssistantMessage(content=text),), repeat_last=True)
+            size = max(len(text) // pieces, 1)
+            self.fragments = [text[i : i + size] for i in range(0, len(text), size)]
+
+        async def stream(self, messages):
+            for fragment in self.fragments:
+                yield fragment
+
+    async def test_it_reports_each_score_as_it_arrives(self):
+        client = self.Streaming(self._reply(5))
+        seen: list[int] = []
+        scored = await CandidateJudge(client).judge(
+            [resolved(f"P{i}") for i in range(5)], LEG, on_progress=lambda n, total: seen.append(n)
+        )
+        assert len(scored) == 5
+        assert seen == [1, 2, 3, 4, 5], "progress should count up, once per score"
+
+    async def test_it_reports_the_total(self):
+        client = self.Streaming(self._reply(3))
+        totals: list[int] = []
+        await CandidateJudge(client).judge(
+            [resolved(f"P{i}") for i in range(3)],
+            LEG,
+            on_progress=lambda n, total: totals.append(total),
+        )
+        assert totals == [3, 3, 3], "the denominator is how many were sent, known up front"
+
+    async def test_the_scores_are_the_same_as_unstreamed(self):
+        """Streaming is a reporting change. It must not alter the ranking, which is the
+        thing the single call was protecting."""
+        client = self.Streaming(self._reply(4))
+        scored = await CandidateJudge(client).judge([resolved(f"P{i}") for i in range(4)], LEG)
+        assert [item.score for item in scored] == [0.8] * 4
+
+    async def test_no_callback_still_works(self):
+        client = self.Streaming(self._reply(2))
+        assert len(await CandidateJudge(client).judge([resolved("A"), resolved("B")], LEG)) == 2
+
+    async def test_a_reply_split_mid_entry_still_parses(self):
+        """Fragments do not respect JSON boundaries; a score arrives across two chunks."""
+        client = self.Streaming(self._reply(6), pieces=40)
+        scored = await CandidateJudge(client).judge([resolved(f"P{i}") for i in range(6)], LEG)
+        assert len(scored) == 6
+
+    async def test_an_unusable_stream_is_still_retried(self):
+        """The retry is not lost by streaming: prose twice still ends empty, not raising."""
+        client = self.Streaming("I have thoughts but no JSON.")
+        assert await CandidateJudge(client).judge([resolved("A")], LEG) == ()

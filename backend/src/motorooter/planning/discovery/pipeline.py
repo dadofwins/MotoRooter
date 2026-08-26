@@ -35,7 +35,7 @@ already been paid for in metered requests.
 import asyncio
 import logging
 import uuid
-from collections.abc import AsyncIterator, Sequence
+from collections.abc import AsyncIterator, Callable, Sequence
 from dataclasses import dataclass, field
 
 from motorooter.llm.errors import LlmError
@@ -366,10 +366,45 @@ class DiscoveryPipeline:
         judging = JUDGE_BASE_COST + len(resolved) * JUDGE_COST_PER_CANDIDATE
         work.add(judging - reserved_judge)
         yield work.step(ENRICH_STAGE, f"scoring {len(resolved)} places", advance=resolving)
-        scored = await self._score(resolved, leg, counts)
+
+        # Scoring is one call and stays one call: the judge ranks candidates against each
+        # other, so splitting the batch is what would cost the ranking. The increments come
+        # from the reply streaming in, not from the work being divided — same call, same
+        # ranking, and a number that moves instead of a flat half-minute at one position.
+        scoring: asyncio.Queue[DiscoveryProgress | None] = asyncio.Queue()
+        per_score = judging / max(len(resolved), 1)
+        spent = 0.0
+
+        def scored_one(done: int, total: int) -> None:
+            nonlocal spent
+            spent += per_score
+            scoring.put_nowait(
+                work.step(ENRICH_STAGE, f"scoring {done}/{total} places", advance=per_score)
+            )
+
+        async def score() -> tuple[ScoredCandidate, ...]:
+            try:
+                return await self._score(resolved, leg, counts, on_progress=scored_one)
+            finally:
+                scoring.put_nowait(None)
+
+        scorer = asyncio.create_task(score())
+        try:
+            while True:
+                update = await scoring.get()
+                if update is None:
+                    break
+                yield update
+            scored = await scorer
+        finally:
+            scorer.cancel()
 
         pois = tuple(_to_poi(item) for item in scored)
-        yield work.step(ENRICH_STAGE, f"scored {len(scored)}", advance=judging)
+        # Whatever the per-score steps did not spend. Usually nothing is left; it is the
+        # whole stage when the model could not be streamed, which is the case an older test
+        # caught — without this the bar would sit still through scoring on any client
+        # without a `stream`, which is exactly the complaint being fixed.
+        yield work.step(ENRICH_STAGE, f"scored {len(scored)}", advance=max(judging - spent, 0.0))
 
         yield DiscoveryProgress(
             stage=DONE_STAGE,
@@ -509,11 +544,12 @@ class DiscoveryPipeline:
         resolved: Sequence[ResolvedCandidate],
         leg: RouteLeg,
         counts: _Counts,
+        on_progress: Callable[[int, int], None] | None = None,
     ) -> tuple[ScoredCandidate, ...]:
         if not resolved:
             return ()
         try:
-            scored = await self._judge.judge(resolved, leg)
+            scored = await self._judge.judge(resolved, leg, on_progress=on_progress)
         except (DiscoveryError, LlmError) as exc:
             # Everything up to here is already paid for. Losing the scores is bad; losing
             # the run because scoring timed out is worse.

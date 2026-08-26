@@ -22,7 +22,7 @@ not.
 import json
 import logging
 import re
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 
 from motorooter.llm.messages import Message, SystemMessage, UserMessage
 from motorooter.llm.protocol import LlmClient
@@ -69,7 +69,11 @@ class CandidateJudge:
         self._client = client
 
     async def judge(
-        self, resolved: Sequence[ResolvedCandidate], leg: RouteLeg
+        self,
+        resolved: Sequence[ResolvedCandidate],
+        leg: RouteLeg,
+        *,
+        on_progress: Callable[[int, int], None] | None = None,
     ) -> tuple[ScoredCandidate, ...]:
         """Score a batch, dropping anything the model did not usably score.
 
@@ -98,8 +102,8 @@ class CandidateJudge:
         # Only on *nothing*. A partial answer is a judgement — the model declining to score
         # one place — and asking again would discard the scores it did give.
         for attempt in (1, 2):
-            reply = await self._client.complete(conversation, [])
-            scored = self._parse(reply.content, resolved, evidence)
+            content = await self._read(conversation, len(resolved), on_progress)
+            scored = self._parse(content, resolved, evidence)
             if scored:
                 return scored
             # Recorded every time, not only when someone is watching. This has resisted
@@ -111,11 +115,47 @@ class CandidateJudge:
                 len(resolved),
                 attempt,
                 MAX_LOGGED_REPLY_CHARS,
-                reply.content or "<empty>",
+                content or "<empty>",
             )
             if attempt == 2:
                 return scored
         raise AssertionError("unreachable: the loop returns on both attempts")  # pragma: no cover
+
+    async def _read(
+        self,
+        conversation: list[Message],
+        total: int,
+        on_progress: Callable[[int, int], None] | None,
+    ) -> str | None:
+        """The whole reply, reporting each score as it lands.
+
+        Streamed rather than awaited so the count can move. The call is not split — the judge
+        ranks candidates against each other and splitting the batch is what would cost the
+        ranking — so the increments come from the reply arriving, not from the work being
+        divided.
+
+        Falls back to a plain completion when the client cannot stream, which keeps every
+        `LlmClient` usable here and means a fake in a test need not implement both.
+        """
+        streamer = getattr(self._client, "stream", None)
+        if streamer is None:
+            reply = await self._client.complete(conversation, [])
+            return reply.content
+
+        pieces: list[str] = []
+        counted = 0
+        async for piece in streamer(conversation):
+            pieces.append(piece)
+            if on_progress is None:
+                continue
+            # Counting closing braces of score objects is enough to know one arrived, and it
+            # does not require the accumulated text to be valid JSON yet — which, mid-stream,
+            # it never is.
+            seen = min(_completed_entries("".join(pieces)), total)
+            while counted < seen:
+                counted += 1
+                on_progress(counted, total)
+        return "".join(pieces)
 
     def _parse(
         self,
@@ -218,3 +258,39 @@ def _scores_in(content: str | None) -> list[dict[str, object]]:
     if not isinstance(scores, list):
         return []
     return [entry for entry in scores if isinstance(entry, dict)]
+
+
+def _completed_entries(partial: str) -> int:
+    """How many score objects have finished arriving in a partial reply.
+
+    Counts closing braces at object depth two — inside the top-level object, inside the
+    `scores` array — which is where a score sits. Brace counting rather than parsing because
+    a partial reply is not valid JSON at any point before the last character, and the whole
+    purpose is to say something before then.
+
+    Strings are skipped so a brace inside a reason does not count, which a model writing
+    "worth the detour {sic}" would otherwise trigger.
+    """
+    depth = 0
+    completed = 0
+    in_string = False
+    escaped = False
+    for character in partial:
+        if escaped:
+            escaped = False
+            continue
+        if character == "\\" and in_string:
+            escaped = True
+            continue
+        if character == '"':
+            in_string = not in_string
+            continue
+        if in_string:
+            continue
+        if character == "{":
+            depth += 1
+        elif character == "}":
+            if depth == 2:
+                completed += 1
+            depth -= 1
+    return completed

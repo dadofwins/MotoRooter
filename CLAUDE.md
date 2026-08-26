@@ -37,23 +37,33 @@ if the generated files drift.
 
 ## Status
 
-**Built and merged:** the routing layer end to end (models, provider protocol, shared adapter
-contract suite, `FakeProvider`, ORS and Google adapters, polyline codec, registry, policy
-resolver, caching/retry/quota decorators, config factory). Trip and POI models, slug validation,
-`TripStore` with in-memory and Cloud Storage implementations behind a shared contract suite,
-compare-and-swap on writes. Leg stitching and the trip-level router. `RouteFingerprint`, so
-stale cached geometry is detectable. The REST API with generated TypeScript types and a
-generated `ErrorCode` union. Frontend: typed API client, `DragScheduler`, the Google Maps
-canvas, and the pure half of drag-to-reroute.
+**Built and merged.** Backend: the routing layer end to end (models, provider protocol, shared
+adapter contract suite, `FakeProvider`, ORS and Google adapters, polyline codec, registry,
+policy resolver, caching/retry/quota decorators, config factory). Trip and POI models, slug
+validation, `TripStore` with in-memory and Cloud Storage implementations, compare-and-swap on
+writes. Leg stitching, the trip-level router, `RouteFingerprint`. The REST API with generated
+TypeScript types and an `ErrorCode` union. Rate limiting that separates "too fast" from "budget
+spent". Route metrics (twistiness, detour ratio, distance-to-route) with thresholds pinned to
+real geometry. The LLM tool-calling core. Discovery end to end — corridor anchors, Brave search,
+LLM extraction, Places resolution, category-from-Places, and the judge — behind `POST
+/api/trips/{slug}/replan`. Derived durations and POI detail.
 
-**In review:** `fe/vertical-slice` (click two points, see a real route — the first integration),
-`fe/drag-reroute` (three findings sent).
+Frontend: typed API client, `DragScheduler`, the Google Maps canvas, drag-to-reroute complete
+(throttled, handle-only feedback, stale-response rejection, guaranteed drag-end commit). POI
+pins with add-to-route and the Places detail dialog. Surface summary. Miles by default with a
+km toggle, and time estimates. Trip lifecycle — save, load, share by link — and the front door:
+a per-browser recent-trips list and a create path that carries the rider's chosen name.
 
-**Stubbed with frozen schemas** (501, so the frontend builds against real shapes): replan,
-GPX export, Places enrichment.
+**In review:** `be/discovery-speed` (parallelised discovery, 126s → 21s simulated; one finding
+sent), `be/road-expansion` (roads-as-leads; before/after yield still unmeasured).
 
-**Not built:** the LLM tool layer, discovery, Places enrichment, the chat UI, the interactive
-half of drag-to-reroute, GPX export, derived trip duration.
+**Stubbed with frozen schemas** (501, so the frontend builds against real shapes): GPX export,
+and the chat endpoint `POST /api/trips/{slug}/chat`.
+
+**Not built:** the chat rail — the last M1 item with nothing behind it. Multi-leg trips: a trip
+is still one leg spanning every waypoint, which blocks per-segment routing modes and is why
+drag latency is a whole-route recompute. `Trip.default_intent`, forward geocoding, the settings
+dialog, GPX export.
 
 Update this section as reality changes, and do not describe a component as existing until it does.
 
@@ -351,6 +361,16 @@ audit of WABDR Section 3 (`scripts/wabdr_osm_audit.py`, 61 probes over 126 km) f
 the distance carries no `surface` tag at all** and 75% no `tracktype`. So the reported figure
 systematically *under*-states how much dirt a route contains — roughly 41% reported against
 ~48% actual on that section.
+
+**Confirmed against the live stack (2026-08-25).** The first run of the real pipeline over
+Cashmere–Blewett Pass (39.4 km ORS `unpaved`, 15 surface spans) came back **34% dirt, 26%
+paved, 40% unsurveyed**. Unsurveyed was the *largest single share* — bigger than either real
+surface — against the 25% the OSM audit predicted. Whatever else is true, the slice this
+project nearly rounded away is the biggest one on a real adventure route. The same run
+confirmed the other two live: `twisty_paved` through Google returns zero spans, so the
+capability-driven labelling is load-bearing rather than hypothetical; and ORS reported 2.31 h
+for 39 km (17 km/h, the bicycle profile) against a derived 45 min, so the displayed figure is
+now about a third of what the engine says and is the honest one.
 
 Under-reporting is the right failure direction: a rider who is told 41% and finds 48% has a
 better day than the reverse. But the UI must **show the unknown share** rather than let it

@@ -22,6 +22,7 @@ from motorooter.chat.tools import (
     DescribeTrip,
     FindPlaces,
     RemoveWaypoint,
+    SetLegIntent,
     TripTools,
 )
 from motorooter.llm.errors import ToolCallFailed
@@ -210,6 +211,30 @@ class TestRemoveWaypoint:
         assert "Middle" not in outcome.content
 
 
+class TestSetLegIntent:
+    async def test_it_changes_the_intent(self):
+        kit = await tools()
+        await call(kit, SetLegIntent.name, '{"leg_index": 0, "intent": "unpaved"}')
+        assert (await kit.store.get(SLUG)).legs[0].intent is LegIntent.UNPAVED
+
+    async def test_it_reroutes_the_leg(self):
+        """Changing the mode changes the road, so the geometry has to be recomputed."""
+        router = StubRouter()
+        kit = await tools(router=router)
+        await call(kit, SetLegIntent.name, '{"leg_index": 0, "intent": "unpaved"}')
+        assert router.calls
+
+    async def test_an_unknown_intent_is_refused(self):
+        kit = await tools()
+        with pytest.raises(ToolCallFailed):
+            await call(kit, SetLegIntent.name, '{"leg_index": 0, "intent": "hover"}')
+
+    async def test_an_unknown_leg_is_refused(self):
+        kit = await tools()
+        with pytest.raises(ToolCallFailed):
+            await call(kit, SetLegIntent.name, '{"leg_index": 7, "intent": "unpaved"}')
+
+
 class TestAddPoiToRoute:
     """M1 item five, and the root document names it as the test of the both-paths rule."""
 
@@ -300,6 +325,7 @@ class TestTheSetItself:
             "find_places",
             "add_waypoint",
             "remove_waypoint",
+            "set_leg_intent",
             "add_poi_to_route",
         }
 

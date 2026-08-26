@@ -9,67 +9,57 @@ unusable.
 
 ## M1 — MVP — the planning experience, end to end
 
-Tim's definition, verbatim in intent:
+Tim's definition, verbatim in intent, with where each item actually stands
+(**last audited 2026-08-25, against `main`, by reading the code rather than the queue**):
 
-1. Type in the chat box and have tool calls execute — "find me more restaurants on the route"
-   runs the appropriate tool.
-2. Click and drag a route.
-3. One button for a full generation: POIs, gas, campsites, hotels.
-4. See POIs on the map, click one, get Google Places detail — images, ratings.
-5. One button to route through the found POIs; or selectively add each to the route or ignore
-   it.
+| # | Item | State |
+|---|---|---|
+| 1 | Type in the chat box and have tool calls execute | **In progress.** Rail merged; tools being built |
+| 2 | Click and drag a route | **Done** |
+| 3 | One button for a full generation: POIs, gas, campsites, hotels | **Done** |
+| 4 | See POIs, click one, get Places detail — images, ratings | **Done** |
+| 5 | Route through the found POIs, or add/ignore each | **Half.** Selective add works; the bulk button does not exist |
 
-**What M1 is not.** No GPX export, no day splitting, no multi-day planning, no accounts, no
-trip-list UI. Persistence exists and works but is not part of the demo. This milestone is
-about whether *planning a trip* feels good — everything else is downstream of that answering
-yes.
+**What M1 is not.** No GPX export, no day splitting, no multi-day planning, no accounts.
 
-### Critical path
+### What is left, and nothing else is
 
-The LLM tool layer gates three of the five items (1, 3, and most of 5). It is the long pole
-and nothing else in the backend queue should precede it.
+**Item 1 — the assistant.** `fe/chat-rail` is merged and streams; `POST /trips/{slug}/chat` is
+still 501 and no concrete `Tool` exists. Six tools agreed: `find_places`, `add_waypoint`,
+`remove_waypoint`, `set_leg_intent`, `add_poi_to_route`, `describe_trip`.
 
-```
-  LLM tool layer ──┬──> chat with tool calls        (item 1)
-                   ├──> discovery / full generation (item 3)
-                   └──> route-through-POIs          (item 5)
+Two of those cannot ship yet, and the reason is the rule rather than the code. *Every tool the
+assistant can call must also be reachable by mouse.* Today `remove_waypoint` has only "Remove
+last point", and `set_leg_intent` has no per-leg control at all — so shipping either would make
+chat the only way to do something, in an app whose central design rule is that it must not be.
+The affordances are the blocker, not the tools.
 
-  Places enrichment ─────> POI detail dialog        (item 4)   independent, start any time
-  Drag 3b (interactive) ─> click and drag           (item 2)   needs the vertical slice
-  POI pins + dialog ─────> see and click POIs       (item 4)
-```
+**Item 5 — the bulk button.** "One button to route through the found POIs" has no
+implementation. `addPoiToRoute` covers the selective half via right-click. This is the smallest
+remaining M1 item and the easiest to forget, because item 5 reads as done from the demo.
 
-### Backend order
+### Also outstanding, not part of M1 but asked for
 
-1. **LLM tool layer.** OpenAI, server-side execution, NDJSON streaming over the existing
-   replan endpoint. Every tool wraps the same service function the REST endpoint calls — the
-   chat path and the mouse path must not diverge, because item 5 is the same operation
-   reached both ways.
-2. **Discovery**, behind the Replan button. Three stages — Brave web search, Google Places
-   resolution, then scoring from computed metrics plus LLM judgement. See "Discovery
-   architecture" in the root `CLAUDE.md`; the rule that matters is *measure what is
-   measurable, ask the model only what is not*. Nothing reaches the map unresolved.
-   Waypoint density per M0 applies to *route* waypoints, not POIs.
-3. **Places enrichment** (`GET /api/places/{place_id}`, currently a 501 stub with a frozen
-   schema). Independent of the LLM work — worth doing first if the tool layer stalls, since
-   it unblocks the frontend's dialog.
-4. **Route-through-POIs.** Largely assembly: insert selected POIs as waypoints, re-route
-   through the existing trip router.
+- **Settings dialog** behind a gear icon, housing miles/km. Tim asked for this directly; it is
+  the last unaddressed item from his replan feedback. Do not let it keep slipping.
+- Per-category discovery control, so "find me more restaurants" has a mouse equivalent at that
+  granularity. Belongs with the settings dialog.
 
-### Frontend order
+### Resolved since this document was written
 
-1. **Drag 3b** — the interactive half. Item 2, and the pure half is already reviewed.
-2. **POI pins and detail dialog** — item 4. Buildable against the 501 stub today.
-3. **Chat rail with streaming tool calls** — item 1.
-4. **Add-to-route / ignore controls** — item 5.
+- Derived trip duration — **done**, and then corrected: trustworthiness is a per-provider
+  capability, because Google's car profile beats our estimate on highway. See root `CLAUDE.md`.
+- The stitching gap threshold — **measured** on a real mixed google/ors trip: 0.5 m and 11.3 m
+  observed, bridged below 500 m.
+- Discovery speed — ten minutes and stalling, now 19.1 s live.
+- Anchor naming — was searching the wrong area entirely; 21 of 25 candidates dropped for
+  distance before the fix.
 
-### Deferred out of M1, deliberately
+### Still deferred, deliberately
 
 - GPX export, and the hardware test on a real GPS unit.
-- Derived trip duration. Not in Tim's list, so it does not gate the demo — but nothing may
-  display the provider's figure in the meantime (bicycle times, off by 2×).
 - Ascent, until the 6,400–8,800 m against 3,188 m discrepancy is explained.
-- The 25 m stitching gap threshold, until a mixed google/ors trip exists to measure it on.
+- `be/road-expansion`, shelved pending re-measurement now that naming is fixed.
 
 ## M2 and beyond — not yet scoped
 

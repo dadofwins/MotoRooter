@@ -126,3 +126,68 @@ describe('useRoutingCapabilities', () => {
     expect(signals[0]?.aborted).toBe(true)
   })
 })
+
+/**
+ * Whether a mode costs the rider their surface breakdown.
+ *
+ * `CLAUDE.md` is explicit that this must not be a hand-kept list: it went stale the day the
+ * policy table repointed an intent, and the result was an entirely grey route. So the answer is
+ * resolved through the table — intent to provider, provider to `reports_surface` — and the
+ * picker can tell a rider at the moment of choosing rather than after.
+ */
+describe('useRoutingCapabilities.reportsSurface', () => {
+  it('resolves through the intent table to the provider that serves it', async () => {
+    const { result } = renderHook(() => useRoutingCapabilities(fakeClient()))
+
+    await waitFor(() => {
+      expect(result.current.isLoaded).toBe(true)
+    })
+    expect(result.current.reportsSurface('unpaved')).toBe(true)
+  })
+
+  it('says a mode does not report surface when its provider cannot', async () => {
+    // Measured live: `twisty_paved` resolves to Google, which returned zero spans over 270 km,
+    // so 229 of 269 km of a real trip rendered grey.
+    const { result } = renderHook(() =>
+      useRoutingCapabilities(
+        fakeClient({
+          ...CAPABILITIES,
+          providers: [
+            ...CAPABILITIES.providers,
+            {
+              name: 'google',
+              prefers_unpaved: false,
+              reports_surface: false,
+              map_matching: false,
+              alternatives: true,
+              elevation: false,
+              max_waypoints: 25,
+              live_update_interval_ms: 1000,
+              daily_quota: null,
+            },
+          ],
+        }),
+      ),
+    )
+
+    await waitFor(() => {
+      expect(result.current.isLoaded).toBe(true)
+    })
+    expect(result.current.reportsSurface('highway_connector')).toBe(false)
+  })
+
+  it('does not guess when the table cannot answer', async () => {
+    // Three different unknowns — not loaded, intent absent, provider absent — and none of them
+    // is "yes". Claiming a mode reports surface when it does not is how a rider ends up looking
+    // at a grey route with no explanation.
+    const { result } = renderHook(() => useRoutingCapabilities(fakeClient()))
+
+    expect(result.current.reportsSurface('unpaved')).toBeNull()
+    await waitFor(() => {
+      expect(result.current.isLoaded).toBe(true)
+    })
+    // The intent table names google, but no such provider is listed.
+    expect(result.current.reportsSurface('highway_connector')).toBeNull()
+    expect(result.current.reportsSurface('technical_offroad')).toBeNull()
+  })
+})

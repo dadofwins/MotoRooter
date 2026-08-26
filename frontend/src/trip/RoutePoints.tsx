@@ -10,15 +10,28 @@
  * a list is visible, keyboard-reachable, and it is where the segments *between* the points will
  * live when each gets its own routing mode.
  *
+ * It is also where the *segments* live. A route is points and the legs between them, and a leg
+ * carries its own routing mode — so the outline is where a rider changes one, which is the mouse
+ * equivalent of the assistant's `set_leg_intent`.
+ *
  * Deliberately not a reorder control. Dragging rows to reorder a route is a different
  * interaction with its own failure modes, and the map is the honest place to express order.
  */
-import type { Waypoint } from '../api/types'
+import { LegModePicker } from './LegModePicker'
+import type { LegIntent, TripLeg, Waypoint } from '../api/types'
 
 export interface RoutePointsProps {
   readonly waypoints: readonly Waypoint[]
   /** Remove the point at this index. The caller re-shapes the legs around it. */
   readonly onRemove: (index: number) => void
+  /**
+   * The segments between the points. Omitted, the outline is points only — which is what it was
+   * before modes were choosable, and still right for a trip with nothing routed.
+   */
+  readonly legs?: readonly TripLeg[]
+  /** From `GET /api/routing/capabilities`, never a list kept here. */
+  readonly reportsSurface?: (intent: LegIntent) => boolean | null
+  readonly onIntentChange?: (legIndex: number, intent: LegIntent) => void
 }
 
 /**
@@ -33,19 +46,31 @@ function describe(waypoint: Waypoint): string {
   return `${waypoint.coordinate.lat.toFixed(4)}, ${waypoint.coordinate.lon.toFixed(4)}`
 }
 
-export function RoutePoints({ waypoints, onRemove }: RoutePointsProps): React.JSX.Element | null {
+export function RoutePoints({
+  waypoints,
+  onRemove,
+  legs,
+  reportsSurface,
+  onIntentChange,
+}: RoutePointsProps): React.JSX.Element | null {
   // Nothing rather than an empty list: a heading over no rows reads as broken rather than
   // as a route not started.
   if (waypoints.length === 0) return null
 
   return (
     <section className="points" aria-label="Route points">
-      <h2 className="points__title">Points</h2>
+      <h2 className="points__title">Route</h2>
       <ol className="points__list">
         {waypoints.map((waypoint, index) => {
           const label = describe(waypoint)
           return (
-            <li key={`${String(index)}-${label}`} className="points__row">
+            // Keyed on where the point is, not on its position in the list. Keying on the index
+            // remounted every row below a removal, which cost a keyboard user the focus they
+            // were holding mid-list.
+            <li
+              key={`${String(waypoint.coordinate.lat)},${String(waypoint.coordinate.lon)}`}
+              className="points__row"
+            >
               <span className="points__index" aria-hidden="true">
                 {index + 1}
               </span>
@@ -75,6 +100,33 @@ export function RoutePoints({ waypoints, onRemove }: RoutePointsProps): React.JS
           )
         })}
       </ol>
+
+      {/* The segments, after the points they join. A leg can span more than two waypoints once
+          a drag has put a via inside it, so each picker names its leg's own endpoints rather
+          than the rows it happens to sit between. */}
+      {legs !== undefined &&
+        reportsSurface !== undefined &&
+        onIntentChange !== undefined &&
+        legs.length > 0 && (
+          <div className="points__segments">
+            {legs.map((leg, legIndex) => {
+              const from = waypoints[leg.start_waypoint_index]
+              const to = waypoints[leg.end_waypoint_index]
+              if (from === undefined || to === undefined) return null
+              return (
+                <LegModePicker
+                  key={`${String(leg.start_waypoint_index)}-${String(leg.end_waypoint_index)}`}
+                  legIndex={legIndex}
+                  intent={leg.intent}
+                  from={describe(from)}
+                  to={describe(to)}
+                  reportsSurface={reportsSurface}
+                  onChange={onIntentChange}
+                />
+              )
+            })}
+          </div>
+        )}
     </section>
   )
 }

@@ -642,6 +642,36 @@ describe('App', () => {
     expect(await screen.findByText(/1 point/i)).toBeInTheDocument()
   })
 
+  it('keeps a one-click undo for the point just placed', async () => {
+    // Route-building is click, click, click, oops: the common removal is undoing the point just
+    // placed, and there is no Ctrl+Z here. Making that reflex into "read the list, find the last
+    // row, hit its cross" is the difference between an undo and a task. The list is the general
+    // path; this is the fast one, the same shape as right-clicking a pin.
+    const fake = createFakeMaps()
+    render(<App mapLoader={fake.loader} mapId="motorooter-test-vector" client={fakeRouter()} />)
+    await mapReady(fake)
+    fake.clickMap(47.0, -120.0)
+    fake.clickMap(48.0, -120.5)
+    fake.clickMap(49.0, -121.0)
+    expect(await pinLabels(fake, 3)).toHaveLength(3)
+
+    fireEvent.click(screen.getByRole('button', { name: /remove last point/i }))
+
+    await waitFor(() => {
+      expect(screen.getByText(/2 points placed/)).toBeInTheDocument()
+    })
+    const rows = within(screen.getByRole('region', { name: 'Route points' })).getAllByRole('listitem')
+    expect(rows.at(-1)?.textContent).toMatch(/48\.0000/)
+  })
+
+  it('offers the undo only when there is a point to undo', async () => {
+    const fake = createFakeMaps()
+    render(<App mapLoader={fake.loader} mapId="motorooter-test-vector" client={fakeRouter()} />)
+    await mapReady(fake)
+
+    expect(screen.queryByRole('button', { name: /remove last point/i })).not.toBeInTheDocument()
+  })
+
   it('takes a point out of the middle of the route, which only chat could do before', async () => {
     // The gap the mouse-equivalence audit found. `remove_waypoint` is one of the assistant's
     // tools, and until now the only mouse control removed the *last* point — so a via-point in
@@ -1205,6 +1235,67 @@ describe('App arriving', () => {
     await waitFor(() => {
       expect(router.getTrip).toHaveBeenCalledWith('wabdr-north', expect.anything())
     })
+  })
+})
+
+describe('choosing how a segment routes', () => {
+  it('changes one segment and re-routes only that one', async () => {
+    // The second mouse-equivalence gap. `set_leg_intent` is one of the assistant's tools and
+    // there was no per-leg control at all, so chat would have been the only way to change a
+    // routing mode. `TripLeg.intent` has been per-leg in the data since the first backend
+    // branch — it was inert while a trip was one leg spanning everything.
+    const fake = createFakeMaps()
+    const router = fakeRouter()
+    render(<App mapLoader={fake.loader} mapId="motorooter-test-vector" client={router} />)
+    await mapReady(fake)
+    fake.clickMap(47.0, -120.0)
+    fake.clickMap(48.0, -120.5)
+    fake.clickMap(49.0, -121.0)
+    await waitFor(() => expect(router.routeLeg).toHaveBeenCalledTimes(2))
+    router.routeLeg.mockClear()
+
+    const pickers = screen.getAllByRole('combobox')
+    fireEvent.change(pickers[0] as HTMLElement, { target: { value: 'highway_connector' } })
+
+    await waitFor(() => expect(router.routeLeg).toHaveBeenCalledTimes(1))
+    const request = router.routeLeg.mock.calls[0]?.[0]
+    expect(request?.intent).toBe('highway_connector')
+    // The first segment's own waypoints. The second segment is untouched road.
+    expect(request?.waypoints).toEqual([
+      { lat: 47, lon: -120 },
+      { lat: 48, lon: -120.5 },
+    ])
+  })
+
+  it('tells the rider a mode costs the surface breakdown, from the API rather than a list', async () => {
+    // Measured live: Google returns zero spans, so 229 of 269 km of a real trip rendered grey.
+    // The hardcoded version of this went stale the day the policy table repointed an intent.
+    const fake = createFakeMaps()
+    const router = fakeRouter()
+    router.routingCapabilities.mockResolvedValue({
+      providers: [
+        {
+          name: 'google',
+          prefers_unpaved: false,
+          reports_surface: false,
+          map_matching: false,
+          alternatives: true,
+          elevation: false,
+          max_waypoints: 25,
+          live_update_interval_ms: 1000,
+          daily_quota: null,
+        },
+      ],
+      intents: { highway_connector: { provider: 'google', live_update_interval_ms: 1000 } },
+    })
+    render(<App mapLoader={fake.loader} mapId="motorooter-test-vector" client={router} />)
+    await mapReady(fake)
+    fake.clickMap(47.0, -120.0)
+    fake.clickMap(48.0, -120.5)
+
+    fireEvent.change(screen.getByRole('combobox'), { target: { value: 'highway_connector' } })
+
+    expect(await screen.findByText(/no dirt or paved breakdown/i)).toBeInTheDocument()
   })
 })
 

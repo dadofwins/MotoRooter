@@ -85,6 +85,15 @@ export interface RouteLegsState {
    * False while there is no total, because a caveat with no number attached is noise.
    */
   readonly durationIsEstimated: boolean
+  /**
+   * Riding time for each leg, parallel to `legs`, `null` where none is known.
+   *
+   * Exposed as well as summed because deciding which segment is a day is the actual planning
+   * task, and a trip total cannot answer it. Always one entry per leg, so a caller can index
+   * straight in — a short array would shift every figure quietly onto the wrong segment.
+   */
+  readonly legDurationsS: readonly (number | null)[]
+
   /** Any leg still in flight. */
   readonly isRouting: boolean
   /** One of the current failures, for the message. Null when nothing current has failed. */
@@ -222,6 +231,8 @@ export function useRouteLegs(
       return answer === undefined ? entry.leg : { ...entry.leg, routed: answer.routed }
     })
 
+    // One entry per leg, in leg order. Also what the total is summed from, so the parts and the
+    // whole cannot disagree.
     const estimates = asked.map((entry) =>
       entry.stale ? (answers.get(entry.question)?.estimatedDurationS ?? null) : null,
     )
@@ -251,6 +262,7 @@ export function useRouteLegs(
 
     return {
       legs: filled,
+      legDurationsS: estimates,
       estimatedDurationS: totalled,
       durationIsEstimated: totalled !== null && modelled,
       isRouting: stillAsking,

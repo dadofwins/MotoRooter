@@ -589,9 +589,20 @@ exists:
 
 | Provider | Interval | Rationale |
 |---|---|---|
-| `google` | ~1000 ms | Cheap per request; near-live feedback is affordable |
-| `ors` | ~3000 ms, or preview-only | Free tier is the binding constraint |
+| `google` | 1000 ms | Cheap per request; near-live feedback is affordable |
+| `ors` | **1000 ms** (was ~3000) | Tim measured 3000 as "like five seconds" and asked for ~1 s; cost is explicitly not a prototype constraint, and per-minute rate limiting now guards the burst case |
 | `fake` | 0 | Tests shouldn't wait |
+
+**The ORS value is a deliberate trade, not an oversight.** It cost a quota margin to buy
+responsiveness, on Tim's direct instruction. Measured consequence: at 1000 ms against ~917 ms
+round-trip latency the throttle is effectively saturated — a request is in flight almost
+continuously, so a 30-second drag on a dirt leg is roughly 30 ORS requests against a
+~2,000/day tier. That is affordable for one rider on a prototype and would not be for users.
+
+It also means **the interval is no longer the lever**. Per-leg routing cut drag latency from
+1479 ms to 917 ms — 38%, not the 85% the point count implies, because most of the cost is the
+round trip rather than the geometry. Going faster now means preview-only during the gesture or
+a closer engine, not routing less road.
 
 For an expensive provider, "preview-only" is a legitimate setting: rubber-band a straight line from
 the drag handle during the gesture and issue no request at all until release. Make that a config

@@ -9,6 +9,7 @@ from typing import Annotated
 
 from fastapi import Depends, Request
 
+from motorooter.llm.protocol import LlmClient
 from motorooter.planning.discovery.details import PlaceDetails
 from motorooter.planning.discovery.pipeline import DiscoveryPipeline
 from motorooter.routing.policy import PolicyResolver
@@ -37,6 +38,17 @@ def get_discovery(request: Request) -> "DiscoveryPipeline | None":
     return pipeline
 
 
+def get_chat_model(request: Request) -> "LlmClient | None":
+    """The pinned chat model, or `None` when no OpenAI key is configured.
+
+    `None` rather than raising, for the reason discovery uses: chat needs a credential most
+    requests never touch, and a backend that refused to boot without it would take routing
+    and storage down with it. The endpoint answers 501 and the rest of the app works.
+    """
+    model: LlmClient | None = getattr(request.app.state, "chat_model", None)
+    return model
+
+
 def get_places(request: Request) -> "PlaceDetails | None":
     """The Places detail client, or `None` when no key is configured."""
     places: PlaceDetails | None = getattr(request.app.state, "places", None)
@@ -53,3 +65,4 @@ Resolver = Annotated[PolicyResolver, Depends(get_resolver)]
 Trips = Annotated[TripStore, Depends(get_trip_store)]
 Discovery = Annotated["DiscoveryPipeline | None", Depends(get_discovery)]
 Places = Annotated["PlaceDetails | None", Depends(get_places)]
+ChatModel = Annotated["LlmClient | None", Depends(get_chat_model)]

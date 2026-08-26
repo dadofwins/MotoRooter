@@ -14,7 +14,7 @@ from collections.abc import AsyncIterator, Sequence
 from fastapi import APIRouter, status
 from fastapi.responses import StreamingResponse
 
-from motorooter.api.deps import Discovery, Trips
+from motorooter.api.deps import ChatModel, Discovery, Resolver, Trips
 from motorooter.api.errors import NotImplementedYet
 from motorooter.api.schemas import (
     ERROR_RESPONSES,
@@ -26,11 +26,16 @@ from motorooter.api.schemas import (
     ReplanRequest,
     UpdateTripRequest,
 )
+from motorooter.chat.prompt import CHAT_SYSTEM_PROMPT
+from motorooter.chat.routing import LegRoutingService
+from motorooter.chat.tools import TripTools
+from motorooter.llm.agent import Agent
+from motorooter.llm.messages import AssistantMessage, Message, SystemMessage, UserMessage
 from motorooter.planning.discovery.pipeline import DiscoveryPipeline
 from motorooter.routing.errors import RouteIncomplete
 from motorooter.routing.models import RouteLeg
-from motorooter.trips.errors import TripModifiedConcurrently
 from motorooter.trips.models import PoiCategory, Trip, TripSummary, utc_now
+from motorooter.trips.service import edit_trip
 from motorooter.trips.slug import slugify, validate_slug
 
 router = APIRouter(prefix="/api/trips", tags=["trips"], responses=ERROR_RESPONSES)
@@ -66,41 +71,6 @@ async def get_trip(slug: str, store: Trips) -> Trip:
     return await store.get(validate_slug(slug))
 
 
-MAX_UPDATE_ATTEMPTS = 2
-"""Read-merge-write tries twice before reporting a conflict.
-
-One retry resolves the ordinary case — two riders editing different fields of the same
-shared trip — because re-merging a partial request onto the newer document yields the union
-of both edits. A writer that loses twice is contending with sustained traffic, and looping
-further would spend requests without converging.
-"""
-
-
-def _merge(existing: Trip, request: UpdateTripRequest) -> Trip:
-    """Apply a partial update to a trip.
-
-    `edited_at` advances only when geometry actually changes, since it drives the replan
-    staleness flag — bumping it on a rename would spuriously mark discovery stale.
-    """
-    geometry_changed = (
-        request.waypoints is not None and tuple(request.waypoints) != existing.waypoints
-    ) or (request.legs is not None and tuple(request.legs) != existing.legs)
-
-    updated = existing.model_copy(
-        update={
-            "name": request.name if request.name is not None else existing.name,
-            "waypoints": tuple(request.waypoints)
-            if request.waypoints is not None
-            else existing.waypoints,
-            "legs": tuple(request.legs) if request.legs is not None else existing.legs,
-            "pois": tuple(request.pois) if request.pois is not None else existing.pois,
-            "edited_at": utc_now() if geometry_changed else existing.edited_at,
-        }
-    )
-    # Revalidate: model_copy skips validators, and leg/waypoint consistency lives there.
-    return Trip.model_validate(updated.model_dump())
-
-
 @router.put("/{slug}", response_model=Trip)
 async def update_trip(slug: str, request: UpdateTripRequest, store: Trips) -> Trip:
     """Apply a partial update, refusing to clobber a concurrent edit.
@@ -116,17 +86,14 @@ async def update_trip(slug: str, request: UpdateTripRequest, store: Trips) -> Tr
         TripNotFound: no such trip, including one deleted mid-update — writing anyway would
             resurrect something somebody chose to remove.
     """
-    slug = validate_slug(slug)
-
-    for attempt in range(1, MAX_UPDATE_ATTEMPTS + 1):
-        versioned = await store.get_versioned(slug)
-        merged = _merge(versioned.trip, request)
-        try:
-            return await store.put(merged, if_version=versioned.version)
-        except TripModifiedConcurrently:
-            if attempt == MAX_UPDATE_ATTEMPTS:
-                raise
-    raise AssertionError("unreachable: the loop either returns or raises")  # pragma: no cover
+    return await edit_trip(
+        store,
+        validate_slug(slug),
+        name=request.name,
+        waypoints=request.waypoints,
+        legs=request.legs,
+        pois=request.pois,
+    )
 
 
 @router.delete("/{slug}", status_code=status.HTTP_204_NO_CONTENT)
@@ -212,8 +179,7 @@ async def _stream(
 
 @router.post(
     "/{slug}/chat",
-    status_code=NOT_IMPLEMENTED,
-    summary="Talk to the assistant about a trip (not yet implemented)",
+    summary="Talk to the assistant about a trip",
     description=(
         "One conversational turn. The assistant may call tools, and those tools are the "
         "same service functions the mouse path calls — item 5 of the MVP is reachable both "
@@ -228,13 +194,94 @@ async def _stream(
             "description": "Stream of ChatEvent objects, one per line.",
             "model": ChatEvent,
         },
-        501: {"model": ErrorResponse, "description": "Not implemented yet."},
+        NOT_IMPLEMENTED: {
+            "model": ErrorResponse,
+            "description": "No chat model configured on this deployment.",
+        },
     },
 )
-async def chat(slug: str, request: ChatRequest, store: Trips) -> None:
-    """Reserved. Schema frozen so the chat rail can be built before the endpoint exists."""
-    await store.get(validate_slug(slug))
-    raise NotImplementedYet("chat")
+async def chat(
+    slug: str,
+    request: ChatRequest,
+    store: Trips,
+    resolver: Resolver,
+    discovery: Discovery,
+    model: ChatModel,
+) -> StreamingResponse:
+    """Run one assistant turn against a trip, streaming what happens.
+
+    The trip is read before streaming starts so an unknown slug is a 404 with a body, rather
+    than a 200 whose first line says something went wrong. After the first byte the status
+    code is fixed, which is why everything downstream of here is reported as an event.
+    """
+    slug = validate_slug(slug)
+    trip = await store.get(slug)
+    if model is None:
+        raise NotImplementedYet("chat (no chat model configured)")
+
+    tools = TripTools(
+        store=store, slug=slug, router=LegRoutingService(resolver), discovery=discovery
+    )
+    agent = Agent(model, tools.registry)
+    return StreamingResponse(
+        _chat_stream(agent, tools, request, trip.name),
+        media_type=STREAMING_MEDIA_TYPE,
+    )
+
+
+async def _chat_stream(
+    agent: Agent,
+    tools: TripTools,
+    request: ChatRequest,
+    trip_name: str,
+) -> AsyncIterator[bytes]:
+    """Agent events as `ChatEvent` lines.
+
+    `trip_changed` is sticky once set: the client re-reads the document when it sees it, and
+    an edit followed by three read-only events should not look like nothing happened. The
+    terminal `done` therefore always carries the truth about whether anything moved.
+
+    An unexpected failure becomes a final `done` rather than a truncated connection. A client
+    seeing the stream stop mid-line cannot distinguish a crash from a dropped network.
+    """
+    changed = False
+    try:
+        async for step in agent.run(_conversation(request, trip_name)):
+            changed = changed or bool(step.outcome and step.outcome.payload.get("trip_changed"))
+            event = ChatEvent(
+                kind=step.kind,
+                message=step.message,
+                tool=step.tool,
+                truncated=step.truncated,
+                trip_changed=changed,
+            )
+            yield event.model_dump_json().encode() + b"\n"
+    except Exception:
+        logger.exception("chat stream failed")
+        failed = ChatEvent(
+            kind="done",
+            message="the assistant stopped after an unexpected error",
+            truncated=True,
+            trip_changed=changed,
+        )
+        yield failed.model_dump_json().encode() + b"\n"
+
+
+def _conversation(request: ChatRequest, trip_name: str) -> list[Message]:
+    """The system prompt, the client's transcript, then this turn.
+
+    The client owns the history, so "what did the assistant see" is answerable from the
+    request alone and the server stays stateless across turns.
+    """
+    messages: list[Message] = [SystemMessage(content=CHAT_SYSTEM_PROMPT.format(trip=trip_name))]
+    for turn in request.history:
+        messages.append(
+            AssistantMessage(content=turn.content)
+            if turn.role == "assistant"
+            else UserMessage(content=turn.content)
+        )
+    messages.append(UserMessage(content=request.message))
+    return messages
 
 
 @router.get(

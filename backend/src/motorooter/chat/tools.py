@@ -156,12 +156,15 @@ def _surface_line(trip: Trip) -> str:
     if not routed:
         return "Surface: not yet routed, so nothing is known about it."
 
-    total = sum(leg.distance_m for leg in routed)
+    # The domain computes all three, and computes `unknown` as the remainder rather than
+    # summing UNKNOWN spans — geometry no span covers is exactly as unsurveyed as geometry
+    # tagged unsurveyed. Recomputing it here got it wrong once already.
+    total = sum(leg.geometry_length_m for leg in routed)
     if total <= 0:
         return "Surface: unknown."
-    unpaved = sum(leg.distance_m * leg.unpaved_fraction for leg in routed)
-    known_paved = sum(leg.distance_m * getattr(leg, "paved_fraction", 0.0) for leg in routed)
-    unknown = max(total - unpaved - known_paved, 0.0)
+    unpaved = sum(leg.unpaved_distance_m for leg in routed)
+    known_paved = sum(leg.paved_distance_m for leg in routed)
+    unknown = sum(leg.unknown_distance_m for leg in routed)
     return (
         f"Total {total / 1000:.1f} km: {unpaved / total:.0%} unpaved, "
         f"{known_paved / total:.0%} paved, {unknown / total:.0%} unsurveyed. "

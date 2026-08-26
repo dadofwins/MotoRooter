@@ -14,6 +14,8 @@ including ones the rider makes with the mouse mid-conversation, so a tool that m
 waypoints and returns prose leaves the model holding a number that now means something else.
 """
 
+import re
+
 import pytest
 
 from motorooter.chat.tools import (
@@ -338,3 +340,57 @@ class TestTheSetItself:
             properties = spec["parameters"].get("properties", {})
             assert "query" not in properties
             assert "search" not in properties
+
+
+class TestSurfaceIsReportedInThreeParts:
+    """`unknown` is a share in its own right, and the arithmetic belongs to the domain.
+
+    The first version of describe_trip computed the paved share from an attribute that does
+    not exist, so `getattr(..., 0.0)` silently returned zero and every surveyed metre of
+    tarmac was reported as unsurveyed. A live run did not catch it: the test corridor routed
+    through Google, which reports no surface at all, so the wrong answer and the right one
+    were the same string.
+    """
+
+    @staticmethod
+    def _leg_with_spans() -> RouteLeg:
+        from motorooter.routing.models import Surface, SurfaceSpan
+
+        # Ten points in a line; the first half tagged paved, the rest untagged.
+        geometry = tuple(Coordinate(lat=47.0 + index * 0.01, lon=-121.0) for index in range(11))
+        return RouteLeg(
+            geometry=geometry,
+            distance_m=10_000.0,
+            duration_s=900.0,
+            provider="ors",
+            intent=LegIntent.UNPAVED,
+            surface_spans=(SurfaceSpan(start_index=0, end_index=5, surface=Surface.PAVED),),
+        )
+
+    async def test_paved_is_not_reported_as_unsurveyed(self):
+        leg = self._leg_with_spans()
+        kit = await tools(
+            document=trip(
+                legs=(
+                    TripLeg(
+                        intent=LegIntent.UNPAVED,
+                        start_waypoint_index=0,
+                        end_waypoint_index=1,
+                        routed=leg,
+                    ),
+                )
+            )
+        )
+        content = (await call(kit, DescribeTrip.name, "{}")).content
+        # Parsed, not substring-matched: "0% paved" also matches inside "0% unpaved", which
+        # is how this assertion passed against the broken version the first time.
+        shares = {
+            word: pct for pct, word in re.findall(r"(\d+)% (unpaved|paved|unsurveyed)", content)
+        }
+        assert shares["paved"] != "0"
+        assert shares["unsurveyed"] != "100"
+
+    async def test_the_three_shares_are_all_present(self):
+        kit = await tools(document=trip(routed=True))
+        content = (await call(kit, DescribeTrip.name, "{}")).content
+        assert "unpaved" in content and "paved" in content and "unsurveyed" in content

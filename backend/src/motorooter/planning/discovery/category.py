@@ -67,13 +67,20 @@ mapping them would make this branch always fire and the model never run.
 """
 
 
-NOT_A_PLACE_TYPES: frozenset[str] = frozenset({"route", "street_address", "premise"})
+NOT_A_PLACE_TYPES: frozenset[str] = frozenset(
+    {"route", "street_address", "premise", "intersection"}
+)
 """Places types that describe something you ride through rather than stop at.
 
 `route` is the important one. Places types a highway, a byway and a forest road all as
 `route`, and asking the model to categorise one produces a plausible answer — `Suntop Trail`
 and `Mather Memorial Highway` both came back as viewpoints on a live run, and would have been
 pinned as places a rider could stop at.
+
+`intersection` is the same mistake in miniature: `Sunset Way & 6th Ave NE, Issaquah` arrived
+on three of four live runs, resolved, was scored, and was then discarded for having no
+category — a metered lookup and a scoring slot spent on a road junction. Refusing it here
+costs both, and stops the model being asked a question it will answer rather than decline.
 
 Excluded before the model is asked, rather than left for it to decline. It is the same
 roads-are-leads rule the extract stage applies, enforced here with Places' own answer instead

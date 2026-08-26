@@ -430,3 +430,85 @@ class TestEnrichmentReportsProgressToo:
         events = await self._events()
         assert [e.progress for e in events].count(1.0) == 1
         assert events[-1].progress == 1.0
+
+
+class TestNothingIsLostWithoutSaying:
+    """Two silent losses, both found by running the pipeline rather than reading it.
+
+    On four live runs of one corridor, one produced zero POIs from eight resolved,
+    on-route candidates and reported no failure at all — the summary said "0 worth showing",
+    which a rider reads as "nothing here" rather than "the model returned nothing". The other
+    three quietly discarded one or two candidates apiece for having no category, after paying
+    Places to resolve them and the judge to score them.
+
+    Neither is a crash and neither should be. Both have to be *counted*, because a stage that
+    loses everything and a corridor that contains nothing look identical from the outside,
+    and only one of them is worth a rider's attention.
+    """
+
+    @staticmethod
+    def _resolved(name: str, place_id: str, category):
+        return ResolvedCandidate(
+            candidate=Candidate(
+                name=name,
+                category=PoiCategory.WILD_CAMP,
+                found_near=Coordinate(lat=0.01, lon=-121.0),
+                source="brave",
+            ),
+            place_id=place_id,
+            coordinate=Coordinate(lat=0.01, lon=-121.0),
+            category=category,
+        )
+
+    async def _run(self, *, resolved, scores: str):
+        runner = DiscoveryPipeline(
+            namer=StubNamer(),
+            source=FakeSearchSource(),
+            extractor=PlaceExtractor(
+                llm('{"places": [{"result_index": 0, "place_name": "First"}]}')
+            ),
+            resolver=StubResolver(resolved=resolved),
+            classifier=CategoryClassifier(llm('{"categories": []}')),
+            judge=CandidateJudge(llm(scores)),
+        )
+        return [e async for e in runner.run(LEG, CATEGORIES, max_anchors=2, spacing_m=1000)]
+
+    async def test_scoring_nothing_at_all_is_reported_as_a_failure(self):
+        """The one-in-four case. A model that answers with prose costs the batch its scores,
+        which is by design — saying nothing about it is not."""
+        events = await self._run(
+            resolved=(self._resolved("First", "ChIJ_a", PoiCategory.WILD_CAMP),),
+            scores='{"scores": []}',
+        )
+        assert "failure" in events[-1].message
+
+    async def test_scoring_some_of_them_is_not_a_failure(self):
+        """A model declining to score one place is an opinion, not a malfunction."""
+        events = await self._run(
+            resolved=(
+                self._resolved("First", "ChIJ_a", PoiCategory.WILD_CAMP),
+                self._resolved("Second", "ChIJ_b", PoiCategory.WILD_CAMP),
+            ),
+            scores='{"scores": [{"index": 0, "score": 0.8, "reason": "good"}]}',
+        )
+        assert "failure" not in events[-1].message
+
+    async def test_uncategorisable_places_are_counted_not_just_dropped(self):
+        """A road junction is correctly unpinnable, and was costing a Places lookup and a
+        scoring slot before vanishing without trace."""
+        events = await self._run(
+            resolved=(self._resolved("Sunset Way & 6th Ave NE", "ChIJ_x", None),),
+            scores='{"scores": [{"index": 0, "score": 0.8, "reason": "good"}]}',
+        )
+        assert "categor" in events[-1].message
+        # And not as a judge failure: the judge was never asked, because a candidate that
+        # cannot be pinned is dropped before scoring rather than after.
+        assert "failure" not in events[-1].message
+
+    async def test_a_clean_run_mentions_neither(self):
+        events = await self._run(
+            resolved=(self._resolved("First", "ChIJ_a", PoiCategory.WILD_CAMP),),
+            scores='{"scores": [{"index": 0, "score": 0.8, "reason": "good"}]}',
+        )
+        assert "failure" not in events[-1].message
+        assert "categor" not in events[-1].message

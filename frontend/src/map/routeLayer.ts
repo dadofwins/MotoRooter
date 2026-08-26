@@ -13,6 +13,7 @@
  * Kept pure and free of any `google.maps` dependency so the splitting rules — which is
  * where the off-by-one bugs live — are testable without the API.
  */
+import { distanceM } from '../routing/geo'
 import type { Coordinate, Surface, TripLeg } from '../api/types'
 
 /** One run of geometry sharing a surface, ready to become a single polyline. */
@@ -24,6 +25,26 @@ export interface RouteSegment {
 }
 
 const DEFAULT_SURFACE: Surface = 'unknown'
+
+/**
+ * How far apart two legs' shared waypoint may be and still count as the same place.
+ *
+ * Each engine snaps a waypoint to its own nearest routable node, so a joint is never exact —
+ * tens of metres in a town, a few hundred where the nearest mapped road is far away. Below
+ * this the hole is an artefact and closing it is honest.
+ *
+ * Above it, the hole is *information*: two legs that genuinely do not connect mean the route
+ * is broken, and drawing a straight line across kilometres of nothing would hide a real defect
+ * behind a plausible picture. This is why the threshold exists rather than bridging every
+ * joint — the two cases look identical in the data and only the distance separates them.
+ *
+ * Measured on the live stack, Woodinville → Cashmere → Blewett Pass → Ellensburg with one
+ * intent per leg: **0.5 m** at the google→ors joint and **11.3 m** at ors→google. So real
+ * disagreement is far smaller than this ceiling, which is deliberate — those two joints are on
+ * mapped road, and a waypoint dropped in the middle of a clear-cut snaps much further. Retune
+ * it if a real gap is ever seen inside it, not on the strength of two happy samples.
+ */
+const JOINT_BRIDGE_M = 500
 
 /**
  * Surface of each *edge* of a leg's geometry.
@@ -50,9 +71,35 @@ function edgeSurfaces(leg: TripLeg): Surface[] {
 export function toRouteSegments(legs: readonly TripLeg[]): RouteSegment[] {
   const segments: RouteSegment[] = []
 
+  /**
+   * Closes the joint between the previous leg and this one.
+   *
+   * Now that a trip is many legs, every waypoint is a boundary between two engines, and they
+   * do not agree on its coordinate: each snaps to its own nearest routable node, sometimes
+   * tens of metres away. Each segment becomes its own `google.maps.Polyline`, so left alone
+   * that is a visible hole at every waypoint — and a rider cannot tell a hole from a routing
+   * failure.
+   *
+   * The bridge is one point appended to the *previous* segment, which keeps the invariant
+   * this module is built on: consecutive segments share their boundary point, and every
+   * segment still names exactly one leg for a click to re-request.
+   */
+  const bridgeTo = (start: Coordinate): void => {
+    const previous = segments.at(-1)
+    const end = previous?.path.at(-1)
+    if (previous === undefined || end === undefined) return
+    if (end.lat === start.lat && end.lon === start.lon) return
+    // A gap this size is not a snapping artefact, and a rider is entitled to see it.
+    if (distanceM(end, start) > JOINT_BRIDGE_M) return
+    segments[segments.length - 1] = { ...previous, path: [...previous.path, start] }
+  }
+
   legs.forEach((leg, legIndex) => {
     const geometry = leg.routed?.geometry ?? []
     if (geometry.length < 2) return // not routed yet, or too short to be a line
+
+    const start = geometry[0]
+    if (start !== undefined) bridgeTo(start)
 
     const surfaces = edgeSurfaces(leg)
     let runStart = 0

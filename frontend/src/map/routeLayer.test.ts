@@ -54,6 +54,24 @@ function drawnPath(segments: ReturnType<typeof toRouteSegments>): Coordinate[] {
   return path
 }
 
+/**
+ * Adjacent segment pairs that do not share a point.
+ *
+ * `drawnPath` cannot see these: it concatenates every segment's points, so two polylines with
+ * a 200 m hole between them read as one continuous list. Each segment becomes its own
+ * `google.maps.Polyline`, so what a rider actually sees is the gap.
+ */
+function gaps(segments: ReturnType<typeof toRouteSegments>): number[] {
+  const open: number[] = []
+  segments.slice(1).forEach((segment, index) => {
+    const before = segments[index]?.path.at(-1)
+    const after = segment.path[0]
+    if (before === undefined || after === undefined) return
+    if (before.lat !== after.lat || before.lon !== after.lon) open.push(index)
+  })
+  return open
+}
+
 describe('toRouteSegments', () => {
   it('draws the whole geometry as unknown surface when nothing is tagged', () => {
     const geometry = coords(4)
@@ -139,6 +157,109 @@ describe('toRouteSegments', () => {
     expect(drawnPath(segments)).toEqual(geometry)
   })
 
+  it('closes the joint between two legs whose engines disagree about the shared waypoint', () => {
+    // Now that a trip is many legs, every waypoint is a joint between two engines, and they
+    // do not return the same coordinate for it: each snaps to its own nearest routable node,
+    // sometimes tens of metres apart. Drawn as-is that is a hole in the route at every
+    // waypoint, and a rider cannot tell a hole from a routing failure.
+    const first = leg(
+      [
+        { lat: 47.0, lon: -120.0 },
+        { lat: 47.1, lon: -120.0 },
+      ],
+      [],
+      { start_waypoint_index: 0, end_waypoint_index: 1 },
+    )
+    const second = leg(
+      [
+        // Snapped 200 m from where the first leg ended.
+        { lat: 47.102, lon: -120.0 },
+        { lat: 47.2, lon: -120.0 },
+      ],
+      [],
+      { start_waypoint_index: 1, end_waypoint_index: 2 },
+    )
+
+    const segments = toRouteSegments([first, second])
+
+    // Asserted on the polylines, not on their concatenation. My first version of this test
+    // used `drawnPath`, which joins every segment's points end to end and so reported a
+    // continuous route across a 200 m hole — it passed before the bridge existed.
+    expect(gaps(segments)).toEqual([])
+    expect(drawnPath(segments)).toEqual([
+      { lat: 47.0, lon: -120.0 },
+      { lat: 47.1, lon: -120.0 },
+      { lat: 47.102, lon: -120.0 },
+      { lat: 47.2, lon: -120.0 },
+    ])
+  })
+
+  it('does not add a point when the legs already meet', () => {
+    const shared = { lat: 47.1, lon: -120.0 }
+    const first = leg([{ lat: 47.0, lon: -120.0 }, shared])
+    const second = leg([shared, { lat: 47.2, lon: -120.0 }])
+
+    const segments = toRouteSegments([first, second])
+
+    // A duplicated point is harmless to look at and still wrong: it would show up as a
+    // zero-length edge in anything measuring the drawn line.
+    expect(segments[0]?.path).toHaveLength(2)
+  })
+
+  it('leaves a joint open when the next leg has not routed yet', () => {
+    const first = leg([
+      { lat: 47.0, lon: -120.0 },
+      { lat: 47.1, lon: -120.0 },
+    ])
+    const second = leg(coords(3), [], { routed: null })
+
+    const segments = toRouteSegments([first, second])
+
+    // Nothing to bridge to. Inventing a line to a leg that has no geometry would draw a
+    // route the router has not agreed to.
+    expect(segments).toHaveLength(1)
+    expect(segments[0]?.path).toHaveLength(2)
+  })
+
+  it('closes every joint on a trip with several legs and surfaces', () => {
+    // The realistic shape: highway, dirt, highway, each from a different engine, each snapping
+    // the shared waypoint differently. One gap anywhere reads as a routing failure.
+    const legs = [0, 1, 2].map((index) =>
+      leg(
+        [
+          { lat: 47 + index * 0.1, lon: -120 },
+          { lat: 47 + index * 0.1 + 0.05, lon: -120 },
+          { lat: 47 + index * 0.1 + 0.098, lon: -120 },
+        ],
+        [{ start_index: 0, end_index: 1, surface: index === 1 ? 'unpaved' : 'paved' }],
+        { start_waypoint_index: index, end_waypoint_index: index + 1 },
+      ),
+    )
+
+    const segments = toRouteSegments(legs)
+
+    expect(segments.length).toBeGreaterThan(3)
+    expect(gaps(segments)).toEqual([])
+  })
+
+  it('keeps a bridged joint attributable to the leg before it', () => {
+    // Segments carry the leg a click should re-request. The joint belongs to one of the two,
+    // and giving it to the earlier one keeps the rule "a segment names exactly one leg".
+    const first = leg([
+      { lat: 47.0, lon: -120.0 },
+      { lat: 47.1, lon: -120.0 },
+    ])
+    const second = leg([
+      { lat: 47.102, lon: -120.0 },
+      { lat: 47.2, lon: -120.0 },
+    ])
+
+    const segments = toRouteSegments([first, second])
+
+    expect(segments[0]?.legIndex).toBe(0)
+    expect(segments.at(-1)?.legIndex).toBe(1)
+  })
+
   it('draws nothing for a leg that has not been routed yet', () => {
     // A waypoint pair the user just added has no geometry. Markers still show; no line does.
     expect(toRouteSegments([leg(coords(3), [], { routed: null })])).toEqual([])
@@ -170,9 +291,11 @@ describe('toRouteSegments', () => {
     expect(segments.map((segment) => segment.legIndex)).toEqual([0, 1])
   })
 
-  it('invents no connector when adjacent legs do not quite meet', () => {
-    // Two engines can disagree about the join by a few metres. Drawing a straight line
-    // across the discontinuity would hide a real routing defect behind a plausible picture.
+  it('invents no connector across a gap too large to be a snapped waypoint', () => {
+    // The other half of the joint rule. A few hundred metres is two engines snapping the same
+    // waypoint to different nodes, and closing it is honest. This gap is 200 km: the legs
+    // genuinely do not connect, and drawing a straight line across it would hide a real
+    // routing defect behind a plausible picture.
     const first = coords(3)
     const second: Coordinate[] = [
       { lat: 49, lon: -121 },

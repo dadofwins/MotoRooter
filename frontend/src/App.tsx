@@ -30,12 +30,18 @@ import type { GoogleMapsLoader } from './map/loadGoogleMaps'
 import { isVerified } from './map/poiPin'
 import { PoiDetailDialog } from './poi/PoiDetailDialog'
 import { DragSession } from './routing/dragSession'
-import { addPoiToRoute, type RouteEdit } from './routing/tripEdits'
+import { addPoiToRoute, isLegStale, type RouteEdit } from './routing/tripEdits'
 import { replanErrorMessage, routeErrorMessage } from './trip/routeErrorMessage'
 import { SurfaceSummary } from './trip/SurfaceSummary'
 import { Landing } from './landing/Landing'
+import {
+  DEFAULT_INTENT,
+  legsSpanning,
+  withWaypointAppended,
+  withWaypointRemoved,
+} from './routing/legStructure'
 import { needsReplan, useReplan } from './trip/useReplan'
-import { useRouteLeg } from './trip/useRouteLeg'
+import { useRouteLegs } from './trip/useRouteLegs'
 import { useRoutingCapabilities } from './trip/useRoutingCapabilities'
 import { clearTripFromUrl, hasTripInUrl, useStoredTrip, useTripSave } from './trip/useTripDocument'
 import { useVisitedTrips } from './trip/useVisitedTrips'
@@ -205,7 +211,23 @@ function TripSession({
    */
   const dragIntervalMs = capabilities.intervalFor(DRAG_INTENT)
 
-  const { legs, estimatedDurationS, isRouting, error } = useRouteLeg(client, waypoints, live.legs)
+  /**
+   * The trip's leg structure: one leg per pair of waypoints, each with its own intent.
+   *
+   * Derived when the document has none — a trip saved before legs were real, or one whose
+   * waypoints arrived without them. Healing it here rather than at load keeps the rule that the
+   * stored document is read, never rewritten behind the rider's back.
+   */
+  const structure = useMemo(
+    () => live.legs ?? legsSpanning(waypoints.length, DEFAULT_INTENT),
+    [live.legs, waypoints.length],
+  )
+
+  const { legs, estimatedDurationS, isRouting, error, unroutableCount } = useRouteLegs(
+    client,
+    waypoints,
+    structure,
+  )
 
   /** Provisional geometry during a gesture. Never saved, never in undo history. */
   const [preview, setPreview] = useState<readonly TripLeg[] | null>(null)
@@ -221,18 +243,28 @@ function TripSession({
 
   const addWaypoint = useCallback(
     (coordinate: Coordinate) => {
-      change((from) => ({
-        // Pinned: the rider placed it by hand, so a later replan must not move or drop it.
-        waypoints: [...from.waypoints, { coordinate, name: null, pinned: true }],
-        // Whatever geometry was in hand no longer describes this route.
-        legs: null,
-      }))
+      change((from) =>
+        // One new leg to reach it; every existing leg keeps the geometry it already has. This
+        // used to discard all of it, so each click re-routed the whole trip.
+        withWaypointAppended(
+          { waypoints: from.waypoints, legs: from.legs ?? legsSpanning(from.waypoints.length, DEFAULT_INTENT) },
+          // Pinned: the rider placed it by hand, so a later replan must not move or drop it.
+          { coordinate, name: null, pinned: true },
+          DEFAULT_INTENT,
+        ),
+      )
     },
     [change],
   )
 
   const removeLastWaypoint = useCallback(() => {
-    change((from) => ({ waypoints: from.waypoints.slice(0, -1), legs: null }))
+    change((from) => {
+      if (from.waypoints.length === 0) return {}
+      return withWaypointRemoved(
+        { waypoints: from.waypoints, legs: from.legs ?? legsSpanning(from.waypoints.length, DEFAULT_INTENT) },
+        from.waypoints.length - 1,
+      )
+    })
   }, [change])
 
   const drag = useMemo(
@@ -302,7 +334,10 @@ function TripSession({
     (poi: Poi) => {
       change((from) => {
         const added = addPoiToRoute({ waypoints: from.waypoints, legs: current.current.legs }, poi)
-        return added === null ? {} : { waypoints: added.waypoints, legs: null }
+        // The re-shaped legs, not `null`. Discarding them re-derived a pairwise structure and
+        // split the leg the place was inserted into, so adding one campground cost two
+        // requests and re-routed the segment either side of it.
+        return added === null ? {} : added
       })
     },
     [change],
@@ -360,6 +395,19 @@ function TripSession({
   )
 
   const distanceM = shownLegs.reduce((total, leg) => total + (leg.routed?.distance_m ?? 0), 0)
+
+  /**
+   * The riding time to show, and where it may come from.
+   *
+   * Per-leg estimates when this session routed every leg. Otherwise the figure the backend
+   * computed for the stored document — but only while every leg still matches what was stored,
+   * because the moment the rider changes one, that number describes a trip they no longer have.
+   * Nothing in between: a partial total read as the whole day is worse than no figure, and this
+   * is the number a rider plans a day around.
+   */
+  const untouched = structure.length > 0 && structure.every((leg) => !isLegStale(waypoints, leg))
+  const shownDurationS =
+    estimatedDurationS ?? (untouched ? (stored?.estimated_duration_s ?? null) : null)
 
   // This browser's record of where it has been, updated whenever a trip is known — created
   // here, or arrived at by link.
@@ -441,7 +489,7 @@ function TripSession({
             <p aria-live="polite">
               {waypoints.length} point{waypoints.length === 1 ? '' : 's'} placed
               {distanceM > 0 && ` · ${formatDistance(distanceM, unit)}`}
-              {estimatedDurationS !== null && ` · ${formatDuration(estimatedDurationS)}`}
+              {shownDurationS !== null && ` · ${formatDuration(shownDurationS)}`}
               {isRouting && ' · routing…'}
             </p>
             <button type="button" onClick={removeLastWaypoint}>
@@ -539,6 +587,16 @@ function TripSession({
                 }
               : {})}
           />
+        )}
+
+        {unroutableCount > 0 && (
+          // Said plainly rather than left as a hole in the line. One dead segment does not
+          // stop the rest of the trip being useful, but a rider who cannot see which part
+          // failed has no way to fix it.
+          <p className="route-warning" role="status">
+            {unroutableCount} segment{unroutableCount === 1 ? '' : 's'} could not be routed. The
+            rest of the route is unchanged — try moving the points on either side.
+          </p>
         )}
 
         {error !== null && (

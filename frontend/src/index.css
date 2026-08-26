@@ -240,6 +240,26 @@ body {
     color: rgb(255 255 255 / 0.9);
     border-color: rgb(255 255 255 / 0.45);
   }
+
+  .route-warning {
+    color: #fcd34d;
+    background: rgb(245 158 11 / 0.14);
+    border-left-color: #d97706;
+  }
+}
+
+/* A segment failed, the rest of the trip did not.
+   Amber rather than red, and the text carries the meaning on its own — a rider in sunlight or
+   a colour-blind one gets the same information from the words. */
+.route-warning {
+  margin: 0.75rem 0 0;
+  padding: 0.5rem 0.625rem;
+  font-size: 0.8125rem;
+  line-height: 1.4;
+  color: #7c4a02;
+  background: rgb(245 158 11 / 0.12);
+  border-left: 3px solid #b45309;
+  border-radius: 0.25rem;
 }
 
 /* The slow path. Sits with the route it acts on rather than in a toolbar. */

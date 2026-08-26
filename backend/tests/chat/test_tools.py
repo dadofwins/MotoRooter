@@ -101,9 +101,17 @@ async def store_with(document: Trip) -> InMemoryTripStore:
     return store
 
 
-async def tools(*, document: Trip | None = None, router=None, discovery=None) -> TripTools:
+async def tools(
+    *, document: Trip | None = None, router=None, discovery=None, lookup=None
+) -> TripTools:
     store = await store_with(document or trip())
-    return TripTools(store=store, slug=SLUG, router=router or StubRouter(), discovery=discovery)
+    return TripTools(
+        store=store,
+        slug=SLUG,
+        router=router or StubRouter(),
+        discovery=discovery,
+        lookup=lookup,
+    )
 
 
 async def call(kit: TripTools, name: str, raw: str):
@@ -138,38 +146,58 @@ class TestDescribeTrip:
         assert outcome.payload.get("trip_changed") is not True
 
 
+def a_place(name="Blewett Pass", place_id="ChIJ_bp", lat=47.34, lon=-120.58):
+    from motorooter.planning.discovery.lookup import FoundPlace
+
+    return FoundPlace(
+        name=name, place_id=place_id, coordinate=Coordinate(lat=lat, lon=lon), kinds=("route",)
+    )
+
+
+class OneResult:
+    """A lookup that finds exactly the place asked for."""
+
+    def __init__(self, *found):
+        self.found = found or (a_place(),)
+
+    async def search(self, text, *, near=None, limit=5):
+        return self.found
+
+
 class TestAddWaypoint:
     async def test_it_routes_before_it_saves(self):
-        """A coordinate from a model is a claim until a router agrees with it."""
+        """Places says the somewhere is real; routing says it is reachable. Both, in order."""
         router = StubRouter()
-        kit = await tools(router=router)
-        await call(kit, AddWaypoint.name, '{"lat": 47.05, "lon": -121.05}')
+        kit = await tools(router=router, lookup=OneResult())
+        await call(kit, AddWaypoint.name, '{"name": "Blewett Pass"}')
         assert router.calls, "saved without routing"
 
-    async def test_an_unroutable_point_is_not_saved(self):
-        """The failure that must not become a pin: the model invents somewhere in the sea."""
+    async def test_an_unroutable_place_is_not_saved(self):
+        """A real place with no road near it. Verified is not the same as reachable."""
         router = StubRouter(error=NoRouteFound("no road within 350 m"))
-        kit = await tools(router=router)
+        kit = await tools(router=router, lookup=OneResult())
         with pytest.raises(ToolCallFailed):
-            await call(kit, AddWaypoint.name, '{"lat": 0.0, "lon": 0.0}')
+            await call(kit, AddWaypoint.name, '{"name": "Blewett Pass"}')
         assert len((await kit.store.get(SLUG)).waypoints) == 2
 
     async def test_the_waypoint_is_added(self):
-        kit = await tools()
-        await call(kit, AddWaypoint.name, '{"lat": 47.05, "lon": -121.05}')
+        kit = await tools(lookup=OneResult())
+        await call(kit, AddWaypoint.name, '{"name": "Blewett Pass"}')
         assert len((await kit.store.get(SLUG)).waypoints) == 3
+
+    async def test_it_is_named_as_places_names_it(self):
+        """Not as the rider typed it, so "blewett" does not become a waypoint called
+        "blewett" on the device."""
+        kit = await tools(lookup=OneResult(a_place(name="Blewett Pass")))
+        await call(kit, AddWaypoint.name, '{"name": "blewett"}')
+        assert (await kit.store.get(SLUG)).waypoints[-1].name == "Blewett Pass"
 
     async def test_it_returns_the_numbered_list(self):
         """Indices shift under every edit, including the rider's. A prose summary leaves the
         model holding a number that now means a different waypoint."""
-        kit = await tools()
-        outcome = await call(kit, AddWaypoint.name, '{"lat": 47.05, "lon": -121.05}')
+        kit = await tools(lookup=OneResult())
+        outcome = await call(kit, AddWaypoint.name, '{"name": "Blewett Pass"}')
         assert "0" in outcome.content and "2" in outcome.content
-
-    async def test_a_bad_coordinate_is_the_models_mistake(self):
-        kit = await tools()
-        with pytest.raises(ToolCallFailed):
-            await call(kit, AddWaypoint.name, '{"lat": 200.0, "lon": -121.0}')
 
 
 class TestRemoveWaypoint:
@@ -394,3 +422,136 @@ class TestSurfaceIsReportedInThreeParts:
         kit = await tools(document=trip(routed=True))
         content = (await call(kit, DescribeTrip.name, "{}")).content
         assert "unpaved" in content and "paved" in content and "unsurveyed" in content
+
+
+class TestAddWaypointTakesANameNotACoordinate:
+    """The hole this closes, and why the signature is the fix rather than the prompt.
+
+    `add_waypoint(lat, lon)` was the one place in the system where a model's assertion became
+    geometry with nothing in between. Every other stage already refuses that: extraction may
+    only name places present in its input, resolution turns a claim into a `place_id` or drops
+    it, `add_poi_to_route` takes an id already on the trip.
+
+    Measured before changing it, on a real model: asked to set a start of "Woodinville, WA" it
+    supplied a coordinate 30 m from the true one, and the waypoint was pinned. Thirty metres is
+    what makes it dangerous rather than reassuring — recall is good for famous towns, so
+    nothing looks wrong, and it will be silently wrong for a forest-road junction.
+
+    With no coordinate argument there is nowhere for a fabrication to arrive. "Never invent a
+    place" stops being an instruction the model may decline.
+    """
+
+    class StubLookup:
+        def __init__(self, *found, error=None):
+            self.found = found
+            self.error = error
+            self.asked: list[tuple[str, object]] = []
+
+        async def search(self, text, *, near=None, limit=5):
+            self.asked.append((text, near))
+            if self.error is not None:
+                raise self.error
+            return self.found
+
+    @staticmethod
+    def _found(name="Leavenworth", place_id="ChIJ_wa", lat=47.596, lon=-120.661, address=None):
+        from motorooter.planning.discovery.lookup import FoundPlace
+
+        return FoundPlace(
+            name=name,
+            place_id=place_id,
+            coordinate=Coordinate(lat=lat, lon=lon),
+            kinds=("locality",),
+            address=address,
+        )
+
+    async def test_it_takes_a_name(self):
+        lookup = self.StubLookup(self._found())
+        kit = await tools(lookup=lookup)
+        await call(kit, AddWaypoint.name, '{"name": "Leavenworth"}')
+        assert lookup.asked[0][0] == "Leavenworth"
+
+    async def test_the_pinned_coordinate_comes_from_places(self):
+        """Not from the model. That is the whole change."""
+        kit = await tools(lookup=self.StubLookup(self._found(lat=47.596, lon=-120.661)))
+        await call(kit, AddWaypoint.name, '{"name": "Leavenworth"}')
+        added = (await kit.store.get(SLUG)).waypoints[-1]
+        assert added.coordinate.lat == pytest.approx(47.596)
+
+    async def test_a_coordinate_argument_is_refused(self):
+        """There must be no way to smuggle one in."""
+        kit = await tools(lookup=self.StubLookup(self._found()))
+        with pytest.raises(ToolCallFailed):
+            await call(kit, AddWaypoint.name, '{"lat": 47.0, "lon": -121.0}')
+
+    async def test_nothing_found_is_reported_to_the_model(self):
+        kit = await tools(lookup=self.StubLookup())
+        with pytest.raises(ToolCallFailed):
+            await call(kit, AddWaypoint.name, '{"name": "asdfghjkl"}')
+
+    async def test_nothing_is_pinned_when_nothing_is_found(self):
+        kit = await tools(lookup=self.StubLookup())
+        before = len((await kit.store.get(SLUG)).waypoints)
+        with pytest.raises(ToolCallFailed):
+            await call(kit, AddWaypoint.name, '{"name": "asdfghjkl"}')
+        assert len((await kit.store.get(SLUG)).waypoints) == before
+
+
+class TestAmbiguityRefusesRatherThanGuesses:
+    """Several real places, no basis to choose: hand back the choice.
+
+    The near-bias resolves "Leavenworth" 60 km from an existing waypoint and does nothing on an
+    empty trip, which is exactly the first message of a new conversation. Pinning the best
+    match there is the original failure one layer up — a plausible coordinate, nothing visibly
+    wrong, and a route to Bavaria.
+
+    Choosing among verified candidates is judgement the model may exercise. Producing a
+    coordinate is not.
+    """
+
+    @staticmethod
+    def _two():
+        from motorooter.planning.discovery.lookup import FoundPlace
+
+        return (
+            FoundPlace(
+                name="Leavenworth",
+                place_id="ChIJ_wa",
+                coordinate=Coordinate(lat=47.596, lon=-120.661),
+                address="Leavenworth, WA 98826, USA",
+            ),
+            FoundPlace(
+                name="Leavenworth",
+                place_id="ChIJ_ks",
+                coordinate=Coordinate(lat=39.311, lon=-94.922),
+                address="Leavenworth, KS 66048, USA",
+            ),
+        )
+
+    async def test_it_pins_nothing_when_ambiguous(self):
+        kit = await tools(lookup=TestAddWaypointTakesANameNotACoordinate.StubLookup(*self._two()))
+        before = len((await kit.store.get(SLUG)).waypoints)
+        with pytest.raises(ToolCallFailed):
+            await call(kit, AddWaypoint.name, '{"name": "Leavenworth"}')
+        assert len((await kit.store.get(SLUG)).waypoints) == before
+
+    async def test_it_offers_the_candidates(self):
+        """With what tells them apart, or the model is choosing blind too."""
+        kit = await tools(lookup=TestAddWaypointTakesANameNotACoordinate.StubLookup(*self._two()))
+        with pytest.raises(ToolCallFailed) as caught:
+            await call(kit, AddWaypoint.name, '{"name": "Leavenworth"}')
+        assert "WA" in str(caught.value)
+        assert "KS" in str(caught.value)
+
+    async def test_a_place_id_can_be_used_to_settle_it(self):
+        """The second call: the model picks one of the verified candidates."""
+        kit = await tools(lookup=TestAddWaypointTakesANameNotACoordinate.StubLookup(*self._two()))
+        await call(kit, AddWaypoint.name, '{"name": "Leavenworth", "place_id": "ChIJ_ks"}')
+        added = (await kit.store.get(SLUG)).waypoints[-1]
+        assert added.coordinate.lat == pytest.approx(39.311)
+
+    async def test_an_unknown_place_id_is_refused(self):
+        """It must be one of the candidates just offered, not another invention."""
+        kit = await tools(lookup=TestAddWaypointTakesANameNotACoordinate.StubLookup(*self._two()))
+        with pytest.raises(ToolCallFailed):
+            await call(kit, AddWaypoint.name, '{"name": "Leavenworth", "place_id": "ChIJ_no"}')

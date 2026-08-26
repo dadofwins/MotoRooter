@@ -14,7 +14,7 @@ from collections.abc import AsyncIterator, Sequence
 from fastapi import APIRouter, Response, status
 from fastapi.responses import StreamingResponse
 
-from motorooter.api.deps import ChatModel, Discovery, Resolver, Trips
+from motorooter.api.deps import ChatModel, Discovery, Lookup, Resolver, Trips
 from motorooter.api.errors import NotImplementedYet
 from motorooter.api.schemas import (
     ERROR_RESPONSES,
@@ -210,6 +210,7 @@ async def chat(
     resolver: Resolver,
     discovery: Discovery,
     model: ChatModel,
+    lookup: Lookup,
 ) -> StreamingResponse:
     """Run one assistant turn against a trip, streaming what happens.
 
@@ -223,7 +224,11 @@ async def chat(
         raise NotImplementedYet("chat (no chat model configured)")
 
     tools = TripTools(
-        store=store, slug=slug, router=LegRoutingService(resolver), discovery=discovery
+        store=store,
+        slug=slug,
+        router=LegRoutingService(resolver),
+        discovery=discovery,
+        lookup=lookup,
     )
     agent = Agent(model, tools.registry)
     return StreamingResponse(

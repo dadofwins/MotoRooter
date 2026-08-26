@@ -198,6 +198,69 @@
         "title": "ErrorResponse",
         "type": "object"
       },
+      "GeocodeResponse": {
+        "description": "Places matching a search text, best first.\n\n**Several results, not one.** A name is a claim until something verifies it, and plenty of\nnames verify to more than one real place \u2014 Leavenworth is a town in Washington, a town in\nKansas and a district of Bavaria. Returning the list and letting the caller choose keeps\nthe choice with whoever has the context, rather than resolving an ambiguity silently and\nplausibly.\n\nEmpty when nothing matched. That is an ordinary answer, not an error.",
+        "properties": {
+          "results": {
+            "description": "Best first. Empty if the text matched nothing.",
+            "items": {
+              "$ref": "#/components/schemas/GeocodeResult"
+            },
+            "title": "Results",
+            "type": "array"
+          }
+        },
+        "required": [
+          "results"
+        ],
+        "title": "GeocodeResponse",
+        "type": "object"
+      },
+      "GeocodeResult": {
+        "description": "One place a search text resolved to, verified against Google Places.",
+        "properties": {
+          "address": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Places' formatted address, e.g. 'Leavenworth, WA 98826, USA'. **This is what makes a list of same-named places choosable** \u2014 without it three real Leavenworths render as three identical rows. Null when Places has none, which a natural feature often will not; fall back to `kinds` there. Display only, per-request, never stored.",
+            "title": "Address"
+          },
+          "coordinate": {
+            "$ref": "#/components/schemas/Coordinate"
+          },
+          "kinds": {
+            "description": "Places' own types, e.g. `locality`, `natural_feature`. For choosing an icon and for telling a town from a mountain pass when names collide.",
+            "items": {
+              "type": "string"
+            },
+            "title": "Kinds",
+            "type": "array"
+          },
+          "name": {
+            "description": "What Places calls it, not what was typed.",
+            "title": "Name",
+            "type": "string"
+          },
+          "place_id": {
+            "description": "Google's identifier. The only field here that may be stored, and the way to refer to this place later without re-resolving it.",
+            "title": "Place Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "place_id",
+          "coordinate"
+        ],
+        "title": "GeocodeResult",
+        "type": "object"
+      },
       "HealthResponse": {
         "properties": {
           "providers": {
@@ -1189,6 +1252,143 @@
   },
   "openapi": "3.1.0",
   "paths": {
+    "/api/geocode": {
+      "get": {
+        "description": "Places matching a search text, verified against Google Places, best first.\n\n**Several results, not one.** A name is a claim until something verifies it, and plenty of names verify to more than one real place. Resolving that ambiguity silently is the failure this shape exists to avoid.\n\nAn empty `results` is an ordinary answer \u2014 a typo matches nothing. Only `place_id` may be stored; everything else is per-request under Google's terms.",
+        "operationId": "geocode_api_geocode_get",
+        "parameters": [
+          {
+            "description": "What to search for.",
+            "in": "query",
+            "name": "q",
+            "required": true,
+            "schema": {
+              "description": "What to search for.",
+              "maxLength": 200,
+              "minLength": 1,
+              "pattern": "\\S",
+              "title": "Q",
+              "type": "string"
+            }
+          },
+          {
+            "description": "`lat,lon` to bias results toward, usually the trip's last waypoint. Omit it when there is nothing to bias from; a made-up centre would silently prefer one of several real places.",
+            "in": "query",
+            "name": "near",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "pattern": "^-?\\d+(\\.\\d+)?,\\s*-?\\d+(\\.\\d+)?$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "`lat,lon` to bias results toward, usually the trip's last waypoint. Omit it when there is nothing to bias from; a made-up centre would silently prefer one of several real places.",
+              "title": "Near"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GeocodeResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          },
+          "501": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Implemented"
+          },
+          "502": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Bad Gateway"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "summary": "Find places by name",
+        "tags": [
+          "geocode"
+        ]
+      }
+    },
     "/api/health": {
       "get": {
         "operationId": "health_api_health_get",

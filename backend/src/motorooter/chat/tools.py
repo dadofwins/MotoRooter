@@ -26,13 +26,15 @@ list re-anchors the model after every mutation, which a prose summary does not.
 
 from typing import Any, ClassVar, Protocol
 
-from pydantic import Field, ValidationError
+from pydantic import Field
 
 from motorooter.llm.errors import ToolCallFailed
 from motorooter.llm.tools import Tool, ToolArguments, ToolOutcome, ToolRegistry
+from motorooter.planning.discovery.errors import DiscoveryError
+from motorooter.planning.discovery.lookup import FoundPlace, PlaceLookup
 from motorooter.planning.discovery.pipeline import DiscoveryPipeline
 from motorooter.routing.errors import RoutingError
-from motorooter.routing.models import Coordinate, LegIntent, RouteLeg
+from motorooter.routing.models import LegIntent, RouteLeg
 from motorooter.trips.models import Poi, PoiCategory, Trip, TripLeg, Waypoint
 from motorooter.trips.service import edit_trip
 from motorooter.trips.store import TripStore
@@ -80,25 +82,50 @@ class _TripTool(Tool):
         slug: str,
         router: LegRouter,
         discovery: DiscoveryPipeline | None = None,
+        lookup: PlaceLookup | None = None,
     ) -> None:
         self._store = store
         self._slug = slug
         self._router = router
         self._discovery = discovery
+        self._lookup = lookup
 
     async def _trip(self) -> Trip:
         return await self._store.get(self._slug)
 
+    async def _find(self, text: str, trip: Trip) -> tuple[FoundPlace, ...]:
+        """Places matching a name, biased toward where the trip already is.
+
+        The bias is what makes "Leavenworth" mean the Washington one on a trip that is
+        already in Washington. On an empty trip there is nothing to bias from, and inventing
+        a centre would silently prefer one real place over another.
+        """
+        if self._lookup is None:
+            msg = (
+                "place lookup is not available: this deployment has no Places credentials "
+                "configured, so waypoints can only be added from the map."
+            )
+            raise ToolCallFailed(msg)
+        near = trip.waypoints[-1].coordinate if trip.waypoints else None
+        try:
+            return await self._lookup.search(text, near=near)
+        except DiscoveryError as exc:
+            msg = f"could not look up {text!r}: {exc}"
+            raise ToolCallFailed(msg) from exc
+
     async def _route_all(self, trip: Trip, waypoints: tuple[Waypoint, ...]) -> None:
         """Confirm the waypoints can actually be joined, before anything is written.
 
-        Routing failure is the check on model-invented geography: a point in the sea, or one
-        350 m from any road, fails here rather than becoming a pin nobody can ride to.
+        Routing failure is the second check on geography: a verified place with no road near
+        it fails here rather than becoming a pin nobody can ride to.
 
-        A single point is exempt because there is nothing to route — a trip has to start
-        somewhere, and refusing the first waypoint would make it impossible to begin one by
-        chat at all. The exemption closes itself: the second waypoint routes against the
-        first, so a bad start coordinate is caught then rather than never.
+        A single point is not routed because there is nothing to route — but it is no longer
+        unchecked, which is the part that was wrong. The old comment claimed the exemption
+        closed itself, "the second waypoint routes against the first, so a bad start
+        coordinate is caught then". It does not: a first waypoint 50 km off routes perfectly
+        well *from* 50 km off, because the second validates the pair and not the guess. What
+        makes a lone waypoint safe now is that its coordinate came from Places rather than
+        from a model.
         """
         if len(waypoints) < MINIMUM_WAYPOINTS:
             return
@@ -173,30 +200,42 @@ def _surface_line(trip: Trip) -> str:
 
 
 class AddWaypointArguments(ToolArguments):
-    lat: float = Field(ge=-90.0, le=90.0, description="Latitude in decimal degrees.")
-    lon: float = Field(ge=-180.0, le=180.0, description="Longitude in decimal degrees.")
-    name: str | None = Field(default=None, description="Optional label for the waypoint.")
+    name: str = Field(
+        min_length=1,
+        description=(
+            "The place to add, by name: a town, a pass, a campground. It is looked up and "
+            "verified before anything is added, so a name is all you can give — there is no "
+            "coordinate argument."
+        ),
+    )
+    place_id: str | None = Field(
+        default=None,
+        description=(
+            "Only when a previous call returned several matches: the place_id of the one "
+            "you meant. Must be one of the ids that call offered."
+        ),
+    )
 
 
 class AddWaypoint(_TripTool):
     name: ClassVar[str] = "add_waypoint"
     description: ClassVar[str] = (
-        "Add a point the route must pass through, appended to the end of the trip. The "
-        "coordinate is routed before it is saved, so a point with no road near it will be "
-        "refused rather than added. Returns the full numbered waypoint list."
+        "Add a place the route must pass through, by name, appended to the end of the trip. "
+        "The name is looked up against Google Places first, so only somewhere real can be "
+        "added — you cannot give a coordinate. If the name matches several places you will "
+        "be shown them and can call again with the place_id you meant. Returns the full "
+        "numbered waypoint list.\n\n"
+        "Plotting a described route means calling this once per place, in order. Issue "
+        "those calls together rather than waiting for each to return — the list you get "
+        "back is the same either way, and a route is a dozen places."
     )
     arguments: ClassVar[type] = AddWaypointArguments
 
     async def run(self, arguments: Any) -> ToolOutcome:  # noqa: ANN401 -- narrowed by base
         trip = await self._trip()
-        try:
-            point = Waypoint(
-                coordinate=Coordinate(lat=arguments.lat, lon=arguments.lon),
-                name=arguments.name,
-            )
-        except ValidationError as exc:
-            msg = f"that is not a valid coordinate: {exc.error_count()} problem(s)"
-            raise ToolCallFailed(msg) from exc
+        found = await self._find(arguments.name, trip)
+        chosen = _choose(found, arguments.name, arguments.place_id)
+        point = Waypoint(coordinate=chosen.coordinate, name=chosen.name)
 
         proposed = (*trip.waypoints, point)
         await self._route_all(trip, proposed)
@@ -411,6 +450,45 @@ class FindPlaces(_TripTool):
         )
 
 
+def _choose(found: tuple[FoundPlace, ...], text: str, place_id: str | None) -> FoundPlace:
+    """The one place meant, or a refusal listing the candidates.
+
+    Ambiguity is refused rather than resolved. Pinning the best of several real matches is
+    the same failure the coordinate argument used to allow, one layer up: a plausible
+    location, nothing visibly wrong, and a route to the wrong Leavenworth.
+
+    Choosing among verified candidates is judgement the model may exercise on a second call.
+    Producing a location is not.
+    """
+    if not found:
+        msg = (
+            f"nothing called {text!r} could be found. Check the spelling, or try a nearby "
+            "town or a named road instead."
+        )
+        raise ToolCallFailed(msg)
+
+    if place_id is not None:
+        match = next((item for item in found if item.place_id == place_id), None)
+        if match is None:
+            offered = ", ".join(item.place_id for item in found)
+            msg = f"place_id {place_id!r} was not among the matches. They were: {offered}"
+            raise ToolCallFailed(msg)
+        return match
+
+    if len(found) == 1:
+        return found[0]
+
+    lines = [
+        f"  {item.place_id}  {item.name}" + (f" — {item.address}" if item.address else "")
+        for item in found
+    ]
+    msg = (
+        f"{text!r} matches {len(found)} places and nothing was added. Call again with the "
+        "place_id of the one you mean:\n" + "\n".join(lines)
+    )
+    raise ToolCallFailed(msg)
+
+
 def _legs_for(trip: Trip, waypoints: tuple[Waypoint, ...]) -> tuple[TripLeg, ...]:
     """Legs spanning consecutive waypoint pairs, inheriting the trip's existing intent.
 
@@ -444,12 +522,13 @@ class TripTools:
         slug: str,
         router: LegRouter,
         discovery: DiscoveryPipeline | None = None,
+        lookup: PlaceLookup | None = None,
     ) -> None:
         self.store = store
         self.slug = slug
 
         def build(tool: type[_TripTool]) -> _TripTool:
-            return tool(store=store, slug=slug, router=router, discovery=discovery)
+            return tool(store=store, slug=slug, router=router, discovery=discovery, lookup=lookup)
 
         self.registry = ToolRegistry(
             [

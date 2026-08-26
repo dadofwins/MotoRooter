@@ -21,6 +21,7 @@ from motorooter.chat.factory import build_chat_model
 from motorooter.planning.discovery.details import PlaceDetails
 from motorooter.planning.discovery.factory import DiscoverySettings, build_discovery
 from motorooter.planning.discovery.factory import settings_from_env as discovery_from_env
+from motorooter.planning.discovery.lookup import PlaceLookup
 from motorooter.routing.factory import RoutingSettings
 
 logger = logging.getLogger(__name__)
@@ -48,7 +49,7 @@ def build_optional_services(routing_config: RoutingSettings) -> dict[str, Any]:
 def _build(routing_config: RoutingSettings) -> dict[str, Any]:
     """Each service, or `None`. Every name in `OPTIONAL_SERVICES` must appear here."""
     if routing_config.offline:
-        return {"discovery": None, "chat_model": None, "places": None}
+        return {"discovery": None, "chat_model": None, "places": None, "place_lookup": None}
 
     settings = discovery_from_env()
     return {
@@ -58,6 +59,11 @@ def _build(routing_config: RoutingSettings) -> dict[str, Any]:
         # gated behind `settings.configured` — the POI dialog should work on a deployment
         # with a Maps key and no search credentials.
         "places": _places(settings),
+        # Needs only the Places key, like the detail client and for the same reason: place
+        # search should work on a deployment with a Maps key and no search credentials.
+        "place_lookup": PlaceLookup(api_key=settings.places_api_key)
+        if settings.places_api_key
+        else None,
     }
 
 

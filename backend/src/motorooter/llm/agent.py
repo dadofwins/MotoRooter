@@ -59,8 +59,19 @@ upstream is whatever that third party happened to put in it.
 class AgentLimits:
     """Ceilings on a single run. Every one of these has a way to run away without it."""
 
-    max_turns: int = 8
-    """Model round-trips. Enough for search, resolve, judge and a summary."""
+    max_turns: int = 20
+    """Model round-trips before the run is stopped.
+
+    Was 8, chosen when the agent had no tools and justified as "enough for search, resolve,
+    judge and a summary" — which describes a discovery run, not a conversation that edits a
+    trip. Measured against a real model on a three-day route request, the assistant added
+    seven waypoints one per turn and was cut off mid-route: the ceiling was not protecting
+    against runaway work, it was stopping ordinary work, and the rider saw a half-built trip.
+
+    Twenty covers a multi-day route — a dozen or so places, the reads between them, and a
+    summary — with room before it bites. `max_tool_calls` is the limit that actually guards
+    spend; this one guards against a model that will not stop talking.
+    """
 
     max_tool_calls: int = 64
     """Tool executions across the whole run, however they are distributed across turns."""

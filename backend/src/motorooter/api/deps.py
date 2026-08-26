@@ -11,12 +11,13 @@ from fastapi import Depends, Request
 
 from motorooter.llm.protocol import LlmClient
 from motorooter.planning.discovery.details import PlaceDetails
+from motorooter.planning.discovery.lookup import PlaceLookup
 from motorooter.planning.discovery.pipeline import DiscoveryPipeline
 from motorooter.routing.policy import PolicyResolver
 from motorooter.routing.registry import ProviderRegistry
 from motorooter.trips.store import TripStore
 
-OPTIONAL_SERVICES: tuple[str, ...] = ("discovery", "places", "chat_model")
+OPTIONAL_SERVICES: tuple[str, ...] = ("discovery", "places", "chat_model", "place_lookup")
 """The `app.state` attributes that may legitimately be `None`, named in one place.
 
 Each of these disables one feature when its credentials are absent, rather than refusing to
@@ -62,6 +63,16 @@ def get_chat_model(request: Request) -> "LlmClient | None":
     return model
 
 
+def get_place_lookup(request: Request) -> "PlaceLookup | None":
+    """Name-to-place search, or `None` without a Places key.
+
+    Shared by `GET /api/geocode` and the assistant's waypoint tool, because a rider typing a
+    place name and the model asking for one are the same question.
+    """
+    lookup: PlaceLookup | None = getattr(request.app.state, "place_lookup", None)
+    return lookup
+
+
 def get_places(request: Request) -> "PlaceDetails | None":
     """The Places detail client, or `None` when no key is configured."""
     places: PlaceDetails | None = getattr(request.app.state, "places", None)
@@ -79,3 +90,4 @@ Trips = Annotated[TripStore, Depends(get_trip_store)]
 Discovery = Annotated["DiscoveryPipeline | None", Depends(get_discovery)]
 Places = Annotated["PlaceDetails | None", Depends(get_places)]
 ChatModel = Annotated["LlmClient | None", Depends(get_chat_model)]
+Lookup = Annotated["PlaceLookup | None", Depends(get_place_lookup)]

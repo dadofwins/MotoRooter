@@ -4,6 +4,30 @@
  */
 
 export interface paths {
+    "/api/geocode": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Find places by name
+         * @description Places matching a search text, verified against Google Places, best first.
+         *
+         *     **Several results, not one.** A name is a claim until something verifies it, and plenty of names verify to more than one real place. Resolving that ambiguity silently is the failure this shape exists to avoid.
+         *
+         *     An empty `results` is an ordinary answer — a typo matches nothing. Only `place_id` may be stored; everything else is per-request under Google's terms.
+         */
+        get: operations["geocode_api_geocode_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/health": {
         parameters: {
             query?: never;
@@ -327,6 +351,52 @@ export interface components {
             code: components["schemas"]["ErrorCode"];
             /** Detail */
             detail: string;
+        };
+        /**
+         * GeocodeResponse
+         * @description Places matching a search text, best first.
+         *
+         *     **Several results, not one.** A name is a claim until something verifies it, and plenty of
+         *     names verify to more than one real place — Leavenworth is a town in Washington, a town in
+         *     Kansas and a district of Bavaria. Returning the list and letting the caller choose keeps
+         *     the choice with whoever has the context, rather than resolving an ambiguity silently and
+         *     plausibly.
+         *
+         *     Empty when nothing matched. That is an ordinary answer, not an error.
+         */
+        GeocodeResponse: {
+            /**
+             * Results
+             * @description Best first. Empty if the text matched nothing.
+             */
+            results: components["schemas"]["GeocodeResult"][];
+        };
+        /**
+         * GeocodeResult
+         * @description One place a search text resolved to, verified against Google Places.
+         */
+        GeocodeResult: {
+            /**
+             * Address
+             * @description Places' formatted address, e.g. 'Leavenworth, WA 98826, USA'. **This is what makes a list of same-named places choosable** — without it three real Leavenworths render as three identical rows. Null when Places has none, which a natural feature often will not; fall back to `kinds` there. Display only, per-request, never stored.
+             */
+            address?: string | null;
+            coordinate: components["schemas"]["Coordinate"];
+            /**
+             * Kinds
+             * @description Places' own types, e.g. `locality`, `natural_feature`. For choosing an icon and for telling a town from a mountain pass when names collide.
+             */
+            kinds?: string[];
+            /**
+             * Name
+             * @description What Places calls it, not what was typed.
+             */
+            name: string;
+            /**
+             * Place Id
+             * @description Google's identifier. The only field here that may be stored, and the way to refer to this place later without re-resolving it.
+             */
+            place_id: string;
         };
         /** HealthResponse */
         HealthResponse: {
@@ -857,6 +927,103 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    geocode_api_geocode_get: {
+        parameters: {
+            query: {
+                /** @description What to search for. */
+                q: string;
+                /** @description `lat,lon` to bias results toward, usually the trip's last waypoint. Omit it when there is nothing to bias from; a made-up centre would silently prefer one of several real places. */
+                near?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GeocodeResponse"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Unprocessable Content */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Too Many Requests */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Bad Gateway */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
     health_api_health_get: {
         parameters: {
             query?: never;

@@ -20,6 +20,7 @@ little else, so ratings and photos are not requested here at all — the field m
 determines the billing tier, so asking for data we may not keep would cost money for nothing.
 """
 
+import asyncio
 import dataclasses
 import logging
 from collections.abc import Sequence
@@ -28,7 +29,9 @@ from typing import Any
 import httpx
 
 from motorooter.planning.discovery.category import from_places_types
+from motorooter.planning.discovery.concurrency import DEFAULT_CONCURRENCY
 from motorooter.planning.discovery.errors import (
+    DiscoveryError,
     DiscoveryQuotaExceeded,
     DiscoveryRateLimited,
     DiscoveryRefused,
@@ -110,6 +113,7 @@ class PlacesResolver:
         *,
         route: Sequence[Coordinate] = (),
         corridor_m: float = DEFAULT_CORRIDOR_M,
+        concurrency: int = DEFAULT_CONCURRENCY,
     ) -> tuple[ResolvedCandidate, ...]:
         """Resolve each candidate, dropping whatever does not survive.
 
@@ -118,34 +122,77 @@ class PlacesResolver:
             route: the corridor. Empty means no distance filtering — resolving a single name
                 without a route is legitimate.
             corridor_m: how far off the route a place may sit.
+            concurrency: lookups in flight at once.
 
-        Sequential rather than concurrent: Places is metered per request and this runs behind
-        a user-visible replan, so a burst buys little and risks the rate limiter.
+        Concurrent, but bounded. A corridor yields dozens of names and each is one metered
+        lookup, so doing them in turn left the slowest stretch of discovery in place after
+        the rest was fixed. The bound is the point: Places rate-limits, and thirty at once is
+        what trips it.
+
+        Results keep the order they were given in. Completion order is a race, and a list
+        that reshuffles between two runs over the same corridor looks broken.
         """
-        resolved: list[ResolvedCandidate] = []
-        for candidate in candidates:
-            found = await self._lookup(candidate)
+        limit = asyncio.Semaphore(max(concurrency, 1))
+
+        async def resolve_one(candidate: Candidate) -> ResolvedCandidate | None:
+            async with limit:
+                found = await self._lookup(candidate)
             if found is None:
-                continue
+                return None
 
             distance = nearest_distance_m(route, found.coordinate) if route else None
             if distance is not None and distance > corridor_m:
                 logger.info("dropped %r: %.0f m off the corridor", candidate.name, distance)
-                continue
+                return None
 
-            resolved.append(
-                ResolvedCandidate(
-                    candidate=candidate,
-                    place_id=found.place_id,
-                    coordinate=found.coordinate,
-                    # From what Places says it is, never from the query that found it.
-                    category=from_places_types(found.types),
-                    places_types=found.types,
-                    rating=found.rating,
-                    user_rating_count=found.user_rating_count,
-                    distance_off_route_m=distance,
-                )
+            return ResolvedCandidate(
+                candidate=candidate,
+                place_id=found.place_id,
+                coordinate=found.coordinate,
+                # From what Places says it is, never from the query that found it.
+                category=from_places_types(found.types),
+                places_types=found.types,
+                rating=found.rating,
+                user_rating_count=found.user_rating_count,
+                distance_off_route_m=distance,
             )
+
+        # gather rather than as-completed: it preserves input order for free, and there is
+        # nothing to stream to — the caller wants the whole set before judging.
+        #
+        # return_exceptions, because one lookup must not discard the rest. Without it a
+        # single 429 out of forty propagates, the caller's stage handler turns it into an
+        # empty result, and the run *succeeds* while reporting nothing found — a rider sees
+        # an empty map and no error. Concurrency is what makes that likely: six in flight
+        # against a per-minute ceiling is the burst that earns the 429 in the first place.
+        settled = await asyncio.gather(
+            *(resolve_one(candidate) for candidate in candidates), return_exceptions=True
+        )
+
+        resolved: list[ResolvedCandidate] = []
+        failures: list[DiscoveryError] = []
+        for candidate, outcome in zip(candidates, settled, strict=True):
+            if isinstance(outcome, BaseException):
+                if not isinstance(outcome, DiscoveryError):
+                    raise outcome
+                logger.warning("lookup failed for %r: %s", candidate.name, outcome)
+                failures.append(outcome)
+                continue
+            if outcome is not None:
+                resolved.append(outcome)
+
+        # Partial failure degrades; total failure raises. Swallowing *everything* would be
+        # the same silent-empty-map bug in a different place: the caller cannot tell "Places
+        # rate-limited us" from "this corridor has nothing on it", and only one of those is
+        # worth telling a rider about. One survivor is enough to prefer the results.
+        #
+        # `not resolved` is the whole rule. An earlier version also required every candidate
+        # to have failed, which reopened the hole for a mixed outage: twenty rate-limited and
+        # twenty legitimately unmatched left nothing resolved, nothing raised, and nothing
+        # said. The honest "this corridor is empty" case is still silent, because it produces
+        # no failures at all — that, not the count, is what distinguishes the two.
+        if failures and not resolved:
+            raise failures[0]
         return tuple(resolved)
 
     async def _lookup(self, candidate: Candidate) -> _Place | None:

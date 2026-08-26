@@ -1,5 +1,6 @@
 """OpenAI adapter, driven entirely by recorded response shapes. Never hits the network."""
 
+import json
 from typing import Any
 
 import httpx
@@ -268,3 +269,32 @@ def test_it_satisfies_the_protocol():
     from motorooter.llm.protocol import LlmClient
 
     assert isinstance(build_client(), LlmClient)
+
+
+class TestReasoningEffort:
+    """Some calls do not need the model to think, and thinking is most of the latency.
+
+    Measured live against a batch of fifteen search snippets: the default reasoning budget
+    took 35-44s, `minimal` took 2.9-3.4s, and the two produced the same six places. The
+    slow runs were not more accurate — one of them offered "Washington State, USA", the
+    region it had been handed, as a place to visit.
+
+    A per-call knob rather than a deployment setting, because the two things discovery asks
+    a model are not alike: copying a name out of a paragraph is not judging whether a
+    detour is worth taking.
+    """
+
+    async def test_it_is_absent_unless_asked_for(self, mock_openai):
+        """Sending a default would override whatever the model would otherwise choose."""
+        route = mock_openai.post(COMPLETIONS_URL).mock(
+            return_value=httpx.Response(200, json=reply())
+        )
+        await build_client().complete([UserMessage(content="hi")], [])
+        assert "reasoning_effort" not in json.loads(route.calls.last.request.read())
+
+    async def test_it_is_sent_when_set(self, mock_openai):
+        route = mock_openai.post(COMPLETIONS_URL).mock(
+            return_value=httpx.Response(200, json=reply())
+        )
+        await build_client(reasoning_effort="minimal").complete([UserMessage(content="hi")], [])
+        assert json.loads(route.calls.last.request.read())["reasoning_effort"] == "minimal"

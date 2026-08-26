@@ -8,12 +8,14 @@ cost those results, not the run that has already paid for the rest.
 
 from math import pi
 
+from motorooter.llm.errors import LlmUnavailable
 from motorooter.llm.messages import AssistantMessage
 from motorooter.llm.providers.fake import FakeLlmClient
 from motorooter.planning.discovery.category import CategoryClassifier
 from motorooter.planning.discovery.errors import DiscoveryUnavailable
 from motorooter.planning.discovery.extract import PlaceExtractor
 from motorooter.planning.discovery.judge import CandidateJudge
+from motorooter.planning.discovery.models import Candidate, ResolvedCandidate
 from motorooter.planning.discovery.naming import PlaceNamer
 from motorooter.planning.discovery.pipeline import DiscoveryPipeline
 from motorooter.planning.discovery.resolve import PlacesResolver
@@ -57,7 +59,7 @@ class StubResolver(PlacesResolver):
         self._resolved = resolved
         self._error = error
 
-    async def resolve(self, candidates, *, route=(), corridor_m=15_000.0):
+    async def resolve(self, candidates, *, route=(), corridor_m=15_000.0, concurrency=6):
         if self._error:
             raise self._error
         return self._resolved
@@ -103,13 +105,13 @@ class TestAWholeRun:
 
     async def test_it_searches_once_per_anchor_per_category(self):
         source = FakeSearchSource()
-        await collect(pipeline(source=source), max_anchors=4)
+        await collect(pipeline(source=source), max_anchors=4, spacing_m=1000)
         assert len(source.queries) == 4 * len(CATEGORIES)
 
     async def test_the_anchor_budget_is_respected(self):
         """Anchors times categories is the metered cost of a run."""
         source = FakeSearchSource()
-        await collect(pipeline(source=source), max_anchors=2)
+        await collect(pipeline(source=source), max_anchors=2, spacing_m=1000)
         assert len(source.queries) == 2
 
     async def test_an_unrouted_leg_ends_immediately(self):
@@ -201,7 +203,9 @@ class TestDuplicatesAcrossAnchors:
             classifier=CategoryClassifier(llm('{"categories": []}')),
             judge=CandidateJudge(scoring),
         )
-        events = [event async for event in runner.run(LEG, CATEGORIES, max_anchors=2)]
+        events = [
+            event async for event in runner.run(LEG, CATEGORIES, max_anchors=2, spacing_m=1000)
+        ]
         assert len(events[-1].pois) == 1
 
 
@@ -220,3 +224,209 @@ class TestWhatItHandsBack:
         """The drop rate is the signal that says whether the queries are working."""
         events = await collect(pipeline())
         assert "named" in events[-1].message
+
+
+class TestItDoesNotMakeARiderWait:
+    """The shape Tim reported: a spinner with an update every twenty-five seconds.
+
+    Two causes, both addressed here. The work ran one request at a time while waiting on
+    four APIs, and extraction fired once per category when every category around one place
+    returns pages about the same neighbourhood.
+    """
+
+    async def test_anchors_are_searched_concurrently(self):
+        import asyncio
+
+        live = 0
+        peak = 0
+
+        class Counting(FakeSearchSource):
+            async def search(self, query, *, near, limit=5):
+                nonlocal live, peak
+                live += 1
+                peak = max(peak, live)
+                await asyncio.sleep(0.01)
+                live -= 1
+                return await super().search(query, near=near, limit=limit)
+
+        await collect(pipeline(source=Counting()), max_anchors=6, spacing_m=1000)
+        assert peak > 1
+
+    async def test_extraction_happens_once_per_anchor_not_per_category(self):
+        """Nine calls for one neighbourhood wanted to be one, and it is close to a 9x cut."""
+        client = llm('{"places": []}')
+        runner = DiscoveryPipeline(
+            namer=StubNamer(),
+            source=FakeSearchSource(),
+            extractor=PlaceExtractor(client),
+            resolver=StubResolver(),
+            classifier=CategoryClassifier(llm('{"categories": []}')),
+            judge=CandidateJudge(llm('{"scores": []}')),
+        )
+        three = [PoiCategory.WILD_CAMP, PoiCategory.FOOD, PoiCategory.FUEL]
+        events = [event async for event in runner.run(LEG, three, max_anchors=2, spacing_m=1000)]
+        assert events
+        assert client.call_count == 2
+
+    async def test_progress_arrives_per_category_not_per_anchor(self):
+        """Tim's words: "searching the web..., found 4 web sites, judging 1 of 7"."""
+        events = await collect(pipeline(), max_anchors=2, spacing_m=1000)
+        searching = [event for event in events if event.stage == "discovery"]
+        assert len(searching) > 2 * len(CATEGORIES)
+
+    async def test_progress_never_goes_backwards(self):
+        """Out-of-order completion must not make the bar jump about."""
+        events = await collect(pipeline(), max_anchors=4, spacing_m=1000)
+        values = [event.progress for event in events if event.progress is not None]
+        assert values == sorted(values)
+
+    async def test_progress_reaches_one_only_at_the_end(self):
+        events = await collect(pipeline(), max_anchors=3, spacing_m=1000)
+        assert events[-1].progress == 1.0
+        assert all((event.progress or 0) < 1.0 for event in events[:-1])
+
+    async def test_an_unnameable_anchor_returns_its_share_of_the_budget(self):
+        """Otherwise the bar stalls short of the end for a corridor that finished."""
+        events = await collect(
+            pipeline(namer=StubNamer(error=DiscoveryUnavailable("geocoder down"))),
+            max_anchors=3,
+            spacing_m=1000,
+        )
+        assert events[-1].progress == 1.0
+
+    async def test_discovery_spacing_is_coarser_than_routing_spacing(self):
+        """A rider does not need a fresh search every 12.5 km; that is 216 for a 300 km trip."""
+        from motorooter.planning.discovery.corridor import (
+            DEFAULT_ANCHOR_SPACING_M,
+            DISCOVERY_ANCHOR_SPACING_M,
+        )
+
+        assert DISCOVERY_ANCHOR_SPACING_M > DEFAULT_ANCHOR_SPACING_M
+
+
+class TestAStageFailureCostsTheStageNotTheRun:
+    """Found by running it: a timed-out extraction aborted the whole corridor.
+
+    "Fail fast" is only half the instruction. The other half is moving on, and an `LlmError`
+    is a different hierarchy from `DiscoveryError` — so the handler that caught search
+    failures let extraction failures straight through.
+    """
+
+    @staticmethod
+    def _failing() -> FakeLlmClient:
+        """A model that times out, which is how the live run failed."""
+        return FakeLlmClient(error=LlmUnavailable("request to OpenAI failed"))
+
+    async def test_a_failed_extraction_does_not_end_the_run(self):
+        runner = DiscoveryPipeline(
+            namer=StubNamer(),
+            source=FakeSearchSource(),
+            extractor=PlaceExtractor(self._failing()),
+            resolver=StubResolver(),
+            classifier=CategoryClassifier(llm('{"categories": []}')),
+            judge=CandidateJudge(llm('{"scores": []}')),
+        )
+        events = [
+            event async for event in runner.run(LEG, CATEGORIES, max_anchors=2, spacing_m=1000)
+        ]
+        assert events[-1].stage == "done"
+        assert "failure" in events[-1].message
+
+    async def test_a_failed_judgement_does_not_end_the_run(self):
+        """Everything before it is already paid for in metered requests.
+
+        The resolver has to return something for this to test anything: an empty candidate
+        list short-circuits `_enrich` before the judge is reached, and the first version of
+        this test passed against no judge error handling at all for exactly that reason.
+        """
+        resolved = ResolvedCandidate(
+            candidate=Candidate(
+                name="First Camp",
+                category=PoiCategory.WILD_CAMP,
+                found_near=Coordinate(lat=0.01, lon=-121.0),
+                source="brave",
+            ),
+            place_id="ChIJ_judged",
+            coordinate=Coordinate(lat=0.01, lon=-121.0),
+            category=PoiCategory.WILD_CAMP,
+        )
+        runner = DiscoveryPipeline(
+            namer=StubNamer(),
+            source=FakeSearchSource(),
+            extractor=PlaceExtractor(
+                llm('{"places": [{"result_index": 0, "place_name": "First", "relevant": true}]}')
+            ),
+            resolver=StubResolver(resolved=(resolved,)),
+            classifier=CategoryClassifier(llm('{"categories": []}')),
+            judge=CandidateJudge(self._failing()),
+        )
+        events = [
+            event async for event in runner.run(LEG, CATEGORIES, max_anchors=2, spacing_m=1000)
+        ]
+        assert events[-1].stage == "done"
+        assert "failure" in events[-1].message
+
+    async def test_the_timeout_leaves_room_above_measured_latency(self):
+        """A limit below normal latency does not fail fast, it fails always.
+
+        Two numbers were set before either was measured, and both timed out on ordinary
+        calls. Live, a batch of fifteen snippets at `EXTRACT_EFFORT` takes 2.9-3.4s, so the
+        budget wants to be several times that rather than a round number near it.
+        """
+        from motorooter.planning.discovery.factory import EXTRACT_TIMEOUT_S
+
+        measured_worst_s = 3.4
+        assert 3 * measured_worst_s <= EXTRACT_TIMEOUT_S
+
+
+class TestEnrichmentReportsProgressToo:
+    """The silence that was left after the searches were made fast.
+
+    A live corridor: searching and naming finished at 9.6s with steady updates, then the bar
+    sat at 99% for fifteen seconds saying "checking 15 places are real" while resolve,
+    classification and judging ran. Three metered stages behind one event, at the exact
+    moment a rider is most likely to conclude it has hung.
+    """
+
+    @staticmethod
+    def _one_real_place():
+        return ResolvedCandidate(
+            candidate=Candidate(
+                name="First",
+                category=PoiCategory.WILD_CAMP,
+                found_near=Coordinate(lat=0.01, lon=-121.0),
+                source="brave",
+            ),
+            place_id="ChIJ_first",
+            coordinate=Coordinate(lat=0.01, lon=-121.0),
+            category=PoiCategory.WILD_CAMP,
+        )
+
+    async def _events(self):
+        runner = DiscoveryPipeline(
+            namer=StubNamer(),
+            source=FakeSearchSource(),
+            extractor=PlaceExtractor(
+                llm('{"places": [{"result_index": 0, "place_name": "First"}]}')
+            ),
+            resolver=StubResolver(resolved=(self._one_real_place(),)),
+            classifier=CategoryClassifier(llm('{"categories": []}')),
+            judge=CandidateJudge(llm('{"scores": [{"index": 0, "score": 0.8, "reason": "ok"}]}')),
+        )
+        return [e async for e in runner.run(LEG, CATEGORIES, max_anchors=2, spacing_m=1000)]
+
+    async def test_enrichment_is_more_than_one_event(self):
+        events = await self._events()
+        enriching = [e for e in events if e.stage == "enrichment"]
+        assert len(enriching) > 1, "the slowest stretch of the run reports once"
+
+    async def test_it_says_what_it_is_doing_in_each_step(self):
+        """ "Checking 15 places are real" covers three different metered stages."""
+        events = await self._events()
+        said = " ".join(e.message for e in events if e.stage == "enrichment").lower()
+        assert "scor" in said or "judg" in said
+
+    async def test_progress_still_only_reaches_one_at_the_end(self):
+        events = await self._events()
+        assert [e.progress for e in events].count(1.0) == 1
+        assert events[-1].progress == 1.0

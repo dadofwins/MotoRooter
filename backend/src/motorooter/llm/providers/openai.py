@@ -38,6 +38,7 @@ class OpenAiClient:
         base_url: str = OPENAI_BASE_URL,
         client: httpx.AsyncClient | None = None,
         timeout_s: float = 120.0,
+        reasoning_effort: str | None = None,
     ) -> None:
         """
         Args:
@@ -47,16 +48,28 @@ class OpenAiClient:
             client: injectable HTTP client, so callers can share a connection pool.
             timeout_s: generous — a tool-calling turn over a long conversation is slow, and
                 a timeout here abandons work the user is waiting on.
+            reasoning_effort: how hard the model should think, or `None` to let it decide.
+                Worth setting low for mechanical work: extracting place names from search
+                snippets measured 35-44s at the default and 2.9-3.4s at `minimal`, for the
+                same answers. Left unset the payload omits it entirely, so a model with no
+                such parameter is unaffected.
         """
         self._api_key = api_key
         self._model = model
         self._base_url = base_url.rstrip("/")
         self._client = client
         self._timeout_s = timeout_s
+        self._reasoning_effort = reasoning_effort
 
     @property
     def model(self) -> str:
         return self._model
+
+    @property
+    def reasoning_effort(self) -> str | None:
+        """Readable so wiring can be asserted. A setting that silently fails to apply is
+        this project's recurring bug, and a private attribute makes it untestable."""
+        return self._reasoning_effort
 
     async def complete(
         self, messages: Sequence[Message], tools: Sequence[dict[str, Any]]
@@ -68,6 +81,8 @@ class OpenAiClient:
         if tools:
             # Omitted rather than sent empty: the API rejects `"tools": []`.
             payload["tools"] = [{"type": "function", "function": spec} for spec in tools]
+        if self._reasoning_effort is not None:
+            payload["reasoning_effort"] = self._reasoning_effort
 
         response = await self._post(payload)
         self._raise_for_status(response)

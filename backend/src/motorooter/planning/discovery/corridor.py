@@ -30,6 +30,22 @@ where a miss in either direction is small.
 _COINCIDENT_M = 1.0
 """Below this, an interpolated anchor and the route end are the same place."""
 
+DISCOVERY_ANCHOR_SPACING_M = 25_000.0
+"""Distance between anchors when searching for places, as opposed to routing.
+
+Deliberately coarser than `DEFAULT_ANCHOR_SPACING_M`, because it answers a different
+question. M0's 12.5 km is the density needed to *reproduce a known route* — below it the
+engine finds different roads. Discovery is not reproducing anything: a rider does not need a
+fresh search every 12.5 km, and at that spacing a 300 km trip is 24 anchors and 216 searches
+for one button press.
+
+Twice the corridor half-width is the natural floor. Places are kept within 15 km of the
+route, so anchors closer together than about 25 km search overlapping ground and return the
+same campsite twice — which is exactly what the live runs showed before deduplication was
+added. Spacing them at the width of what they cover is the point where extra searches start
+buying new places rather than repeats.
+"""
+
 DEFAULT_MAX_ANCHORS = 40
 """Ceiling on anchors per route, whatever its length.
 

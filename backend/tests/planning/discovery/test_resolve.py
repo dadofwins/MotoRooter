@@ -17,6 +17,7 @@ judgement available from text. A corridor is tens of metres wide, so the filter 
 arithmetic, and arithmetic needs the coordinate that only this stage produces.
 """
 
+import asyncio
 import contextlib
 import json
 from typing import Any
@@ -360,3 +361,155 @@ class TestNothingBeyondPlaceIdIsPersisted:
         document = resolved[0].to_poi(poi_id="p1").model_dump()
         assert document["place_id"] == "ChIJ_halfway"
         assert "rating" not in document
+
+
+class TestItResolvesConcurrently:
+    """Resolution was the last sequential stretch in a pipeline built for speed.
+
+    A corridor produces dozens of names and each is one metered Places lookup, so doing them
+    one at a time put the slowest part of discovery back after the fast parts were fixed.
+    Bounded, because Places rate-limits and a burst of thirty is what trips it.
+    """
+
+    @staticmethod
+    def _tracking_mock(mock, *, delay: float = 0.01):
+        """Records how many lookups are in flight at once."""
+        state = {"now": 0, "peak": 0}
+
+        async def respond(request):
+            state["now"] += 1
+            state["peak"] = max(state["peak"], state["now"])
+            await asyncio.sleep(delay)
+            state["now"] -= 1
+            return httpx.Response(200, json=body(place()))
+
+        mock.post(PLACES_SEARCH_URL).mock(side_effect=respond)
+        return state
+
+    async def test_lookups_overlap(self):
+        with respx.mock(assert_all_called=False) as mock:
+            state = self._tracking_mock(mock)
+            await resolver().resolve([candidate() for _ in range(8)], concurrency=4)
+        assert state["peak"] > 1, "resolution is still sequential"
+
+    async def test_it_never_exceeds_the_bound(self):
+        """Places rate-limits, and an unbounded burst is what trips it."""
+        with respx.mock(assert_all_called=False) as mock:
+            state = self._tracking_mock(mock)
+            await resolver().resolve([candidate() for _ in range(20)], concurrency=3)
+        assert state["peak"] <= 3
+
+    async def test_results_keep_the_order_they_were_given_in(self):
+        """Completion order is a race. Two runs over the same corridor returning the same
+        places in a different order would show the rider a list that reshuffles itself."""
+        names = [f"Place {index}" for index in range(6)]
+        with respx.mock(assert_all_called=False) as mock:
+
+            async def respond(request):
+                asked = json.loads(request.content)["textQuery"]
+                # Later names answer faster, so completion order reverses input order.
+                await asyncio.sleep(0.001 * (6 - names.index(asked)))
+                return httpx.Response(
+                    200,
+                    json=body(place(place_id=f"ChIJ_{asked}", displayName={"text": asked})),
+                )
+
+            mock.post(PLACES_SEARCH_URL).mock(side_effect=respond)
+            resolved = await resolver().resolve(
+                [candidate(name=name) for name in names], concurrency=6
+            )
+        assert [item.candidate.name for item in resolved] == names
+
+
+class TestOneFailedLookupDoesNotDiscardTheRest:
+    """The failure parallelism makes likely, and the worst shape a failure can take.
+
+    Six concurrent lookups against a per-minute ceiling is exactly the burst that earns a
+    429. If one raising discards the thirty-nine that resolved, the run still *succeeds* —
+    it reports nothing found, and the rider sees an empty map with no error to explain it.
+
+    Same principle as the stage-level handling: a failure costs those results, not the run.
+    """
+
+    @staticmethod
+    def _one_bad_apple(mock):
+        """The third lookup rate-limits; the rest are fine."""
+        seen = {"n": 0}
+
+        async def respond(request):
+            seen["n"] += 1
+            if seen["n"] == 3:
+                return httpx.Response(429, json={"error": {"message": "slow down"}})
+            asked = json.loads(request.content)["textQuery"]
+            return httpx.Response(200, json=body(place(place_id=f"ChIJ_{asked}")))
+
+        mock.post(PLACES_SEARCH_URL).mock(side_effect=respond)
+
+    async def test_the_survivors_are_returned(self):
+        with respx.mock(assert_all_called=False) as mock:
+            self._one_bad_apple(mock)
+            resolved = await resolver().resolve(
+                [candidate(name=f"Place {i}") for i in range(6)], concurrency=1
+            )
+        assert len(resolved) == 5
+
+    async def test_it_does_not_raise(self):
+        """Raising is what discarded the batch: resolve() aborted and the caller's
+        stage-level handler turned forty results into zero."""
+        with respx.mock(assert_all_called=False) as mock:
+            self._one_bad_apple(mock)
+            await resolver().resolve(
+                [candidate(name=f"Place {i}") for i in range(6)], concurrency=1
+            )
+
+    async def test_every_lookup_still_happens(self):
+        """One failure must not cancel the lookups queued behind it."""
+        with respx.mock(assert_all_called=False) as mock:
+            self._one_bad_apple(mock)
+            await resolver().resolve(
+                [candidate(name=f"Place {i}") for i in range(6)], concurrency=2
+            )
+            assert len(mock.calls) == 6
+
+    async def test_everything_failing_still_raises(self):
+        """Partial failure degrades; total failure raises.
+
+        Swallowing every failure would be the same silent-empty-map bug relocated: the
+        caller could not tell "Places rate-limited us" from "this corridor has nothing on
+        it", and only one of those is worth telling a rider. One survivor is enough to
+        prefer the results, which is what the tests above cover.
+        """
+        with respx.mock(assert_all_called=False) as mock:
+            mock.post(PLACES_SEARCH_URL).mock(return_value=httpx.Response(429, json={}))
+            with pytest.raises(DiscoveryRateLimited):
+                await resolver().resolve([candidate(), candidate()])
+
+    async def test_a_mixed_outage_raises_rather_than_looking_empty(self):
+        """Failures plus legitimate no-matches, and nothing resolved.
+
+        The case a "did every candidate fail?" check misses: half the corridor is
+        rate-limited and the other half genuinely has nothing, so the counts do not match
+        and the run would report an empty map with no explanation. Whether anything survived
+        is the question; how many failed is not.
+        """
+        answers = iter([429, 200, 429, 200])
+
+        async def respond(request):
+            status = next(answers)
+            if status == 429:
+                return httpx.Response(429, json={"error": {"message": "slow down"}})
+            # A real answer with no match: not a failure, just nothing there.
+            return httpx.Response(200, json=body())
+
+        with respx.mock(assert_all_called=False) as mock:
+            mock.post(PLACES_SEARCH_URL).mock(side_effect=respond)
+            with pytest.raises(DiscoveryRateLimited):
+                await resolver().resolve(
+                    [candidate(name=f"Place {i}") for i in range(4)], concurrency=1
+                )
+
+    async def test_an_honestly_empty_corridor_stays_quiet(self):
+        """No failures and no matches is not an error — it is the answer."""
+        with respx.mock(assert_all_called=False) as mock:
+            mock.post(PLACES_SEARCH_URL).mock(return_value=httpx.Response(200, json=body()))
+            assert await resolver().resolve([candidate(), candidate()]) == ()

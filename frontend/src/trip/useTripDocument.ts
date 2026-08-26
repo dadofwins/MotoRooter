@@ -231,12 +231,18 @@ export function useTripSave(
    * just been cleared, leaving the front door on screen while the URL named a trip.
    */
   const onScreen = useRef(true)
-  useEffect(
-    () => () => {
+  useEffect(() => {
+    // Set on the way in as well as cleared on the way out. StrictMode mounts, unmounts and
+    // remounts every component in development, so a cleanup-only version latched `false` on
+    // that first simulated unmount and never recovered: every trip was created on the server
+    // and no slug ever reached the client, so the Replan button never appeared and each edit
+    // orphaned another trip. A ref that only one side of the lifecycle writes is a ref that
+    // survives a remount holding the wrong answer.
+    onScreen.current = true
+    return () => {
       onScreen.current = false
-    },
-    [],
-  )
+    }
+  }, [])
 
   const ensure = useCallback((): Promise<string> => {
     if (slug !== null) return Promise.resolve(slug)

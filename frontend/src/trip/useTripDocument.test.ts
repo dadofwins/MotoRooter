@@ -1,3 +1,4 @@
+import { StrictMode } from 'react'
 import { act, renderHook } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { useStoredTrip, useTripSave } from './useTripDocument'
@@ -82,6 +83,28 @@ describe('useTripDocument', () => {
     const client = fakeClient()
 
     const { result } = renderHook(() => useSaving(client, [waypointFixture(47)]))
+    await settle()
+
+    expect(client.createTrip).toHaveBeenCalledTimes(1)
+    expect(result.current.slug).not.toBeNull()
+  })
+
+  it('reports the slug under StrictMode, which remounts every component', async () => {
+    // Tim hit this in the browser: routes saved, and neither the Replan button nor the
+    // "Saved" line ever appeared, because both are gated on the slug reaching the client.
+    //
+    // The cause was an on-screen ref cleared by an effect cleanup and never set on the way
+    // in. StrictMode mounts, unmounts and remounts in development, so it latched false on
+    // that first simulated unmount and stayed there — every trip was created on the server
+    // and every slug was thrown away, orphaning a trip per edit.
+    //
+    // Rendered through StrictMode deliberately: the app runs inside it, so a test that does
+    // not is testing a configuration nobody uses.
+    const client = fakeClient()
+
+    const { result } = renderHook(() => useSaving(client, [waypointFixture(47)]), {
+      wrapper: StrictMode,
+    })
     await settle()
 
     expect(client.createTrip).toHaveBeenCalledTimes(1)

@@ -98,6 +98,10 @@ CAPABILITIES = ProviderCapabilities(
     name="ors",
     prefers_unpaved=True,
     reports_surface=True,  # via extra_info=surface
+    # Hosted ORS has no motorcycle profile, so dirt routes through `cycling-mountain` and
+    # the duration is a bicycle's: 8.0 h for 133 km, about 16 km/h. This is the measurement
+    # M0 generalised into a global rule; it is a fact about this profile.
+    reports_trustworthy_duration=False,
     map_matching=False,
     alternatives=True,
     elevation=True,

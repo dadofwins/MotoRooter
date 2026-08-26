@@ -34,6 +34,9 @@ async def capabilities(registry: Registry, resolver: Resolver) -> RoutingCapabil
             intent.value: IntentRouting(
                 provider=resolver.resolve(intent).capabilities.name,
                 live_update_interval_ms=resolver.live_update_interval_ms(intent),
+                reports_trustworthy_duration=(
+                    resolver.resolve(intent).capabilities.reports_trustworthy_duration
+                ),
             )
             for intent in resolver.configured_intents()
         },
@@ -62,6 +65,7 @@ async def route_leg(request: RouteLegRequest, resolver: Resolver) -> RouteLegRes
         await provider.route(route_request),
         route_request,
         provider_override=request.provider_override,
+        duration_is_trustworthy=provider.capabilities.reports_trustworthy_duration,
     )
     return RouteLegResponse(
         leg=leg,

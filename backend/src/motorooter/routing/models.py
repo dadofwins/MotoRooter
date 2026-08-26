@@ -146,6 +146,17 @@ class RouteLeg(BaseModel):
     provider: str
     intent: LegIntent
 
+    duration_is_trustworthy: bool = False
+    """Whether `duration_s` is worth showing a rider, stamped when the leg was routed.
+
+    On the leg rather than looked up, so a trip saved last week still knows: re-resolving
+    the policy table would answer for whichever engine the intent points at *now*, and that
+    table has been repointed before. Same argument as `routed_from`.
+
+    Defaults false, which is the safe direction — a leg that arrived without the stamp gets
+    the derived estimate rather than a bicycle time presented as fact.
+    """
+
     routed_from: RouteFingerprint | None = None
     """The request this geometry came from, when one was recorded.
 
@@ -230,6 +241,20 @@ class ProviderCapabilities(BaseModel):
     surface" instead of drawing an unexplained grey line.
     """
 
+    reports_trustworthy_duration: bool = False
+    """Whether this engine's own duration is worth showing a rider.
+
+    Distinct from `reports_surface`, and the two go opposite ways: hosted ORS reports surface
+    and cannot be trusted on time, because the only profile that reaches dirt is a bicycle
+    one — 8 hours for 133 km. Google reports no surface and runs a car profile, so on
+    177 km of highway its figure beats our speed table by half an hour.
+
+    Defaults false so an engine has to claim it. M0 concluded "provider durations are
+    unusable, compute our own" from the ORS measurement and it was written down as a global
+    rule; it is a property of the profile a provider ran, which is why it lives here and is
+    resolved per intent rather than branched on an engine name.
+    """
+
     map_matching: bool = False
     alternatives: bool = False
     elevation: bool = False
@@ -260,17 +285,27 @@ class ProviderCapabilities(BaseModel):
 
 
 def stamped(
-    leg: "RouteLeg", request: "RouteRequest", *, provider_override: str | None
+    leg: "RouteLeg",
+    request: "RouteRequest",
+    *,
+    provider_override: str | None,
+    duration_is_trustworthy: bool = False,
 ) -> "RouteLeg":
-    """A leg carrying the fingerprint of the request that produced it.
+    """A leg carrying what it needs to be understood later, without asking anything.
 
     One helper rather than two call sites. `routed_from` shipped attached on the trip path
     and absent on the single-leg one, so every drag response had a null fingerprint, the
     client correctly read that as stale, and each drag routed twice. The field being optional
     is what let it go unnoticed — nothing complains about a null that is allowed.
 
+    `duration_is_trustworthy` is stamped here for the same reason and to avoid the same bug:
+    two places that must remember to attach it is one place too many.
+
     Anything that turns a `RouteRequest` into a `RouteLeg` should call this.
     """
     return leg.model_copy(
-        update={"routed_from": RouteFingerprint.of(request, provider_override=provider_override)}
+        update={
+            "routed_from": RouteFingerprint.of(request, provider_override=provider_override),
+            "duration_is_trustworthy": duration_is_trustworthy,
+        }
     )

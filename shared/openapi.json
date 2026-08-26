@@ -887,6 +887,59 @@
         "title": "RouteLegResponse",
         "type": "object"
       },
+      "RouteThroughBestRequest": {
+        "description": "Reroute through the best of the places already found. Fast, and searches nothing.",
+        "properties": {
+          "limit": {
+            "anyOf": [
+              {
+                "maximum": 20.0,
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "How many places at most. Omit for the pace the ride implies \u2014 roughly one stop every two hours of riding. Zero adds nothing, which is a legitimate way to ask what would be chosen without choosing it.",
+            "title": "Limit"
+          }
+        },
+        "title": "RouteThroughBestRequest",
+        "type": "object"
+      },
+      "RouteThroughBestResponse": {
+        "description": "What the reroute did, in enough detail to show the rider and let them undo it.",
+        "properties": {
+          "added": {
+            "description": "Places now on the route, in the order they will be ridden. Each carries the reason it was chosen in `note` \u2014 a route that changed for reasons the rider cannot see is worse than a route that did not change.",
+            "items": {
+              "$ref": "#/components/schemas/Poi"
+            },
+            "title": "Added",
+            "type": "array"
+          },
+          "left_out": {
+            "description": "Places good enough to add that the count or the detour budget had no room for. Offer them; a bound the rider cannot see reads as having found nothing.",
+            "items": {
+              "$ref": "#/components/schemas/Poi"
+            },
+            "title": "Left Out",
+            "type": "array"
+          },
+          "trip": {
+            "$ref": "#/components/schemas/Trip",
+            "description": "The saved trip, so the map can redraw without re-reading."
+          }
+        },
+        "required": [
+          "trip",
+          "added",
+          "left_out"
+        ],
+        "title": "RouteThroughBestResponse",
+        "type": "object"
+      },
       "RoutingCapabilitiesResponse": {
         "description": "Lets the frontend throttle per provider without hardcoding an engine name.",
         "properties": {
@@ -2625,6 +2678,119 @@
           }
         },
         "summary": "Discover points of interest along the route",
+        "tags": [
+          "trips"
+        ]
+      }
+    },
+    "/api/trips/{slug}/route-through-best": {
+      "post": {
+        "description": "Add the best of the trip's saved places to its route, as via-points.\n\nThe mouse's half of a capability the assistant also has, over the same service function.\nA checkbox on the Replan button would have made this a chat feature with an affordance\nbolted on, and it would only have been reachable during a sixty-second search \u2014 the\nscores are on the trip, so this needs no search at all.\n\nFast path: no LLM, no metered discovery, one routing request to confirm the new order\njoins before anything is written.",
+        "operationId": "route_through_best_endpoint_api_trips__slug__route_through_best_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "slug",
+            "required": true,
+            "schema": {
+              "title": "Slug",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RouteThroughBestRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RouteThroughBestResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          },
+          "502": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Bad Gateway"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "summary": "Reroute through the best places discovery found",
         "tags": [
           "trips"
         ]

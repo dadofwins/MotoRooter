@@ -24,6 +24,8 @@ from motorooter.api.schemas import (
     ErrorResponse,
     ReplanEvent,
     ReplanRequest,
+    RouteThroughBestRequest,
+    RouteThroughBestResponse,
     UpdateTripRequest,
 )
 from motorooter.chat.prompt import CHAT_SYSTEM_PROMPT
@@ -33,6 +35,7 @@ from motorooter.gpx import trip_to_gpx
 from motorooter.llm.agent import Agent
 from motorooter.llm.messages import AssistantMessage, Message, SystemMessage, UserMessage
 from motorooter.planning.discovery.pipeline import DiscoveryPipeline
+from motorooter.planning.route_through import route_through_best
 from motorooter.routing.errors import RouteIncomplete
 from motorooter.routing.models import RouteLeg
 from motorooter.trips.models import PoiCategory, Trip, TripSummary, utc_now
@@ -103,6 +106,35 @@ async def update_trip(slug: str, request: UpdateTripRequest, store: Trips) -> Tr
 @router.delete("/{slug}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_trip(slug: str, store: Trips) -> None:
     await store.delete(validate_slug(slug))
+
+
+@router.post(
+    "/{slug}/route-through-best",
+    response_model=RouteThroughBestResponse,
+    summary="Reroute through the best places discovery found",
+)
+async def route_through_best_endpoint(
+    slug: str, request: RouteThroughBestRequest, store: Trips, resolver: Resolver
+) -> RouteThroughBestResponse:
+    """Add the best of the trip's saved places to its route, as via-points.
+
+    The mouse's half of a capability the assistant also has, over the same service function.
+    A checkbox on the Replan button would have made this a chat feature with an affordance
+    bolted on, and it would only have been reachable during a sixty-second search — the
+    scores are on the trip, so this needs no search at all.
+
+    Fast path: no LLM, no metered discovery, one routing request to confirm the new order
+    joins before anything is written.
+    """
+    result = await route_through_best(
+        store=store,
+        slug=validate_slug(slug),
+        router=LegRoutingService(resolver),
+        limit=request.limit,
+    )
+    return RouteThroughBestResponse(
+        trip=result.trip, added=list(result.added), left_out=list(result.left_out)
+    )
 
 
 @router.post(

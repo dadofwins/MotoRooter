@@ -39,8 +39,8 @@ from motorooter.llm.tools import (
 from motorooter.planning.discovery.errors import DiscoveryError
 from motorooter.planning.discovery.lookup import FoundPlace, PlaceLookup
 from motorooter.planning.discovery.pipeline import DiscoveryPipeline
-from motorooter.planning.route_through import LegRouter
-from motorooter.routing.errors import RoutingError
+from motorooter.planning.route_through import LegRouter, route_through_best
+from motorooter.routing.errors import RouteIncomplete, RoutingError
 from motorooter.routing.models import LegIntent
 from motorooter.trips.models import Poi, PoiCategory, Trip, TripLeg, Waypoint
 from motorooter.trips.service import edit_trip, legs_for
@@ -436,6 +436,70 @@ class AddPoiToRoute(_TripTool):
         )
 
 
+class RouteThroughBestArguments(ToolArguments):
+    limit: int | None = Field(
+        default=None,
+        ge=0,
+        le=20,
+        description=(
+            "How many places at most. Leave it out unless the rider asked for more or "
+            "fewer: the default is paced to the length of the ride, roughly one stop every "
+            "two hours."
+        ),
+    )
+
+
+class RouteThroughBest(_TripTool):
+    name: ClassVar[str] = "route_through_best"
+    description: ClassVar[str] = (
+        "Reroute the trip through the best of the places find_places already saved, chosen "
+        "by their scores and inserted in the order the rider will meet them. Adds via-points "
+        "only — the start and the destination stay as they are. Cheap and instant; it "
+        "searches for nothing."
+    )
+    arguments: ClassVar[type] = RouteThroughBestArguments
+
+    async def run(self, arguments: Any, on_progress: ProgressReport | None = None) -> ToolOutcome:  # noqa: ANN401 -- narrowed by base
+        """Reroute through the best places, and say plainly which and why.
+
+        The tool is thin — the selection, the bounds and the write all live in
+        `route_through_best`, which the button calls too. What is here is the telling: this
+        is an autonomous edit to a route somebody built, so a reply that says "done" is not
+        good enough. Each addition is named with the judge's own sentence, and the numbered
+        waypoint list follows so the model's indices survive the edit.
+        """
+        try:
+            result = await route_through_best(
+                store=self._store, slug=self._slug, router=self._router, limit=arguments.limit
+            )
+        except RouteIncomplete as exc:
+            msg = f"the trip has no routed geometry yet, so there is no route to add to: {exc}"
+            raise ToolCallFailed(msg) from exc
+        except RoutingError as exc:
+            msg = f"the trip could not be rerouted through those places: {exc}"
+            raise ToolCallFailed(msg) from exc
+
+        if not result.added:
+            return ToolOutcome(content=f"Nothing worth rerouting through.{_spare(result.left_out)}")
+
+        lines = [f"Routing through {len(result.added)} places:"]
+        lines += [
+            f"  {place.name} — {place.note or 'no reason recorded'}" for place in result.added
+        ]
+        return ToolOutcome(
+            content="\n".join(lines) + _spare(result.left_out) + "\n" + _numbered(result.trip),
+            found=len(result.added),
+            payload={"trip_changed": True},
+        )
+
+
+def _spare(left_out: tuple[Poi, ...]) -> str:
+    """What was good enough but did not fit, so a bound the rider cannot see is not silence."""
+    if not left_out:
+        return ""
+    return f" {len(left_out)} more scored well; ask for a higher limit to include them."
+
+
 class FindPlacesArguments(ToolArguments):
     categories: list[str] = Field(
         min_length=1,
@@ -580,5 +644,6 @@ class TripTools:
                 build(SetRidingMode),
                 build(SetLegIntent),
                 build(AddPoiToRoute),
+                build(RouteThroughBest),
             ]
         )

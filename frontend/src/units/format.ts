@@ -27,6 +27,40 @@ export function formatDistance(metres: number, unit: DistanceUnit): string {
   return `${value.toFixed(value < TENTHS_BELOW ? 1 : 0)} ${unit}`
 }
 
+/** Feet per metre. Climb is read in feet by anyone reading distance in miles. */
+const FEET_PER_METRE = 3.280_84
+
+/**
+ * Rounding for climb, in the *displayed* unit.
+ *
+ * Nobody plans a day around single metres, and a figure to the metre claims a precision the
+ * elevation model behind it does not have — the same reasoning as rounding duration to five
+ * minutes. Coarser in feet because the number is three times larger for the same hill.
+ */
+const CLIMB_ROUNDING = { m: 50, ft: 50 } as const
+
+/** Below this the answer is "flat" rather than a number nobody would act on. */
+const FLAT_BELOW_M = 50
+
+/**
+ * Total climb, in the unit the rider chose.
+ *
+ * Deliberately *not* `formatDistance` with a different argument: the toggle means miles versus
+ * kilometres for distance and feet versus metres for climb, because that is how riders read the
+ * two. Converting climb by 1609 would turn a 3,600 m day into "2.2" — a plausible-looking small
+ * number rather than an obvious error, which is the worst kind of unit bug to ship.
+ */
+export function formatClimb(metres: number, unit: DistanceUnit): string {
+  // Judged before conversion, so the threshold means the same hill in both units.
+  if (metres < FLAT_BELOW_M) return 'flat'
+
+  const label = unit === 'mi' ? 'ft' : 'm'
+  const value = unit === 'mi' ? metres * FEET_PER_METRE : metres
+  const step = CLIMB_ROUNDING[label]
+  const rounded = Math.round(value / step) * step
+  return `${rounded.toLocaleString('en-US')} ${label}`
+}
+
 /** Coarse on purpose — see `formatDuration`. */
 const ROUNDING_MINUTES = 5
 

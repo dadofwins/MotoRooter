@@ -22,6 +22,12 @@ import spec from '../../../shared/openapi.json'
 /**
  * Fields the frontend deliberately does not read, and why.
  *
+ * This list caught its own author within an hour of being merged. `ascent_m` was written off here
+ * as "not shown until the ORS ascent discrepancy is explained" — and the discrepancy was explained
+ * the same afternoon, which made the entry a decision whose reason had expired while still reading
+ * as considered. An expired reason is worse than no entry, and a bare list of names could not have
+ * shown that.
+ *
  * Kept as a flat record so the reason travels with the name; a bare array would rot into a list
  * nobody can audit.
  */
@@ -31,7 +37,6 @@ const UNREAD: Record<string, string> = {
   alternatives: 'no UI offers alternative routes',
   daily_quota: 'quota is an ops concern; the rider is never shown one',
   per_minute_quota: 'as above',
-  elevation: 'no elevation is displayed — see the standing note on ascent being unverified',
   map_matching: 'nothing uploads a recorded track yet',
   max_waypoints: 'no path can exceed it: legs span two waypoints plus any vias',
   prefers_unpaved: 'the mode picker states the intent, not the engine behind it',
@@ -47,12 +52,6 @@ const UNREAD: Record<string, string> = {
   total_paved_fraction: 'as above, via surfaceSummary',
   total_unpaved_fraction: 'as above',
   total_unknown_fraction: 'as above',
-
-  // Suppressed on purpose. `CLAUDE.md` forbids showing climb until someone verifies it, and
-  // scripts/elevation_check.py narrowed why: ORS reports 1.8-2.5x a densely-sampled true profile,
-  // and neither smoothing nor sampling density explains it. Read this field only after that is
-  // resolved.
-  ascent_m: 'climb is not shown until the ORS ascent discrepancy is explained',
 
   // The engine's own figure, which the frontend deliberately never chooses between. Whether it
   // can be believed is a capability, and the backend resolves it in one place — reading it here

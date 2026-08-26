@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { formatDistance, formatDuration } from './format'
+import { formatClimb, formatDistance, formatDuration } from './format'
 
 /**
  * How distances and times are written for a rider.
@@ -79,5 +79,39 @@ describe('formatDuration', () => {
   it('carries long days without turning into days', () => {
     // A rider planning a 14-hour push wants hours, not "0.6 days".
     expect(formatDuration(14 * 3600 + 30 * 60)).toBe('about 14h 30m')
+  })
+})
+
+/**
+ * Climb, in the unit the rider chose.
+ *
+ * Not the same conversion as distance: a mile is 1609 m but climb is read in *feet*, so the unit
+ * toggle has to mean feet-versus-metres here rather than miles-versus-kilometres. Getting that
+ * wrong would show a 3,600 m climb as 2.2 — a number that looks like a plausible small figure
+ * rather than an obvious error, which is the worst kind of unit bug.
+ */
+describe('formatClimb', () => {
+  it('reads in feet when the rider is in miles', () => {
+    expect(formatClimb(3600, 'mi')).toBe('11,800 ft')
+  })
+
+  it('reads in metres when the rider is in kilometres', () => {
+    expect(formatClimb(3600, 'km')).toBe('3,600 m')
+  })
+
+  it('rounds to something a rider can hold in their head', () => {
+    // Nobody plans around single metres of climb, and a figure to the metre claims a precision
+    // the DEM behind it does not have.
+    expect(formatClimb(1234, 'km')).toBe('1,250 m')
+    expect(formatClimb(1234, 'mi')).toBe('4,050 ft')
+  })
+
+  it('groups thousands, because four unbroken digits are hard to read at a glance', () => {
+    expect(formatClimb(11_000, 'km')).toContain(',')
+  })
+
+  it('says nothing precise about a trivial climb', () => {
+    expect(formatClimb(20, 'km')).toBe('flat')
+    expect(formatClimb(0, 'km')).toBe('flat')
   })
 })

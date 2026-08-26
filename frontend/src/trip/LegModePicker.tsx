@@ -29,6 +29,13 @@ export interface LegModePickerProps {
    * the note in the body: one is a cost, the other is provenance.
    */
   readonly reportsTrustworthyDuration: (intent: LegIntent) => boolean | null
+  /**
+   * Whether this mode's engine measures elevation.
+   *
+   * Treated like surface rather than like duration: losing the climb figure is a *cost* of the
+   * choice, because no other engine can supply it for that segment.
+   */
+  readonly reportsElevation: (intent: LegIntent) => boolean | null
   readonly onChange: (legIndex: number, intent: LegIntent) => void
 }
 
@@ -39,6 +46,7 @@ export function LegModePicker({
   to,
   reportsSurface,
   reportsTrustworthyDuration,
+  reportsElevation,
   onChange,
 }: LegModePickerProps): React.JSX.Element {
   /** A mode with no label yet is still a mode the leg can be on, so it is offered as itself. */
@@ -60,6 +68,7 @@ export function LegModePicker({
    * as a warning would teach a rider the opposite of the truth.
    */
   const timeIsModelled = reportsTrustworthyDuration(intent) === false
+  const losesClimb = reportsElevation(intent) === false
 
   return (
     <div className="leg-mode">
@@ -81,9 +90,17 @@ export function LegModePicker({
         </select>
       </label>
 
-      {losesSurface && (
+      {(losesSurface || losesClimb) && (
+        // One note for both, because it is one cause: the engine behind this mode measures
+        // neither. Two notes would read as two unrelated problems.
         <p className="leg-mode__note">
-          This engine reports no dirt or paved breakdown, so this segment will draw as unsurveyed.
+          This engine reports no{' '}
+          {losesSurface && losesClimb
+            ? 'surface or climb data, so this segment draws as unsurveyed and adds no climb'
+            : losesSurface
+              ? 'dirt or paved breakdown, so this segment will draw as unsurveyed'
+              : 'elevation, so this segment adds no climb to the trip'}
+          .
         </p>
       )}
 

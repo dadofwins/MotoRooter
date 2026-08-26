@@ -480,6 +480,15 @@ body {
   }
 }
 
+/* Climb, beside the distance and time it belongs with. Its own line because it carries a second
+   figure — how much of the route was never measured — and cramming that into the summary line
+   would bury the part that makes the first number honest. */
+.route-summary__climb {
+  margin: 0.125rem 0 0;
+  font-size: 0.8125rem;
+  font-variant-numeric: tabular-nums;
+}
+
 /* Where a number came from. Quieter than the figure it qualifies, because it is provenance and
    not a warning — on dirt our estimate is the better number. */
 .route-summary__provenance,

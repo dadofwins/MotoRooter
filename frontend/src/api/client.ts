@@ -26,6 +26,7 @@ import type {
   ChatRequest,
   CreateTripRequest,
   HealthResponse,
+  PoiCategory,
   PoiDetailResponse,
   ReplanEvent,
   ReplanRequest,
@@ -132,7 +133,19 @@ export interface ApiClient {
    * Places-backed display data for the POI dialog. Stubbed today
    * (`ApiNotImplementedError`). Response-only: Google's terms forbid persisting it.
    */
-  placeDetail(placeId: string, options?: RequestOptions): Promise<PoiDetailResponse>
+  /**
+   * Everything Places knows about one place.
+   *
+   * `category` is the one the caller already holds, and the endpoint uses it **only** where
+   * Places' own types map to nothing — it never overrides what Places says. Without it such a
+   * place is a 500: the server has no way to classify it and the client had no way to help,
+   * which is how "detail for this place could not be loaded" appeared for places that plainly
+   * exist. Optional because a caller without a category should send none rather than guess.
+   */
+  placeDetail(
+    placeId: string,
+    options?: RequestOptions & { readonly category?: PoiCategory },
+  ): Promise<PoiDetailResponse>
 }
 
 interface SendInit {
@@ -488,10 +501,12 @@ export function createApiClient(options: ApiClientOptions = {}): ApiClient {
 
     async placeDetail(
       placeId: string,
-      requestOptions?: RequestOptions,
+      requestOptions?: RequestOptions & { readonly category?: PoiCategory },
     ): Promise<PoiDetailResponse> {
+      const category = requestOptions?.category
+      const query = category === undefined ? '' : `?${new URLSearchParams({ category }).toString()}`
       return readJson<PoiDetailResponse>(
-        await send(`/api/places/${segment(placeId)}`, { method: 'GET' }, requestOptions),
+        await send(`/api/places/${segment(placeId)}${query}`, { method: 'GET' }, requestOptions),
       )
     },
   }

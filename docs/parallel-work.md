@@ -61,11 +61,17 @@ The coverage tripwires make an addition two-sided — a new response field with 
 frontend's guard, so backend cannot merge and frontend cannot build against a type that does not
 exist yet. That is the same deadlock as a removal, arriving from the other direction.
 
-**The producer adds an allowlist entry naming the branch that will consume it, and lands.** This
-is safe because the tripwire asserts an entry is *still unread*: the moment the consumer lands,
+**The integrator stages an allowlist entry naming the branch that will consume it, in the merge
+commit.** Not the producer — the allowlists live in the *consumer's* tree, so a backend engineer
+adding a response field cannot reach `frontend/src/api/coverage.test.ts` and vice versa. This is
+one of the few cases where the ownership table genuinely requires the integrator to act rather
+than route.
+
+It is safe because the tripwire asserts an entry is *still unread*: the moment the consumer lands,
 the staging entry goes stale and fails, which forces its removal. A temporary exemption that
 cannot be forgotten is a different thing from a permanent one, and this is what the "with a
-reason" half of the allowlist is for.
+reason" half of the allowlist is for. Say in the entry which branch will consume it, so the person
+who deletes it knows they are the one who was meant to.
 
 ### Removing a required field: neither order is safe, so bridge instead
 

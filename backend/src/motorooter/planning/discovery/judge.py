@@ -137,9 +137,14 @@ class CandidateJudge:
             resolved[start : start + JUDGE_BATCH_SIZE]
             for start in range(0, len(resolved), JUDGE_BATCH_SIZE)
         ]
+        # One counter for the stage, shared across the batches, because they run at once and
+        # a per-batch count is three numbers interleaved against a denominator that means
+        # something different to each of them. Tim watched it go 7/20, 17/20, 10/20. Safe
+        # without a lock: asyncio is single-threaded and this only moves between awaits.
+        counted = _StageCount(len(resolved), on_progress)
         settled = await asyncio.gather(
             *(
-                self._judge_batch(batch, leg, on_progress, of_total=len(resolved))
+                self._judge_batch(batch, leg, counted.batch(), of_total=len(resolved))
                 for batch in batches
             ),
             return_exceptions=True,
@@ -331,6 +336,38 @@ def _bounded(value: object) -> float | None:
     if isinstance(value, bool) or not isinstance(value, int | float):
         return None
     return float(value) if 0.0 <= value <= 1.0 else None
+
+
+class _StageCount:
+    """How far the *stage* has got, however many batches are reporting into it.
+
+    The batches count their own entries from one, which is the only thing a streaming reply
+    can tell them. This turns each batch's local count into a delta and adds it to a total
+    the rider actually cares about — "scoring 34 of 162" rather than three concurrent
+    counters each claiming a slice of twenty.
+    """
+
+    def __init__(self, total: int, report: Callable[[int, int], None] | None) -> None:
+        self._total = total
+        self._report = report
+        self._done = 0
+
+    def batch(self) -> Callable[[int, int], None] | None:
+        """A per-batch callback that folds this batch's count into the stage total."""
+        if self._report is None:
+            return None
+        seen = 0
+
+        def advance(done: int, _batch_total: int) -> None:
+            nonlocal seen
+            if done <= seen:
+                return
+            self._done = min(self._done + (done - seen), self._total)
+            seen = done
+            if self._report is not None:
+                self._report(self._done, self._total)
+
+        return advance
 
 
 def _scale(batch: int, of_total: int | None) -> str:

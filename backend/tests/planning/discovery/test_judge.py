@@ -15,7 +15,11 @@ import pytest
 from motorooter.llm.errors import LlmError, LlmUnavailable
 from motorooter.llm.messages import AssistantMessage
 from motorooter.llm.providers.fake import FakeLlmClient
-from motorooter.planning.discovery.judge import JUDGE_BATCH_SIZE, CandidateJudge
+from motorooter.planning.discovery.judge import (
+    JUDGE_BATCH_SIZE,
+    CandidateJudge,
+    _StageCount,
+)
 from motorooter.planning.discovery.models import Candidate, ResolvedCandidate
 from motorooter.routing.geo import EARTH_RADIUS_M
 from motorooter.routing.models import Coordinate, LegIntent, RouteLeg
@@ -498,6 +502,125 @@ class TestAnUnusableReplyIsRetried:
         client = FakeLlmClient(replies=(AssistantMessage(content="{}"),), repeat_last=True)
         assert await CandidateJudge(client).judge((), LEG) == ()
         assert client.call_count == 0
+
+
+class StreamingScores(FakeLlmClient):
+    """A model that streams a reply of `count` scores, in fragments, for every call.
+
+    Progress is only reported off the *stream*: `_read` falls back to `complete` when a client
+    cannot stream, and that path emits nothing. A progress test against the plain fake passes
+    while measuring silence — three of these did, before this existed.
+    """
+
+    def __init__(self, count: int, *, pieces: int = 12) -> None:
+        entries = ", ".join(
+            f'{{"index": {index}, "score": 0.8, "reason": "good"}}' for index in range(count)
+        )
+        text = '{"scores": [' + entries + "]}"
+        super().__init__(replies=(AssistantMessage(content=text),), repeat_last=True)
+        size = max(len(text) // pieces, 1)
+        self._fragments = [text[at : at + size] for at in range(0, len(text), size)]
+
+    async def stream(self, messages):
+        for fragment in self._fragments:
+            yield fragment
+
+
+class TestProgressCountsTheStageNotTheBatch:
+    """Tim, watching a run: "you'll see it jump from 7/20 to 17/20 to 10/20".
+
+    A direct consequence of batching. Each batch counted its own twenty and reported
+    independently, so concurrent batches interleaved three counters that shared a denominator
+    and meant different things. A rider sees a number going backwards, which this project has
+    already established reads as broken rather than merely inaccurate.
+
+    The number a rider is waiting on is the stage: entries done across every batch, against
+    the total being scored. It only goes up, and it survives whatever batch size gets picked
+    later.
+
+    The *failure* line keeps the batch, deliberately. "Scored none of 20 of 162" answers what
+    broke; this answers how far along. Different questions.
+    """
+
+    SPILLS_OVER = JUDGE_BATCH_SIZE * 2 + 5
+
+    async def _counts(self, places: int) -> list[tuple[int, int]]:
+        seen: list[tuple[int, int]] = []
+        await CandidateJudge(StreamingScores(JUDGE_BATCH_SIZE)).judge(
+            [resolved(f"P{index}") for index in range(places)],
+            LEG,
+            on_progress=lambda done, total: seen.append((done, total)),
+        )
+        return seen
+
+    async def test_something_is_reported_at_all(self):
+        """Guarding the guards: every assertion below is vacuous against an empty list."""
+        assert await self._counts(self.SPILLS_OVER)
+
+    async def test_the_denominator_is_the_whole_stage(self):
+        seen = await self._counts(self.SPILLS_OVER)
+        assert {total for _, total in seen} == {self.SPILLS_OVER}
+
+    async def test_the_count_never_goes_backwards(self):
+        """The whole complaint. Three counters sharing a denominator is what did it."""
+        counts = [done for done, _ in await self._counts(self.SPILLS_OVER)]
+        assert counts == sorted(counts)
+
+    async def test_no_count_repeats(self):
+        """Two batches each reporting "1" is the same defect wearing a monotonic disguise."""
+        counts = [done for done, _ in await self._counts(self.SPILLS_OVER)]
+        assert len(counts) == len(set(counts))
+
+    async def test_it_never_counts_past_the_total(self):
+        counts = [done for done, _ in await self._counts(self.SPILLS_OVER)]
+        assert max(counts) <= self.SPILLS_OVER
+
+    async def test_a_single_batch_still_counts_up_from_one(self):
+        assert await self._counts(3) == [(1, 3), (2, 3), (3, 3)]
+
+
+class TestTheStageCounterItself:
+    """The counter's own invariants, tested directly because the stream cannot reach them.
+
+    `_read` emits strictly increasing counts one at a time, so a batch repeating or skipping
+    is not reachable through it today. That makes the guards untestable from outside and
+    therefore, on the evidence of this project, the guards most likely to be quietly wrong.
+    The class is the thing holding the invariant, so the invariant is asserted on the class.
+    """
+
+    @staticmethod
+    def _recording(total: int):
+        seen: list[tuple[int, int]] = []
+        counter = _StageCount(total, lambda done, whole: seen.append((done, whole)))
+        return counter, seen
+
+    def test_two_batches_interleaving_still_only_go_up(self):
+        counter, seen = self._recording(6)
+        first, second = counter.batch(), counter.batch()
+        assert first is not None
+        assert second is not None
+        for done, report in ((1, first), (1, second), (2, first), (2, second), (3, first)):
+            report(done, 3)
+        assert [done for done, _ in seen] == [1, 2, 3, 4, 5]
+
+    def test_a_batch_repeating_a_count_reports_nothing_new(self):
+        counter, seen = self._recording(3)
+        report = counter.batch()
+        assert report is not None
+        report(1, 3)
+        report(1, 3)
+        assert seen == [(1, 3)]
+
+    def test_it_stops_at_the_total_rather_than_overshooting(self):
+        """A miscounted batch must not produce "7 of 5", which reads as a bug to a rider."""
+        counter, seen = self._recording(2)
+        report = counter.batch()
+        assert report is not None
+        report(5, 5)
+        assert seen == [(2, 2)]
+
+    def test_no_callback_means_no_work(self):
+        assert _StageCount(3, None).batch() is None
 
 
 class TestTheFailureLineSaysHowBigTheBatchWas:

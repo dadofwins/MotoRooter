@@ -138,7 +138,10 @@ class CandidateJudge:
             for start in range(0, len(resolved), JUDGE_BATCH_SIZE)
         ]
         settled = await asyncio.gather(
-            *(self._judge_batch(batch, leg, on_progress) for batch in batches),
+            *(
+                self._judge_batch(batch, leg, on_progress, of_total=len(resolved))
+                for batch in batches
+            ),
             return_exceptions=True,
         )
 
@@ -162,6 +165,8 @@ class CandidateJudge:
         resolved: Sequence[ResolvedCandidate],
         leg: SearchCorridor,
         on_progress: Callable[[int, int], None] | None = None,
+        *,
+        of_total: int | None = None,
     ) -> tuple[ScoredCandidate, ...]:
         """One call, retried once if it yields nothing usable.
 
@@ -197,8 +202,8 @@ class CandidateJudge:
             # means the next occurrence diagnoses itself. Server-side only: the raw reply
             # is logged here and never travels back to the model or to a client.
             logger.warning(
-                "judge scored none of %d places on attempt %d; reply was: %.*s",
-                len(resolved),
+                "judge scored none of %s on attempt %d; reply was: %.*s",
+                _scale(len(resolved), of_total),
                 attempt,
                 MAX_LOGGED_REPLY_CHARS,
                 content or "<empty>",
@@ -326,6 +331,19 @@ def _bounded(value: object) -> float | None:
     if isinstance(value, bool) or not isinstance(value, int | float):
         return None
     return float(value) if 0.0 <= value <= 1.0 else None
+
+
+def _scale(batch: int, of_total: int | None) -> str:
+    """How much of the corridor this failure was, in words a reader can act on.
+
+    "Scored none of 20" is a batch that went wrong among six that did not; "scored none of
+    all 162" is the corridor collapsing. Since batching landed the logged number is the batch
+    size, and without saying so the two read identically a week later — which is the exact
+    ambiguity that cost three live runs the day batching was added.
+    """
+    if of_total is None or of_total == batch:
+        return f"all {batch} places"
+    return f"{batch} of {of_total} places"
 
 
 def _scores_in(content: str | None) -> list[dict[str, object]]:

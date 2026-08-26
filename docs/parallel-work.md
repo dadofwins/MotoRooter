@@ -55,6 +55,18 @@ If the frontend needs a shape that does not exist, do not invent it locally. A
 locally-invented type that later disagrees with the backend is precisely the failure the
 generated contract exists to prevent.
 
+### Adding a field: stage the allowlist entry, it expires by itself
+
+The coverage tripwires make an addition two-sided — a new response field with no reader fails the
+frontend's guard, so backend cannot merge and frontend cannot build against a type that does not
+exist yet. That is the same deadlock as a removal, arriving from the other direction.
+
+**The producer adds an allowlist entry naming the branch that will consume it, and lands.** This
+is safe because the tripwire asserts an entry is *still unread*: the moment the consumer lands,
+the staging entry goes stale and fails, which forces its removal. A temporary exemption that
+cannot be forgotten is a different thing from a permanent one, and this is what the "with a
+reason" half of the allowlist is for.
+
 ### Removing a required field: neither order is safe, so bridge instead
 
 Sequencing a removal does not work, and this was learned the hard way on `preserve_pinned`.

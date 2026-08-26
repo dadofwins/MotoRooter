@@ -384,6 +384,21 @@ body {
     color: #fca5a5;
   }
 
+  .categories__group-title,
+  .categories__cost {
+    color: rgb(255 255 255 / 0.55);
+  }
+
+  .categories__chip {
+    border-color: rgb(255 255 255 / 0.22);
+  }
+
+  .categories__chip--on {
+    color: #bfdbfe;
+    background: rgb(31 111 235 / 0.28);
+    border-color: rgb(96 165 250 / 0.7);
+  }
+
   .places {
     border-top-color: rgb(255 255 255 / 0.14);
   }
@@ -506,6 +521,78 @@ body {
 
 .points__remove:hover {
   color: #b91c1c;
+}
+
+/* What discovery looks for. Beside the button it changes, because it is part of this run and it
+   is a cost control — one metered search per anchor per category. */
+.categories {
+  margin-top: 0.625rem;
+}
+
+.categories__group {
+  display: flex;
+  gap: 0.375rem;
+  align-items: baseline;
+  margin-bottom: 0.25rem;
+}
+
+.categories__group-title {
+  flex: none;
+  width: 4.25rem;
+  font-size: 0.6875rem;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: rgb(0 0 0 / 0.5);
+}
+
+.categories__chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+}
+
+/* A chip is a checkbox wearing different clothes. The box itself stays in the accessibility
+   tree and is reachable by keyboard; only its rendering changes. */
+.categories__chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.125rem 0.4375rem;
+  font-size: 0.75rem;
+  border: 1px solid rgb(0 0 0 / 0.18);
+  border-radius: 999px;
+  cursor: pointer;
+  user-select: none;
+}
+
+/* Selected is marked by fill *and* by the checkbox beside the label, so the state never rests on
+   colour alone. */
+.categories__chip--on {
+  color: #0b2e6b;
+  background: rgb(31 111 235 / 0.14);
+  border-color: rgb(31 111 235 / 0.5);
+}
+
+.categories__chip input {
+  margin: 0;
+  width: 0.75rem;
+  height: 0.75rem;
+}
+
+.categories__chip:has(input:disabled) {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.categories__chip:has(input:focus-visible) {
+  outline: 2px solid #1f6feb;
+  outline-offset: 1px;
+}
+
+.categories__cost {
+  margin: 0.375rem 0 0;
+  font-size: 0.6875rem;
+  color: rgb(0 0 0 / 0.55);
 }
 
 /* The places discovery found. Where a rider decides — twenty-nine pins on a map is a haystack. */

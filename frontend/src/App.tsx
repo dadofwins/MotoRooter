@@ -44,6 +44,8 @@ import {
 } from './routing/legStructure'
 import { ReplanProgress } from './trip/ReplanProgress'
 import { RoutePoints } from './trip/RoutePoints'
+import { CategoryPicker } from './trip/CategoryPicker'
+import { useDiscoveryCategories } from './trip/useDiscoveryCategories'
 import { needsReplan, useReplan } from './trip/useReplan'
 import { useRouteLegs } from './trip/useRouteLegs'
 import { useRoutingCapabilities } from './trip/useRoutingCapabilities'
@@ -447,6 +449,12 @@ function TripSession({
   const replan = useReplan(client)
 
   /**
+   * What discovery looks for. Remembered per browser, so the rider's own choice becomes the
+   * default after one run — a better default than any chosen here.
+   */
+  const { categories, setCategories } = useDiscoveryCategories()
+
+  /**
    * Whether the suggestions are stale relative to the route.
    *
    * Derived rather than read: the flag is serialised on `TripSummary` and not on `Trip`. Shown
@@ -632,12 +640,20 @@ function TripSession({
             <button
               type="button"
               onClick={() => {
-                replan.start(save.slug ?? '')
+                replan.start(save.slug ?? '', categories)
               }}
               disabled={replan.isRunning || waypoints.length < 2}
             >
               {replan.isRunning ? 'Finding places…' : 'Find places along the route'}
             </button>
+            {/* Beside the button it changes rather than in a settings dialog: this is part of
+                *this run*, and it is a cost control — one metered search per anchor per
+                category — not a standing preference. */}
+            <CategoryPicker
+              selected={categories}
+              onChange={setCategories}
+              disabled={replan.isRunning}
+            />
             {/* An accumulating log rather than one replaced line: this run takes minutes, and
                 a rider watching it needs to see it progress. Kept after it ends as a record. */}
             <ReplanProgress

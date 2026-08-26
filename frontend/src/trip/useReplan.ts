@@ -16,7 +16,7 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { ApiClient } from '../api/client'
-import type { Poi, ReplanEvent, Trip, TripLeg } from '../api/types'
+import type { Poi, PoiCategory, ReplanEvent, Trip, TripLeg } from '../api/types'
 
 export type Replanner = Pick<ApiClient, 'replan'>
 
@@ -50,7 +50,14 @@ export interface ReplanState {
   /** A finished run that turned up nothing, which is a real outcome and often today's. */
   readonly foundNothing: boolean
   readonly error: Error | null
-  readonly start: (slug: string) => void
+  /**
+   * Begin a run. `categories` narrows what it looks for.
+   *
+   * Omitted rather than empty when the caller has nothing to say: discovery fans out one metered
+   * search per anchor per category, and an empty list asks for nothing while still paying for
+   * the route-search stage. The backend's own default is a better answer than one invented here.
+   */
+  readonly start: (slug: string, categories?: readonly PoiCategory[]) => void
   readonly cancel: () => void
 }
 
@@ -116,7 +123,7 @@ export function useReplan(client: Replanner): ReplanState {
   }, [isRunning])
 
   const start = useCallback(
-    (slug: string) => {
+    (slug: string, categories?: readonly PoiCategory[]) => {
       // One run at a time: two would interleave stages and their per-stage lists would fight.
       if (running.current !== null) return
 
@@ -136,9 +143,16 @@ export function useReplan(client: Replanner): ReplanState {
       const consume = async (): Promise<void> => {
         const stream = client.replan(
           slug,
-          // Sent explicitly rather than relied upon as a default: a replan that silently
-          // discarded hand-placed POIs would be the worst kind of surprise.
-          { preserve_pinned: true },
+          {
+            // Sent explicitly rather than relied upon as a default: a replan that silently
+            // discarded hand-placed POIs would be the worst kind of surprise.
+            preserve_pinned: true,
+            // Omitted rather than empty. Discovery fans out one metered search per anchor per
+            // category, and asking for none costs the route-search stage for nothing.
+            ...(categories === undefined || categories.length === 0
+              ? {}
+              : { categories: [...categories] }),
+          },
           { signal: controller.signal },
         )
         for await (const item of stream) {

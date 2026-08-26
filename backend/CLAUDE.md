@@ -19,6 +19,17 @@ to proceed if checks fail, your tree is dirty, or you are behind `origin/main`:
 make handoff MSG="what changed and what the reviewer should focus on"
 ```
 
+When a handoff body contains backticks, **pipe it on stdin instead of using `MSG=`**. Your
+shell expands `MSG="..."` before make sees it, so `` `identifier` `` runs as a command
+substitution and is replaced by nothing — a handoff went out with every identifier silently
+deleted. A quoted heredoc cannot be mangled that way:
+
+```sh
+make handoff <<'EOF'
+What changed, with `identifiers` intact.
+EOF
+```
+
 Do **not** try to invoke the `/code-review` skill — it is user-invocable only and will fail
 with `disable-model-invocation`. Self-review means reading your own diff against the
 checklist. The integrator runs the real review.

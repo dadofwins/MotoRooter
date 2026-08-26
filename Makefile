@@ -137,19 +137,33 @@ ROLE   ?= $(shell scripts/mail whoami)
 BRANCH ?= $(shell git rev-parse --abbrev-ref HEAD)
 
 handoff: export MSG_BODY = $(MSG)
-handoff: ## Verify, push, and ask the integrator for review. MSG="what to look at"
-	@test -n "$$MSG_BODY" || { echo 'usage: make handoff MSG="what changed and what to focus on"'; exit 1; }
-	@test "$(BRANCH)" != "main" || { echo 'refusing: handoff runs from a feature branch, not main'; exit 1; }
-	@test -z "$$(git status --porcelain)" || { echo 'refusing: commit your work first (git status is dirty)'; exit 1; }
-	@git fetch -q origin main
-	@git merge-base --is-ancestor origin/main HEAD || { \
+handoff: ## Verify, push, ask for review. MSG="one line", or pipe the body on stdin.
+	@# Prefer stdin for anything with backticks. MSG is expanded by *your* shell before make
+	@# sees it, so `foo` inside it runs as a command substitution and is replaced by nothing —
+	@# a handoff went out with every identifier silently deleted, and the env-var fix here
+	@# cannot help because the damage happens at the call site. A quoted heredoc cannot be
+	@# mangled that way:
+	@#
+	@#     make handoff <<'EOF'
+	@#     ... body with `identifiers` ...
+	@#     EOF
+	@#
+	@# One shell block, because `body` has to survive to the last line.
+	@set -e; \
+	body="$$MSG_BODY"; \
+	if [ -z "$$body" ] && [ ! -t 0 ]; then body=$$(cat); fi; \
+	test -n "$$body" || { echo 'usage: make handoff MSG="..." — or pipe the body on stdin'; exit 1; }; \
+	test "$(BRANCH)" != "main" || { echo 'refusing: handoff runs from a feature branch, not main'; exit 1; }; \
+	test -z "$$(git status --porcelain)" || { echo 'refusing: commit your work first (git status is dirty)'; exit 1; }; \
+	git fetch -q origin main; \
+	git merge-base --is-ancestor origin/main HEAD || { \
 		echo 'refusing: your branch is behind origin/main.'; \
 		echo 'Rebase first so the review diff is against current main:'; \
 		echo '    git rebase origin/main'; \
-		exit 1; }
-	@$(MAKE) --no-print-directory check
-	@git push -u origin $(BRANCH)
-	@printf '%s\n' "$$MSG_BODY" | scripts/mail send integrator "review request: $(BRANCH)"
+		exit 1; }; \
+	$(MAKE) --no-print-directory check </dev/null; \
+	git push -u origin $(BRANCH); \
+	printf '%s\n' "$$body" | scripts/mail send integrator "review request: $(BRANCH)"
 
 handoff-blocked: export MSG_BODY = $(MSG)
 handoff-blocked: ## Push a branch that CANNOT pass check alone, for the integrator to resolve.

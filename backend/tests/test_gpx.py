@@ -244,3 +244,68 @@ class TestDecimation:
 
     def test_it_handles_an_empty_line(self):
         assert decimate((), limit=10) == ()
+
+
+class TestTheSerialisedForm:
+    """What the device parses is the string, not the element tree.
+
+    ElementTree defaults to `ns0:` prefixes for any namespace it was not told is the default,
+    which is legal XML and equivalent to a strict parser. Consumer GPS software is not
+    reliably a strict parser, and enough of it expects the plain `<gpx>` / `<wpt>` form that
+    the prefixed variant is a real compatibility risk.
+
+    Asserted on the raw string on purpose: parsing and checking elements passes either way,
+    because ElementTree does not care. That is exactly how this shipped.
+    """
+
+    def test_the_root_is_unprefixed(self):
+        assert "<gpx " in trip_to_gpx(trip())
+
+    def test_waypoints_are_unprefixed(self):
+        assert "<wpt " in trip_to_gpx(trip())
+
+    def test_track_points_are_unprefixed(self):
+        assert "<trkpt " in trip_to_gpx(trip())
+
+    def test_no_generated_prefix_appears_anywhere(self):
+        assert "ns0:" not in trip_to_gpx(trip(pois=(poi("Halfway Flat"),)))
+
+    def test_the_namespace_is_still_declared(self):
+        """Unprefixed only works if it is the default namespace, not if it is absent."""
+        assert f'xmlns="{GPX_NAMESPACE}"' in trip_to_gpx(trip())
+
+    def test_it_still_parses_as_gpx(self):
+        assert parsed(trip_to_gpx(trip())).tag == f"{{{GPX_NAMESPACE}}}gpx"
+
+
+class TestAnEmptyTrack:
+    """A trip with points placed but routing not saved back — a reachable state.
+
+    An empty `<trk>` is legal and some parsers dislike it, and a track element promising a
+    track it does not contain is worse than no track element.
+    """
+
+    @staticmethod
+    def _unrouted() -> Trip:
+        now = utc_now()
+        return Trip(
+            slug="unrouted",
+            name="Unrouted",
+            created_at=now,
+            edited_at=now,
+            waypoints=(
+                Waypoint(coordinate=Coordinate(lat=47.0, lon=-121.0), name="Start"),
+                Waypoint(coordinate=Coordinate(lat=48.0, lon=-121.0), name="End"),
+            ),
+        )
+
+    def test_no_track_element_when_there_is_no_track(self):
+        assert parsed(trip_to_gpx(self._unrouted())).find("gpx:trk", NS) is None
+
+    def test_the_waypoints_are_still_there(self):
+        """Which is the reason to export at all in that state."""
+        root = parsed(trip_to_gpx(self._unrouted()))
+        assert len(root.findall("gpx:wpt", NS)) == 2
+
+    def test_a_routed_trip_still_has_its_track(self):
+        assert parsed(trip_to_gpx(trip())).find("gpx:trk", NS) is not None

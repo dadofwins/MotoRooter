@@ -19,6 +19,18 @@ from motorooter.trips.models import Trip
 GPX_NAMESPACE = "http://www.topografix.com/GPX/1/1"
 CREATOR = "MotoRooter"
 
+ElementTree.register_namespace("", GPX_NAMESPACE)
+"""Emit `<gpx>` rather than `<ns0:gpx>`.
+
+ElementTree prefixes any namespace it has not been told is the default, which is legal XML
+and equivalent to a strict parser. Consumer GPS software is not reliably a strict parser, and
+enough of it expects the plain form that the prefixed variant is a real compatibility risk on
+a device nobody can debug from here.
+
+Module-level because it is global state in ElementTree, and this module is the only thing in
+the process that writes GPX.
+"""
+
 GARMIN_TRACK_POINT_LIMIT = 10_000
 """Track points in one exported file.
 
@@ -148,16 +160,21 @@ def trip_to_gpx(trip: Trip, *, limit: int = GARMIN_TRACK_POINT_LIMIT) -> str:
             note=point_of_interest.note,
         )
 
-    track = ElementTree.SubElement(root, f"{{{GPX_NAMESPACE}}}trk")
-    ElementTree.SubElement(track, f"{{{GPX_NAMESPACE}}}name").text = trip.name
-    for geometry in _decimated_legs(trip, limit):
-        segment = ElementTree.SubElement(track, f"{{{GPX_NAMESPACE}}}trkseg")
-        for point in geometry:
-            ElementTree.SubElement(
-                segment,
-                f"{{{GPX_NAMESPACE}}}trkpt",
-                {"lat": f"{point.lat:.6f}", "lon": f"{point.lon:.6f}"},
-            )
+    # Only when there is one. A trip with points placed but routing not saved back is a
+    # reachable state, and a `trk` promising a track it does not contain is worse than no
+    # `trk` at all — some parsers reject an empty one outright.
+    segments = [geometry for geometry in _decimated_legs(trip, limit) if geometry]
+    if segments:
+        track = ElementTree.SubElement(root, f"{{{GPX_NAMESPACE}}}trk")
+        ElementTree.SubElement(track, f"{{{GPX_NAMESPACE}}}name").text = trip.name
+        for geometry in segments:
+            segment = ElementTree.SubElement(track, f"{{{GPX_NAMESPACE}}}trkseg")
+            for point in geometry:
+                ElementTree.SubElement(
+                    segment,
+                    f"{{{GPX_NAMESPACE}}}trkpt",
+                    {"lat": f"{point.lat:.6f}", "lon": f"{point.lon:.6f}"},
+                )
 
     ElementTree.indent(root)
     return ElementTree.tostring(root, encoding="unicode", xml_declaration=True)

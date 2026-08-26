@@ -46,6 +46,7 @@ from motorooter.planning.discovery.corridor import (
     DISCOVERY_ANCHOR_SPACING_M,
     anchors,
 )
+from motorooter.planning.discovery.dedupe import DeduplicatingSearchSource
 from motorooter.planning.discovery.errors import DiscoveryError
 from motorooter.planning.discovery.extract import PlaceExtractor
 from motorooter.planning.discovery.judge import CandidateJudge
@@ -241,6 +242,12 @@ class DiscoveryPipeline:
             return
 
         counts = _Counts()
+        # Per run, not per process. On a road-shaped corridor every anchor reverse-geocodes
+        # to the same name, and each duplicate is a metered request for an answer already in
+        # hand. Built here rather than in the factory because Brave permits only "transient
+        # storage required for operation" — a deduplicator that outlived the run would be
+        # the cache the terms forbid.
+        source = DeduplicatingSearchSource(self._source)
         # Planned units: a lookup per anchor, a search per anchor and category, one
         # extraction per anchor, and three for enrichment — resolve, judge, and the tally.
         # Counting units rather than anchors is what keeps the percentage meaningful once
@@ -270,7 +277,7 @@ class DiscoveryPipeline:
 
             results: list[Candidate] = []
             for query in queries_for(name, wanted):
-                results.extend(await self._search(query, anchor, counts))
+                results.extend(await self._search(source, query, anchor, counts))
                 await updates.put(
                     work.step(
                         SEARCH_STAGE,
@@ -354,10 +361,14 @@ class DiscoveryPipeline:
             return None, None
 
     async def _search(
-        self, query: SearchQuery, anchor: Coordinate, counts: _Counts
+        self,
+        source: SearchSource,
+        query: SearchQuery,
+        anchor: Coordinate,
+        counts: _Counts,
     ) -> list[Candidate]:
         try:
-            results = await self._source.search(query, near=anchor)
+            results = await source.search(query, near=anchor)
         except DiscoveryError as exc:
             counts.failures.append(f"search {query.category.value}: {exc}")
             return []

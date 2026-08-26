@@ -863,6 +863,12 @@ function TripSession({
             New trip
           </button>
         </div>
+        {/* First, because it is the primary input and Tim uses it that way: he types, then he
+            clicks. Chat was already above the outputs on the principle that an ask is an input
+            rather than a result; this is the stronger reading of the same rule, putting it above
+            the summary and above Replan as well. */}
+        <ChatRail client={client} resolveSlug={save.ensure} onTripChanged={reload} />
+
         {waypoints.length > 0 && (
           <div className="route-summary">
             {/* Stated in words as well as drawn, so the map is not the only feedback. */}
@@ -988,7 +994,6 @@ function TripSession({
             everything it can do is reachable with the mouse above it. `reload` rather than a
             local merge: the assistant edited the document, so the document wins — replaying
             events into state here would make two models of one trip. */}
-        <ChatRail client={client} resolveSlug={save.ensure} onTripChanged={reload} />
 
         {/* The other way in, and the older one: the original spec offered typing an address or
             clicking the map, and only the clicking half ever shipped. It sits with the route it

@@ -55,6 +55,20 @@ interface Entry {
  */
 const STUCK_TO_BOTTOM_PX = 24
 
+/**
+ * How long a turn has to run before the wait is worth naming.
+ *
+ * A counter that flashes up for one second and vanishes is noise, and it makes a fast answer look
+ * slow. Below this the meter alone is enough.
+ */
+const ELAPSED_AFTER_S = 3
+
+/** Minutes and seconds, so nobody has to divide their own wait. Matches the replan rail. */
+function formatWait(seconds: number): string {
+  if (seconds < 60) return `${String(seconds)}s`
+  return `${String(Math.floor(seconds / 60))}m ${String(seconds % 60)}s`
+}
+
 /** What the rider is told when a turn cannot run at all. */
 const UNREACHABLE = 'The assistant could not be reached. Check your connection and try again.'
 const NOT_BUILT = 'The assistant is not built yet — this is coming soon.'
@@ -76,6 +90,30 @@ export function ChatRail({ client, resolveSlug, onTripChanged }: ChatRailProps):
   const [draft, setDraft] = useState('')
   const [isRunning, setRunning] = useState(false)
   const [truncated, setTruncated] = useState(false)
+  /**
+   * What the assistant is doing right now.
+   *
+   * The note off the most recent tool event rather than a label derived from `tool`. The contract
+   * already describes `message` on a tool event as a human-readable note, so mapping tool names
+   * to words here would duplicate the backend's wording and drift from it the first time either
+   * side changed one.
+   */
+  const [activity, setActivity] = useState<string | null>(null)
+  const [elapsedS, setElapsedS] = useState(0)
+  /** When this turn began, so the wait is measured rather than counted — see `useReplan`. */
+  const startedAt = useRef(0)
+
+  // The interval drives the render; the clock supplies the number. Counting ticks would make the
+  // figure lie in a background tab, which is exactly where a rider waiting three minutes goes.
+  useEffect(() => {
+    if (!isRunning) return undefined
+    const timer = setInterval(() => {
+      setElapsedS(Math.round((Date.now() - startedAt.current) / 1000))
+    }, 1000)
+    return () => {
+      clearInterval(timer)
+    }
+  }, [isRunning])
 
   const logRef = useRef<HTMLDivElement | null>(null)
   /**
@@ -126,6 +164,9 @@ export function ChatRail({ client, resolveSlug, onTripChanged }: ChatRailProps):
       running.current = controller
       setRunning(true)
       setTruncated(false)
+      setActivity(null)
+      startedAt.current = Date.now()
+      setElapsedS(0)
       setDraft('')
       append('you', message)
 
@@ -160,6 +201,11 @@ export function ChatRail({ client, resolveSlug, onTripChanged }: ChatRailProps):
             }
             break
           case 'tool_started':
+            // The current activity, and also kept in the transcript: one is what is happening,
+            // the other is what happened.
+            if (item.message !== '') setActivity(item.message)
+            if (item.message !== '') append('tool', item.message)
+            break
           case 'tool_finished':
             // Named while it runs. "Thinking…" for twenty seconds is indistinguishable from a
             // hang, and discovery genuinely takes that long.
@@ -183,11 +229,13 @@ export function ChatRail({ client, resolveSlug, onTripChanged }: ChatRailProps):
           if (controller.signal.aborted) return
           running.current = null
           setRunning(false)
+          setActivity(null)
         },
         (reason: unknown) => {
           if (isAbortError(reason) || controller.signal.aborted) return
           running.current = null
           setRunning(false)
+          setActivity(null)
           const failure = failureText(reason)
           append(failure.kind, failure.text)
         },
@@ -231,9 +279,25 @@ export function ChatRail({ client, resolveSlug, onTripChanged }: ChatRailProps):
         ))}
 
         {isRunning && (
-          <p className="chat__working" role="status">
-            Working…
-          </p>
+          <div className="chat__activity">
+            <p className="chat__working" role="status" data-testid="chat-activity">
+              {activity ?? 'Working'}&hellip;
+              {elapsedS >= ELAPSED_AFTER_S && ` · ${formatWait(elapsedS)}`}
+            </p>
+            {/* Indeterminate, because there is no figure to report: `ChatEvent` has
+                `tool_started` and `tool_finished` and nothing between, so a chat-initiated
+                discovery is genuinely silent for 30+ seconds. The sweep says working without
+                claiming progress it has not made — the same choice as the replan meter before
+                it has a percentage, and it becomes determinate with no structural change here
+                once backend adds progress inside a turn. */}
+            <div className="progress__meter">
+              <div
+                className="progress__bar progress__bar--indeterminate"
+                role="progressbar"
+                aria-label="Assistant working"
+              />
+            </div>
+          </div>
         )}
 
         {truncated && (

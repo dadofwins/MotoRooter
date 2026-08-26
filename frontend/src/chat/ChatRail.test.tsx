@@ -42,6 +42,18 @@ async function send(text: string): Promise<void> {
   })
 }
 
+
+/** `send`, but without the real-promise wait that fake timers would hang on. */
+async function sendWithTimers(text: string): Promise<void> {
+  fireEvent.change(screen.getByRole('textbox', { name: /ask the assistant/i }), {
+    target: { value: text },
+  })
+  await act(async () => {
+    fireEvent.click(screen.getByRole('button', { name: /send/i }))
+    await Promise.resolve()
+  })
+}
+
 describe('ChatRail', () => {
   it('opens by saying both ways of starting a trip', () => {
     render(<ChatRail client={fakeClient([])} resolveSlug={() => Promise.resolve('wabdr-north')} onTripChanged={vi.fn()} />)
@@ -375,5 +387,178 @@ describe('ChatRail scrolling', () => {
     await screen.findByText('Near enough.')
 
     expect(theLog().scrollTop).toBe(1000)
+  })
+})
+
+/**
+ * Item 2: *"The 'Working' text should make better use of the progress meter, it doesn't tell me
+ * what's going on."*
+ *
+ * Three things are honestly available from what the wire carries today, and none of them invents
+ * a figure. **What** it is doing comes from `tool_started.message`, which the contract already
+ * describes as a human-readable note — better than mapping tool names to labels here, which would
+ * duplicate the backend's wording and drift from it. **That it is alive** comes from the same
+ * indeterminate meter the replan rail uses when it has no percentage: movement without a claim.
+ * And **how long** comes from a clock, which is the thing that actually helps across a silent
+ * stretch — the lesson from the eighteen-second judge call.
+ *
+ * What is *not* available is progress inside a tool. `ChatEvent` has `tool_started` and
+ * `tool_finished` and nothing between, so a chat-initiated discovery is silent for 30+ seconds.
+ * That is backend's additive field, and when it lands the meter becomes determinate with no
+ * structural change here.
+ */
+describe('ChatRail while it is working', () => {
+  function running(events: readonly ChatEvent[]) {
+    const chat = vi.fn(
+       
+      async function* (_slug: string, _request: ChatRequest, _options?: RequestOptions) {
+        for (const item of events) yield item
+        await new Promise(() => undefined)
+      },
+    )
+    render(
+      <ChatRail
+        client={{ chat }}
+        resolveSlug={() => Promise.resolve('wabdr-north')}
+        onTripChanged={vi.fn()}
+      />,
+    )
+  }
+
+  it('says what it is doing rather than that it is doing something', async () => {
+    running([event({ kind: 'tool_started', message: 'Searching for camps', tool: 'find_places' })])
+
+    await send('find me somewhere to camp')
+
+    const status = await screen.findByTestId('chat-activity')
+    expect(status.textContent ?? '').toMatch(/Searching for camps/)
+    expect(status.textContent ?? '').not.toMatch(/^Working/)
+  })
+
+  it('falls back to Working before any tool has reported', async () => {
+    // A turn that is thinking rather than calling anything has nothing more specific to say, and
+    // inventing a label for it would be worse than the honest generic one.
+    running([])
+
+    await send('hello')
+
+    expect((await screen.findByTestId('chat-activity')).textContent ?? '').toMatch(/Working/)
+  })
+
+  it('moves on to the next thing rather than sticking on the first', async () => {
+    running([
+      event({ kind: 'tool_started', message: 'Searching for camps', tool: 'find_places' }),
+      event({ kind: 'tool_finished', message: 'Found 3 camps', tool: 'find_places' }),
+      event({ kind: 'tool_started', message: 'Adding Lone Fir to the route', tool: 'add_poi_to_route' }),
+    ])
+
+    await send('add the best one')
+
+    await waitFor(() => {
+      expect((screen.getByTestId('chat-activity').textContent ?? '')).toMatch(/Adding Lone Fir/)
+    })
+  })
+
+  it('shows a meter that moves without claiming a figure', async () => {
+    // There is no percentage to report inside a chat turn, so the meter is indeterminate — the
+    // same one the replan rail uses when it has no number. A bar at 0% reads as stuck.
+    running([event({ kind: 'tool_started', message: 'Searching for camps', tool: 'find_places' })])
+
+    await send('find camps')
+
+    const meter = await screen.findByRole('progressbar', { name: /assistant/i })
+    expect(meter).not.toHaveAttribute('aria-valuenow')
+  })
+
+  it('stops saying anything once the turn is over', async () => {
+    const client = fakeClient([event({ kind: 'message', message: 'Done.' }), event({ kind: 'done' })])
+    render(
+      <ChatRail
+        client={client}
+        resolveSlug={() => Promise.resolve('wabdr-north')}
+        onTripChanged={vi.fn()}
+      />,
+    )
+
+    await send('anything else?')
+    await screen.findByText('Done.')
+
+    expect(screen.queryByTestId('chat-activity')).not.toBeInTheDocument()
+  })
+})
+
+describe('ChatRail elapsed time', () => {
+  function stall() {
+    const chat = vi.fn(
+      // eslint-disable-next-line require-yield
+      async function* (_slug: string, _request: ChatRequest, _options?: RequestOptions) {
+        await new Promise(() => undefined)
+      },
+    )
+    render(
+      <ChatRail
+        client={{ chat }}
+        resolveSlug={() => Promise.resolve('wabdr-north')}
+        onTripChanged={vi.fn()}
+      />,
+    )
+  }
+
+  it('counts the wait once it is long enough to notice', async () => {
+    // The thing that actually helps across a silent stretch: a chat-initiated discovery is 30+
+    // seconds with no events at all, and seconds advancing is the only honest signal that
+    // anything is still happening.
+    vi.useFakeTimers()
+    try {
+      stall()
+      await sendWithTimers('plan me three days')
+
+      await act(async () => {
+        vi.setSystemTime(Date.now() + 11_000)
+        await vi.advanceTimersByTimeAsync(1000)
+      })
+
+      expect(screen.getByTestId('chat-activity').textContent ?? '').toMatch(/12s/)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('says nothing about time for a turn that answers quickly', async () => {
+    // A counter that flashes up for one second and vanishes is noise, and it makes a fast answer
+    // look slow.
+    vi.useFakeTimers()
+    try {
+      stall()
+      await sendWithTimers('hello')
+
+      await act(async () => {
+        vi.setSystemTime(Date.now() + 1000)
+        await vi.advanceTimersByTimeAsync(1000)
+      })
+
+      expect(screen.getByTestId('chat-activity').textContent ?? '').not.toMatch(/\ds/)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('measures the wait rather than counting ticks', async () => {
+    // Browsers throttle intervals hard in a background tab, and a rider who switches away during
+    // a three-minute plan is exactly who the counter is for. Same fix as the replan clock.
+    vi.useFakeTimers()
+    try {
+      stall()
+      await sendWithTimers('plan me three days')
+
+      await act(async () => {
+        vi.setSystemTime(Date.now() + 89_000)
+        await vi.advanceTimersByTimeAsync(1000)
+      })
+
+      expect(screen.getByTestId('chat-activity').textContent ?? '').toMatch(/1m 30s/)
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })

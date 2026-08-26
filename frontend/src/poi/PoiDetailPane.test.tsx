@@ -459,3 +459,50 @@ describe('PoiDetailPane and the pin it came from', () => {
     expect(mark?.getAttribute('aria-hidden')).toBe('true')
   })
 })
+
+/**
+ * The category the pane holds and never sent.
+ *
+ * Tim: *"a few POIs come up as 'detail for this place could not be loaded' ... but when I type
+ * exactly that into google maps I can see it has images and description."* The endpoint answers
+ * 500 for a place whose Places types map to no category, and says in its own message that the
+ * client should pass the one it holds. The pane holds it — it is rendering the POI — and had no
+ * parameter to put it in.
+ */
+describe('PoiDetailPane and the category it already knows', () => {
+  it('sends the category with the lookup', async () => {
+    const placeDetail = vi.fn(() => new Promise<never>(() => undefined))
+    render(
+      <PoiDetailPane
+        poi={poi({ place_id: 'ChIJ123', category: 'wild_camp' })}
+        client={{ placeDetail }}
+        onClose={vi.fn()}
+      />,
+    )
+
+    await waitFor(() => {
+      expect(placeDetail).toHaveBeenCalledWith(
+        'ChIJ123',
+        expect.objectContaining({ category: 'wild_camp' }),
+      )
+    })
+  })
+
+  it('still passes the abort signal, which is what stops a stale answer landing', async () => {
+    // Adding an option to a call is exactly where an existing one gets dropped.
+    const placeDetail = vi.fn((_placeId: string, _options?: { signal?: AbortSignal }) =>
+      new Promise<never>(() => undefined),
+    )
+    render(
+      <PoiDetailPane
+        poi={poi({ place_id: 'ChIJ123', category: 'food' })}
+        client={{ placeDetail }}
+        onClose={vi.fn()}
+      />,
+    )
+
+    await waitFor(() => {
+      expect(placeDetail.mock.calls[0]?.[1]).toHaveProperty('signal')
+    })
+  })
+})

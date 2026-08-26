@@ -160,3 +160,68 @@ describe('contract coverage', () => {
     expect(stale).toEqual([])
   })
 })
+
+/**
+ * Every query parameter the contract declares is either sent by the client or written off here.
+ *
+ * **The third shape of the same failure, and the first two guards were both blind to it.** This
+ * file checks response *fields*; the backend's checks request *models*; a query parameter is
+ * neither. So `GET /api/places/{place_id}?category=` was added, documented, and required for a
+ * whole class of place — and `ApiClient.placeDetail` had no argument to put it in. Both tripwires
+ * stayed green while a rider was told "detail for this place could not be loaded" about places
+ * that plainly exist.
+ *
+ * Scoped to the client module on purpose, and that is load-bearing rather than tidy: checked
+ * against the whole app the guard is vacuous, because `category` appears on every POI in the
+ * codebase. Mutating it both ways proves it — reintroducing the bug fails this check as scoped,
+ * and passes it silently when widened to `appSource()`. Only `client.ts` builds a request, so
+ * only `client.ts` can send a parameter.
+ */
+const UNSENT: Record<string, string> = {}
+
+/** Query parameter names the contract declares, across every operation. */
+function contractQueryParameters(): Set<string> {
+  const paths = spec.paths as Record<
+    string,
+    Record<string, { parameters?: { name: string; in: string }[] }>
+  >
+  const names = new Set<string>()
+  for (const operations of Object.values(paths)) {
+    for (const operation of Object.values(operations)) {
+      for (const parameter of operation.parameters ?? []) {
+        if (parameter.in === 'query') names.add(parameter.name)
+      }
+    }
+  }
+  return names
+}
+
+function clientSource(): string {
+  const entry = Object.entries(SOURCES).find(([path]) => path.endsWith('/client.ts'))
+  if (entry === undefined) throw new Error('the API client is not in the glob')
+  return withoutComments(entry[1] as string)
+}
+
+describe('query parameter coverage', () => {
+  it('sends every query parameter it has not written off', () => {
+    const source = clientSource()
+
+    const unsent = [...contractQueryParameters()]
+      .filter((name) => !isUsed(name, source))
+      .filter((name) => !(name in UNSENT))
+      .sort()
+
+    expect(unsent).toEqual([])
+  })
+
+  it('has no stale entries in the unsent list', () => {
+    const declared = contractQueryParameters()
+    const source = clientSource()
+
+    const stale = Object.keys(UNSENT)
+      .filter((name) => !declared.has(name) || isUsed(name, source))
+      .sort()
+
+    expect(stale).toEqual([])
+  })
+})

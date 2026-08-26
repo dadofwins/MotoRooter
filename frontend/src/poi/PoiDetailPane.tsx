@@ -71,6 +71,7 @@ export function PoiDetailPane({
 }: PoiDetailPaneProps): React.JSX.Element {
   const verified = isVerified(poi)
   const placeId = poi.place_id ?? null
+  const { category } = poi
 
   const [detail, setDetail] = useState<PoiDetail | null>(null)
   const [status, setStatus] = useState<Status>(placeId === null ? 'nothing-to-ask' : 'loading')
@@ -83,7 +84,10 @@ export function PoiDetailPane({
     if (placeId === null) return undefined
 
     const controller = new AbortController()
-    client.placeDetail(placeId, { signal: controller.signal }).then(
+    // The category goes with it. The endpoint uses it only where Places' own types map to
+    // nothing, and without it such a place is a 500 — which is what "detail could not be loaded"
+    // was reporting for places that plainly exist. This side has always had the answer.
+    client.placeDetail(placeId, { signal: controller.signal, category }).then(
       (response) => {
         if (controller.signal.aborted) return
         setDetail(response.detail)
@@ -104,7 +108,10 @@ export function PoiDetailPane({
     return () => {
       controller.abort()
     }
-  }, [client, placeId])
+    // `category` is in the list because the answer can depend on it: it is what the endpoint
+    // falls back to when Places knows no type. It cannot thrash — a place's category is a stable
+    // string for as long as the pane is open.
+  }, [client, placeId, category])
 
   // Focus moves in, so a keyboard user is where the new content is and Escape reaches it.
   useEffect(() => {

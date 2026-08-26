@@ -754,3 +754,48 @@ describe('the assistant conversation', () => {
     expect(lastCall(fetchMock)[1].signal).toBe(controller.signal)
   })
 })
+
+/**
+ * The category the endpoint asks for and the client had no way to send.
+ *
+ * Tim hit this live: some places came back "detail for this place could not be loaded" while
+ * Google Maps showed them fine. The endpoint returns 500 with its own explanation — Places gave
+ * no usable type, pass `?category=` with the value the client already holds — and there was no
+ * parameter to put it in. A place whose Places types map to nothing was unreachable through the
+ * only path to it.
+ *
+ * The third shape of the same reachability failure, and neither tripwire sees it: one checks
+ * response fields, the other request models, and a **query parameter** is neither.
+ */
+describe('ApiClient.placeDetail and the category it needs', () => {
+  const detail = { detail: { photo_urls: [], opening_hours: [], reviews: [] } }
+
+  it('sends the category the caller already holds', async () => {
+    const fetchMock = stubFetch(json(detail))
+    const api = createApiClient({ fetch: fetchMock })
+
+    await api.placeDetail('ChIJ123', { category: 'campground' }).catch(() => undefined)
+
+    expect(lastCall(fetchMock)[0]).toBe('/api/places/ChIJ123?category=campground')
+  })
+
+  it('sends none when the caller has none, rather than inventing one', async () => {
+    // The endpoint uses it only where Places itself says nothing, and never lets it override.
+    // A guessed category would be a claim about a place, made by the side that knows least.
+    const fetchMock = stubFetch(json(detail))
+    const api = createApiClient({ fetch: fetchMock })
+
+    await api.placeDetail('ChIJ123').catch(() => undefined)
+
+    expect(lastCall(fetchMock)[0]).toBe('/api/places/ChIJ123')
+  })
+
+  it('still escapes the place id, which is not ours to trust', async () => {
+    const fetchMock = stubFetch(json(detail))
+    const api = createApiClient({ fetch: fetchMock })
+
+    await api.placeDetail('a/b?c', { category: 'food' }).catch(() => undefined)
+
+    expect(lastCall(fetchMock)[0]).toBe('/api/places/a%2Fb%3Fc?category=food')
+  })
+})

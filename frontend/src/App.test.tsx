@@ -1253,15 +1253,61 @@ describe('deciding about the places discovery found', () => {
         slug: 'wabdr-north',
         name: 'WABDR North',
         waypoints: [waypointFixture(47, -120), waypointFixture(48, -120)],
+        // A routed leg, because a place can only be inserted along geometry that exists —
+        // `nearestLeg` has nothing to measure against otherwise.
+        legs: [
+          tripLeg({
+            start_waypoint_index: 0,
+            end_waypoint_index: 1,
+            routed: routeLeg({
+              geometry: [
+                { lat: 47, lon: -120 },
+                { lat: 47.5, lon: -120 },
+                { lat: 48, lon: -120 },
+              ],
+            }),
+          }),
+        ],
         pois: [
-          poiFixture({ id: 'a', name: 'Lone Fir', category: 'campground', source: 'places', place_id: 'p1' }),
-          poiFixture({ id: 'b', name: 'Chevron', category: 'fuel', source: 'places', place_id: 'p2' }),
+          poiFixture({
+            id: 'a',
+            name: 'Lone Fir',
+            category: 'campground',
+            source: 'places',
+            place_id: 'p1',
+            coordinate: { lat: 47.5, lon: -120 },
+          }),
+          poiFixture({
+            id: 'b',
+            name: 'Chevron',
+            category: 'fuel',
+            source: 'places',
+            place_id: 'p2',
+            coordinate: { lat: 47.7, lon: -120 },
+          }),
         ],
       }),
     )
     render(<App mapLoader={fake.loader} mapId="motorooter-test-vector" client={router} />)
     return { fake, router }
   }
+
+  it('routes through a whole group in one action, in route order', async () => {
+    // The bulk half of item 5, which has never existed. Per group rather than one button for
+    // everything found: twenty-nine places is a search result, not an itinerary.
+    const { fake, router } = withPlaces()
+    await mapReady(fake)
+    await screen.findByRole('button', { name: /^Lone Fir/ })
+    router.routeLeg.mockClear()
+
+    fireEvent.click(screen.getByRole('button', { name: /route through 1 stay/i }))
+
+    await waitFor(() => expect(router.routeLeg).toHaveBeenCalled())
+    // One press, one leg re-requested — not one request per place.
+    expect(router.routeLeg).toHaveBeenCalledTimes(1)
+    const request = router.routeLeg.mock.calls[0]?.[0]
+    expect(request?.waypoints.map((point) => point.lat)).toContain(47.5)
+  })
 
   it('lists them in the rail, because pins alone were not findable', async () => {
     // Tim, after a run that found twenty-nine places: "I don't see any to click on". They were

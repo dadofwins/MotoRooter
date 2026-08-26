@@ -55,7 +55,18 @@ export function ReplanProgress({
 
       <div className="progress__meter">
         <div
-          className={`progress__bar${percent === null ? ' progress__bar--indeterminate' : ''}`}
+          className={[
+            'progress__bar',
+            percent === null ? 'progress__bar--indeterminate' : '',
+            // Marked while a run is going even when the figure is known. Judging is one
+            // eighteen-second LLM call that cannot be subdivided without damaging the ranking,
+            // so the bar sits honestly still at about half way — and a still bar reads as a
+            // hang. The shimmer says working without implying movement, which is the same
+            // principle as the sweep and simply applied to the case it was not written for.
+            isRunning ? 'progress__bar--working' : '',
+          ]
+            .filter(Boolean)
+            .join(' ')}
           role="progressbar"
           aria-label="Finding places"
           {...(percent === null

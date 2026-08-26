@@ -81,3 +81,60 @@ describe('ReplanProgress', () => {
     expect(screen.queryByRole('status')).not.toBeInTheDocument()
   })
 })
+
+/**
+ * The still-alive signal when the figure *is* known.
+ *
+ * Judging is a single LLM call of about eighteen seconds and it cannot be subdivided — the judge
+ * compares candidates against each other, so splitting the batch would damage the ranking. The
+ * bar therefore sits honestly still at around half way for eighteen seconds. Backend offered a
+ * heartbeat event; the better answer is on this side, because animation costs no events, needs
+ * no protocol, and covers every silent stretch rather than the one stage we happen to know
+ * about today.
+ *
+ * This is the branch's own stated principle — "the animation carries the still-alive signal on
+ * its own" — applied to the case it was not written for.
+ */
+describe('ReplanProgress while the figure holds still', () => {
+  it('marks the bar as working whenever a run is going, figure or not', () => {
+    render(
+      <ReplanProgress
+        isRunning
+        progress={0.5}
+        elapsedS={20}
+        log={[{ id: 1, message: 'Scoring candidates', stage: 'judge' }]}
+      />,
+    )
+
+    expect(screen.getByRole('progressbar').className).toMatch(/progress__bar--working/)
+  })
+
+  it('stops marking it the moment the run ends', () => {
+    // A finished bar that still shimmers claims work that is over.
+    render(
+      <ReplanProgress
+        isRunning={false}
+        progress={1}
+        elapsedS={41}
+        log={[{ id: 1, message: 'Done', stage: 'done' }]}
+      />,
+    )
+
+    expect(screen.getByRole('progressbar').className).not.toMatch(/progress__bar--working/)
+  })
+
+  it('still reports the figure it has, so the animation adds to it rather than replacing it', () => {
+    render(
+      <ReplanProgress
+        isRunning
+        progress={0.5}
+        elapsedS={20}
+        log={[{ id: 1, message: 'Scoring candidates', stage: 'judge' }]}
+      />,
+    )
+
+    const bar = screen.getByRole('progressbar')
+    expect(bar).toHaveAttribute('aria-valuenow', '50')
+    expect(bar).toHaveStyle({ width: '50%' })
+  })
+})

@@ -169,6 +169,107 @@ describe('PlaceList', () => {
     )
   })
 
+  it('offers to route through a whole group, because a group is an itinerary and 29 places is not', () => {
+    // Tim asked for "a button to route through found POIs". I did not build one button for all
+    // of them: twenty-nine places is not an itinerary, it is a search result, and a control
+    // nobody presses is the demo-shaped version of this feature. A group is how a rider thinks
+    // about it — these are where I sleep, those are what I want to see — so the bulk action is
+    // per group, and the count is in the label so the commitment is visible before the click.
+    render(
+      <PlaceList
+        pois={[
+          place({ id: 'a', name: 'Lone Fir', category: 'campground' }),
+          place({ id: 'b', name: 'Halfway Flat', category: 'wild_camp' }),
+          place({ id: 'c', name: 'Chevron', category: 'fuel' }),
+        ]}
+        onOpen={vi.fn()}
+        onIgnore={vi.fn()}
+        onRouteThrough={vi.fn()}
+      />,
+    )
+
+    expect(screen.getByRole('button', { name: /route through 2 stays/i })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /route through 1 supply/i })).toBeInTheDocument()
+  })
+
+  it('hands over that group, in the order the list shows them', () => {
+    const onRouteThrough = vi.fn()
+    const lone = place({ id: 'a', name: 'Lone Fir', category: 'campground' })
+    const flat = place({ id: 'b', name: 'Halfway Flat', category: 'wild_camp' })
+    render(
+      <PlaceList
+        pois={[lone, flat, place({ id: 'c', name: 'Chevron', category: 'fuel' })]}
+        onOpen={vi.fn()}
+        onIgnore={vi.fn()}
+        onRouteThrough={onRouteThrough}
+      />,
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: /route through 2 stays/i }))
+
+    expect(onRouteThrough).toHaveBeenCalledWith([lone, flat])
+  })
+
+  it('leaves out the places already on the route, which are done', () => {
+    // Counting them would offer to add what is already there, and the count is the whole point
+    // of the label.
+    render(
+      <PlaceList
+        pois={[
+          place({ id: 'a', name: 'Lone Fir', category: 'campground', on_route: true }),
+          place({ id: 'b', name: 'Halfway Flat', category: 'wild_camp' }),
+        ]}
+        onOpen={vi.fn()}
+        onIgnore={vi.fn()}
+        onRouteThrough={vi.fn()}
+      />,
+    )
+
+    expect(screen.getByRole('button', { name: /route through 1 stay\b/i })).toBeInTheDocument()
+  })
+
+  it('leaves out the unconfirmed ones, which cannot be routed through at all', () => {
+    render(
+      <PlaceList
+        pois={[
+          poiFixture({ id: 'a', name: 'Maybe', category: 'campground', source: 'llm_suggested', place_id: null }),
+          place({ id: 'b', name: 'Halfway Flat', category: 'wild_camp' }),
+        ]}
+        onOpen={vi.fn()}
+        onIgnore={vi.fn()}
+        onRouteThrough={vi.fn()}
+      />,
+    )
+
+    expect(screen.getByRole('button', { name: /route through 1 stay\b/i })).toBeInTheDocument()
+  })
+
+  it('offers nothing for a group where everything is already decided', () => {
+    // A button that would add nothing is worse than no button: it looks like the action failed.
+    render(
+      <PlaceList
+        pois={[place({ id: 'a', name: 'Lone Fir', category: 'campground', on_route: true })]}
+        onOpen={vi.fn()}
+        onIgnore={vi.fn()}
+        onRouteThrough={vi.fn()}
+      />,
+    )
+
+    expect(screen.queryByRole('button', { name: /route through/i })).not.toBeInTheDocument()
+  })
+
+  it('offers no bulk action at all when the caller cannot take one', () => {
+    render(
+      <PlaceList
+        pois={[place({ id: 'a', name: 'Lone Fir', category: 'campground' })]}
+        onOpen={vi.fn()}
+        onIgnore={vi.fn()}
+      />,
+    )
+
+    expect(screen.queryByRole('button', { name: /route through/i })).not.toBeInTheDocument()
+  })
+
   it('counts what it is showing, because twenty-nine was the number nobody could see', () => {
     render(
       <PlaceList

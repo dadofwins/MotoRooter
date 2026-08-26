@@ -469,8 +469,17 @@ body {
   }
 
   .place-search,
-  .points {
+  .points,
+  .click-mode {
     border-top-color: rgb(255 255 255 / 0.14);
+  }
+
+  .click-mode__state {
+    border-color: rgb(255 255 255 / 0.22);
+  }
+
+  .click-mode__state--on {
+    border-color: rgb(255 255 255 / 0.5);
   }
 
   .place-search__field input,
@@ -647,6 +656,69 @@ body {
   font-size: 0.75rem;
   line-height: 1.4;
   color: var(--ink-muted);
+}
+
+/* What a click on the map does, and the mode the points it places will route with. Sits under
+   the chat and above the summary: it governs the map, and the summary describes the map. */
+.click-mode {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 0.75rem;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 1rem;
+  padding-top: 1rem;
+  border-top: 1px solid rgb(0 0 0 / 0.12);
+}
+
+.click-mode__states {
+  display: flex;
+  gap: 0.25rem;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+/* The group needs a name for a screen reader and not a heading on screen: two words of chrome
+   above a two-word control is more label than control. */
+.click-mode__legend {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+}
+
+.click-mode__state {
+  display: flex;
+  gap: 0.3125rem;
+  align-items: center;
+  padding: 0.25rem 0.5rem;
+  font-size: 0.8125rem;
+  color: var(--ink-muted);
+  border: 1px solid rgb(0 0 0 / 0.18);
+  border-radius: 0.375rem;
+  cursor: pointer;
+}
+
+/* Marked by weight and border as well as by its radio, so which one is on survives a glance in
+   sunlight — the same reason the pins carry shape as well as colour. */
+.click-mode__state--on {
+  font-weight: 600;
+  color: inherit;
+  border-color: rgb(0 0 0 / 0.45);
+}
+
+.click-mode__intent {
+  display: flex;
+  gap: 0.375rem;
+  align-items: center;
+  font-size: 0.8125rem;
+  color: var(--ink-muted);
+}
+
+.click-mode__intent select {
+  font: inherit;
 }
 
 /* Typing a place instead of hunting for it on the map. Sits with the route it adds to. */

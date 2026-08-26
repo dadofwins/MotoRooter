@@ -23,7 +23,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { ApiClient } from '../api/client'
 import { isApiError } from '../api/errors'
-import type { Poi, Trip, TripLeg, Waypoint } from '../api/types'
+import type { LegIntent, Poi, Trip, TripLeg, Waypoint } from '../api/types'
 
 export type TripReader = Pick<ApiClient, 'getTrip'>
 export type TripWriter = Pick<ApiClient, 'createTrip' | 'updateTrip'>
@@ -33,6 +33,14 @@ export interface TripContent {
   readonly waypoints: readonly Waypoint[]
   readonly legs: readonly TripLeg[]
   readonly pois: readonly Poi[]
+  /**
+   * The mode new segments start on.
+   *
+   * Written because it is now something a rider chooses rather than a field only the backend
+   * ever set — and a choice that does not survive a reload reads as a control that does nothing.
+   * It is part of the content key too, so choosing it is a save on its own.
+   */
+  readonly defaultIntent?: LegIntent | undefined
 }
 
 export type SaveStatus = 'idle' | 'creating' | 'saving' | 'saved' | 'conflict' | 'failed'
@@ -301,6 +309,7 @@ export function useTripSave(
             waypoints: [...current.waypoints],
             legs: [...current.legs],
             pois: [...current.pois],
+            ...(current.defaultIntent === undefined ? {} : { default_intent: current.defaultIntent }),
           },
           { signal: controller.signal },
         )

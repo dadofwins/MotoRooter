@@ -58,6 +58,7 @@ import {
   withWaypointAppended,
   withWaypointRemoved,
 } from './routing/legStructure'
+import { MapClickMode } from './trip/MapClickMode'
 import { ReplanProgress } from './trip/ReplanProgress'
 import { RoutePoints } from './trip/RoutePoints'
 import { CategoryPicker } from './trip/CategoryPicker'
@@ -234,7 +235,32 @@ function TripSession({
    * them on the far side of the contract — which is how a request for "as much fun offroad as
    * possible" came back paved.
    */
-  const newLegIntent = stored?.default_intent ?? DEFAULT_INTENT
+  /**
+   * The mode new segments start on, and the rider's own answer where they have given one.
+   *
+   * `Trip.default_intent` was read here and set by nothing until the control below existed —
+   * a field the app consumed and could not choose. Held locally as well as stored so a choice
+   * applies to the very next click rather than after the save round-trips.
+   */
+  const [chosenIntent, setChosenIntent] = useState<LegIntent | null>(null)
+  const newLegIntent = chosenIntent ?? stored?.default_intent ?? DEFAULT_INTENT
+
+  /**
+   * Whether clicking the map places a point.
+   *
+   * Tim asked for the off switch: once pins are reachable, most map clicks are aimed at a place
+   * rather than at empty ground, and every one of them was lengthening the route.
+   *
+   * **A trip that already has points opens in Browse; an empty one opens placing.** The
+   * asymmetry is what a mistake costs: an accidental waypoint on a route somebody has built is
+   * worse than an ignored click, and an empty map has nothing to browse — so the safe default
+   * is the wrong one for the only action a new trip starts with.
+   */
+  // Decided once, at mount, from how the rider arrived: a link to a trip means they came to look
+  // at one, and a fresh session means they came to build one. Anything derived from the *current*
+  // waypoints turns placing off the moment the first point lands — which is the opposite of what
+  // somebody building a route wants, and was invisible until a test placed two points in a row.
+  const [placing, setPlacing] = useState(() => !hasTripInUrl())
 
   const capabilities = useRoutingCapabilities(client)
   /**
@@ -738,7 +764,17 @@ function TripSession({
    */
   const save = useTripSave(
     client,
-    useMemo(() => ({ waypoints, legs, pois: placed }), [waypoints, legs, placed]),
+    useMemo(
+      () => ({
+        waypoints,
+        legs,
+        pois: placed,
+        // Only once the rider has chosen. Sending the fallback would write an opinion the trip
+        // never expressed, and `default_intent` is exactly the field that had no author before.
+        ...(chosenIntent === null ? {} : { defaultIntent: chosenIntent }),
+      }),
+      [waypoints, legs, placed, chosenIntent],
+    ),
     // On a conflict the stored document has won, so it is re-read and the comparison above
     // drops the edits that no longer describe it.
     useMemo(
@@ -821,6 +857,17 @@ function TripSession({
     )
   }
 
+  /**
+   * The map's click handler, or nothing at all while browsing.
+   *
+   * Browsing means the click still reaches the canvas and the canvas does nothing with it —
+   * dismissing an open fan is its own business and happens either way.
+   *
+   * Spread rather than passed as `undefined`: `exactOptionalPropertyTypes` distinguishes absent
+   * from present-and-undefined, and this prop is genuinely absent.
+   */
+  const mapClickHandler = placing ? { onMapClick: addWaypoint } : {}
+
   return (
     <div className="app">
       <main className="map-pane" aria-label="Route map">
@@ -829,7 +876,7 @@ function TripSession({
           mapId={mapId}
           waypoints={waypoints}
           legs={shownLegs}
-          onMapClick={addWaypoint}
+          {...mapClickHandler}
           onLegGrab={onLegGrab}
           onLegDrag={onLegDrag}
           onLegDrop={onLegDrop}
@@ -868,6 +915,19 @@ function TripSession({
             rather than a result; this is the stronger reading of the same rule, putting it above
             the summary and above Replan as well. */}
         <ChatRail client={client} resolveSlug={save.ensure} onTripChanged={reload} />
+
+        {/* Then what the *other* input does. Both sit above the summary because both are asks
+            and the summary is an answer; chat leads because it is the primary one. */}
+        <MapClickMode
+          placing={placing}
+          onPlacingChange={setPlacing}
+          intent={newLegIntent}
+          onIntentChange={(intent) => {
+            // Held locally so it applies to the very next click, and written to the trip so it
+            // survives a reload and the assistant sees the same answer the rider gave.
+            setChosenIntent(intent)
+          }}
+        />
 
         {waypoints.length > 0 && (
           <div className="route-summary">

@@ -87,6 +87,17 @@ function removeLastPoint(): void {
   fireEvent.click(within(last).getByRole('button'))
 }
 
+/**
+ * Switch a loaded trip back to placing points.
+ *
+ * A trip with waypoints opens in Browse, because an accidental waypoint on a route somebody has
+ * already built is worse than an ignored click. A test that adds a point to a loaded trip is
+ * doing what a rider does: saying so first.
+ */
+async function startPlacing(): Promise<void> {
+  fireEvent.click(await screen.findByRole('radio', { name: /add points/i }))
+}
+
 const PIN_PROBE_ID = 'pin-probe'
 
 /** The shape Maps delivers position in. */
@@ -1041,6 +1052,9 @@ describe('App saving the trip', () => {
 
     render(<App mapLoader={fake.loader} mapId="motorooter-test-vector" client={router} />)
     await mapReady(fake)
+    // Arrived by link, so the map opens in Browse. Saying so first is what a rider does before
+    // editing a trip they came to look at.
+    await startPlacing()
     fake.clickMap(47.6, -120.7)
 
     // Not a generic error: the rider is told their change was replaced, which is what
@@ -1319,6 +1333,7 @@ describe('the mode a new segment starts on', () => {
   it('starts a new segment on the mode the trip asks for', async () => {
     const { fake, router } = await tripWithDefault('twisty_paved')
     await waitFor(() => expect(router.getTrip).toHaveBeenCalled())
+    await startPlacing()
 
     fake.clickMap(48, -120.5)
 
@@ -1331,6 +1346,7 @@ describe('the mode a new segment starts on', () => {
     // second opinion. Dirt because that is the point of an adventure planner.
     const { fake, router } = await tripWithDefault(null)
     await waitFor(() => expect(router.getTrip).toHaveBeenCalled())
+    await startPlacing()
 
     fake.clickMap(48, -120.5)
 
@@ -2221,7 +2237,11 @@ describe('choosing how a segment routes', () => {
     await waitFor(() => expect(router.routeLeg).toHaveBeenCalledTimes(2))
     router.routeLeg.mockClear()
 
-    const pickers = screen.getAllByRole('combobox')
+    // Scoped to the route list: the rail also carries the mode for *new* points, which is a
+    // different question and sits above this.
+    const pickers = within(screen.getByRole('region', { name: 'Route points' })).getAllByRole(
+      'combobox',
+    )
     fireEvent.change(pickers[0] as HTMLElement, { target: { value: 'highway_connector' } })
 
     await waitFor(() => expect(router.routeLeg).toHaveBeenCalledTimes(1))
@@ -2257,7 +2277,9 @@ describe('choosing how a segment routes', () => {
     fake.clickMap(47.0, -120.0)
     fake.clickMap(48.0, -120.5)
 
-    fireEvent.change(screen.getByRole('combobox'), { target: { value: 'highway_connector' } })
+    // The leg's own picker, not the one for new points above it.
+    const picker = within(screen.getByRole('region', { name: 'Route points' })).getByRole('combobox')
+    fireEvent.change(picker, { target: { value: 'highway_connector' } })
 
     // One note covering both, because Google reports neither surface nor elevation — the real
     // capability table says so, which is why this reads as one cause rather than two problems.
@@ -2968,6 +2990,9 @@ describe('App with crowded places', () => {
  */
 describe('App rail order', () => {
   async function railed() {
+    // A fresh session rather than a link, so the map opens placing points — an earlier test in
+    // this file leaves a trip in the URL, and `hasTripInUrl()` is what decides.
+    window.history.replaceState(null, '', '/')
     const fake = createFakeMaps()
     render(<App mapLoader={fake.loader} mapId="motorooter-test-vector" client={fakeRouter()} />)
     await mapReady(fake)
@@ -3004,10 +3029,96 @@ describe('App rail order', () => {
   it('still opens with the greeting, which is the first thing on an empty trip', async () => {
     // Moving the rail around is exactly how an opening line ends up below the fold, and this one
     // was measured once already to check it was reachable at all.
+    window.history.replaceState(null, '', '/')
     const fake = createFakeMaps()
     render(<App mapLoader={fake.loader} mapId="motorooter-test-vector" client={fakeRouter()} />)
     await mapReady(fake)
 
     expect(await screen.findByText(/Describe your trip/)).toBeInTheDocument()
+  })
+})
+
+/**
+ * Whether a click on the map places a point.
+ *
+ * Tim: *"when you're clicking on POIs it's annoying if it keeps adding points to the route."*
+ * The clustering work is what made this bite — pins are reachable now, so the map is something a
+ * rider clicks *at* far more often than they click *on*.
+ */
+describe('App and what a map click does', () => {
+  it('places a point on an empty trip, because that is what the first click is for', async () => {
+    // Starting in Browse would be safer and would cost a click on the one action every trip
+    // begins with. An empty map has nothing to browse.
+    window.history.replaceState(null, '', '/')
+    const fake = createFakeMaps()
+    render(<App mapLoader={fake.loader} mapId="motorooter-test-vector" client={fakeRouter()} />)
+    await mapReady(fake)
+
+    fake.clickMap(47.6, -120.7)
+
+    expect(await screen.findByText(/1 point placed/)).toBeInTheDocument()
+  })
+
+  it('does not place one while browsing', async () => {
+    window.history.replaceState(null, '', '/')
+    const fake = createFakeMaps()
+    render(<App mapLoader={fake.loader} mapId="motorooter-test-vector" client={fakeRouter()} />)
+    await mapReady(fake)
+    fake.clickMap(47.6, -120.7)
+    await screen.findByText(/1 point placed/)
+
+    fireEvent.click(screen.getByRole('radio', { name: /browse/i }))
+    fake.clickMap(48.1, -120.2)
+
+    // Still one. The click reached the map and the map did nothing with it, which is the ask.
+    await waitFor(() => {
+      expect(screen.getByText(/1 point placed/)).toBeInTheDocument()
+    })
+  })
+
+  it('opens a saved trip in Browse, so a stray click cannot lengthen it', async () => {
+    // The asymmetry that decides the default: an accidental waypoint on a route someone has
+    // already built is worse than an ignored click, and a loaded trip is one they came back to
+    // look at rather than one they are starting.
+    window.history.replaceState(null, '', '/?trip=wabdr-north')
+    const fake = createFakeMaps()
+    const router = fakeRouter()
+    router.getTrip.mockResolvedValue(
+      tripFixture({
+        slug: 'wabdr-north',
+        waypoints: [waypointFixture(47, -120), waypointFixture(48, -120)],
+      }),
+    )
+    render(<App mapLoader={fake.loader} mapId="motorooter-test-vector" client={router} />)
+    await mapReady(fake)
+    await screen.findByText(/2 points placed/)
+
+    expect(screen.getByRole('radio', { name: /browse/i })).toBeChecked()
+
+    fake.clickMap(49.0, -121.0)
+    await waitFor(() => {
+      expect(screen.getByText(/2 points placed/)).toBeInTheDocument()
+    })
+  })
+
+  it('routes a new point with the mode chosen for new points', async () => {
+    // The half that is not just a toggle: the intent is decidable before the point exists,
+    // rather than by opening the leg it created and correcting it afterwards.
+    window.history.replaceState(null, '', '/')
+    const fake = createFakeMaps()
+    const router = fakeRouter()
+    render(<App mapLoader={fake.loader} mapId="motorooter-test-vector" client={router} />)
+    await mapReady(fake)
+
+    fireEvent.change(screen.getByRole('combobox', { name: /new points/i }), {
+      target: { value: 'highway_connector' },
+    })
+    fake.clickMap(47.6, -120.7)
+    fake.clickMap(48.1, -120.2)
+
+    await waitFor(() => {
+      expect(router.routeLeg).toHaveBeenCalled()
+    })
+    expect(router.routeLeg.mock.calls[0]?.[0].intent).toBe('highway_connector')
   })
 })

@@ -1,6 +1,7 @@
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
 import { App } from './App'
+import { poiGlyph } from './map/poiPin'
 import { ApiError, ApiNotImplementedError } from './api/errors'
 import type { RequestOptions } from './api/client'
 import type { GoogleMaps } from './map/loadGoogleMaps'
@@ -2866,9 +2867,23 @@ describe('App right-click menus', () => {
  * discovery found, and the places underneath could not be reached at all.
  */
 describe('App with crowded places', () => {
+  /**
+   * Nine places on top of each other, which is one past the fan's ceiling.
+   *
+   * Below it the group opens on the map as a fan and never reaches the shell; the list is what
+   * happens when a fan would overlap itself. Both named, so this reads as the case it is.
+   */
   const CROWD = [
     poiFixture({ id: 'a', name: 'Lone Fir', category: 'campground', coordinate: { lat: 47.9, lon: -120.35 } }),
-    poiFixture({ id: 'b', name: 'Mineral Springs', category: 'campground', coordinate: { lat: 47.9012, lon: -120.3512 } }),
+    poiFixture({ id: 'b', name: 'Mineral Springs', category: 'food', coordinate: { lat: 47.9012, lon: -120.3512 } }),
+    ...Array.from({ length: 7 }, (_, index) =>
+      poiFixture({
+        id: `c${String(index)}`,
+        name: `Camp ${String(index)}`,
+        category: 'campground',
+        coordinate: { lat: 47.9004 + index * 0.0002, lon: -120.3504 + index * 0.0002 },
+      }),
+    ),
   ]
 
   async function crowded() {
@@ -2884,7 +2899,23 @@ describe('App with crowded places', () => {
   it('says how many places are stacked up rather than showing one of them', async () => {
     const fake = await crowded()
 
-    expect(fake.clusterMarkers()[0]?.options['content']).toHaveTextContent('2')
+    expect(fake.clusterMarkers()[0]?.options['content']).toHaveTextContent('9')
+  })
+
+  it('leads each row with the pin that place has, not just its name', async () => {
+    // Tim's ask. A name and a category word still leave the rider matching prose to a shape, and
+    // the shape is what they are actually looking at on the map.
+    const fake = await crowded()
+
+    act(() => {
+      fake.clusterMarkers()[0]?.click()
+    })
+
+    const row = await screen.findByRole('menuitem', { name: /Lone Fir/ })
+    const mark = row.querySelector('.poi')
+    expect(mark?.textContent).toBe(poiGlyph('campground'))
+    // A campground is somewhere to sleep, and the mark says so the same way the pin does.
+    expect(mark?.className).toContain('poi--stay')
   })
 
   it('names what is underneath when the rider clicks the group', async () => {

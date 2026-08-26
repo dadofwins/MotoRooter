@@ -22,6 +22,7 @@ import { createMapOptions, toCoordinate, toLatLng, type MapColorScheme } from '.
 import { polylineStyle, toRouteSegments } from './routeLayer'
 import { createClusterPin, createPoiPin, isVerified } from './poiPin'
 import { clusterPois } from './cluster'
+import { FAN_MAX_MEMBERS, fanPositions } from './fan'
 import { createDragHandle, createWaypointPin, waypointKind } from './waypointPin'
 
 /** Stable identities: inline defaults would rebuild every overlay on every render. */
@@ -136,6 +137,28 @@ function contextPointOf(event: unknown): ScreenPoint {
   return { x: dom?.clientX ?? 0, y: dom?.clientY ?? 0 }
 }
 
+/** A pin the POI layer drew, with anything drawn alongside it. */
+interface DrawnPin {
+  readonly marker: AttachedMarker
+  readonly listeners: readonly (google.maps.MapsEventListener | null)[]
+  /** The line back to the group, on a fanned member. */
+  readonly leader?: google.maps.Polyline
+}
+
+/**
+ * The line from an opened group to one of its members.
+ *
+ * Quiet and thin. It is a piece of explanation, not a route, and it must not read as one on a
+ * map whose whole subject is a line.
+ */
+const FAN_LEADER_STYLE: google.maps.PolylineOptions = {
+  strokeColor: '#6b7280',
+  strokeOpacity: 0.85,
+  strokeWeight: 1.5,
+  clickable: false,
+  zIndex: 1,
+}
+
 export interface PoiClusterOpened {
   readonly members: readonly Poi[]
   readonly at: ScreenPoint
@@ -240,6 +263,18 @@ export function MapCanvas({
    * apart. Seeded from the initial camera so the first draw is not grouped at the wrong scale.
    */
   const [currentZoom, setCurrentZoom] = useState(zoom ?? DEFAULT_ZOOM)
+  /**
+   * The group currently opened into its members, by cluster key.
+   *
+   * Keyed on the members rather than on a position, so a group that survives a redraw stays open
+   * and one that no longer exists closes itself.
+   */
+  const [fannedKey, setFannedKey] = useState<string | null>(null)
+  /** Read inside the map's own click handler, which is registered once and outlives this state. */
+  const fanned = useRef<string | null>(null)
+  useEffect(() => {
+    fanned.current = fannedKey
+  }, [fannedKey])
   const [error, setError] = useState<Error | null>(null)
   const [attempt, setAttempt] = useState(0)
 
@@ -380,6 +415,13 @@ export function MapCanvas({
     const listeners = [
       map.addListener('click', (event: google.maps.MapMouseEvent) => {
         if (gesture.current !== null) return
+        // A click that dismisses something does not also do a thing. Same reasoning as the
+        // swallowed post-drag click below: closing an open fan by dropping a waypoint under it
+        // is not what the rider asked for.
+        if (fanned.current !== null) {
+          setFannedKey(null)
+          return
+        }
         // Releasing the line emits a click as well as a mouseup, and it would otherwise
         // drop a waypoint where the drag finished. Exactly one is swallowed: leaving the
         // flag set would stop the map accepting points at all, which is the worse failure
@@ -411,6 +453,9 @@ export function MapCanvas({
       }),
       map.addListener('zoom_changed', () => {
         setCurrentZoom(map.getZoom() ?? DEFAULT_ZOOM)
+        // The grouping is about to be redone, and the group this fan belongs to may not survive
+        // it. Leader lines pointing at a hub that no longer exists are worse than a closed fan.
+        setFannedKey(null)
       }),
     ]
 
@@ -580,56 +625,103 @@ export function MapCanvas({
     const map = mapRef.current
     if (maps === null || map === null) return undefined
 
-    const pins = clusters.map((cluster) => {
+    /** One place, drawn wherever it has been put. */
+    const placePin = (place: Poi, at: Coordinate): DrawnPin => {
+      const marker = createMarker(maps, {
+        map,
+        position: toLatLng(at),
+        pin: createPoiPin(place),
+        advanced: hasMapId,
+      })
+      return {
+        marker,
+        listeners: [
+          marker.on('click', () => {
+            poiHandlers.current.onPoiOpen?.(place)
+          }),
+          // Right-click is the add-to-route path, and it is offered only where it can work.
+          // Fanned members get it too: clustering had otherwise taken the idiom away from every
+          // place in a group, because the group's pin was the only thing left to click.
+          ...(isVerified(place)
+            ? [
+                marker.on('contextmenu', (event) => {
+                  contextHandler.current?.({ kind: 'poi', poi: place, at: contextPointOf(event) })
+                }),
+              ]
+            : []),
+        ],
+      }
+    }
+
+    const pins = clusters.flatMap((cluster): DrawnPin[] => {
       const [only] = cluster.members
       // A group of one is the place itself. Drawing a "1" over it would say a rider has
       // something to open when they have exactly what they can already see.
-      const alone = cluster.members.length === 1 && only !== undefined
-
-      const marker = createMarker(maps, {
-        map,
-        position: toLatLng(cluster.coordinate),
-        pin: alone ? createPoiPin(only) : createClusterPin(cluster.members.length),
-        advanced: hasMapId,
-      })
-
-      if (!alone) {
-        return {
-          marker,
-          listeners: [
-            marker.on('click', (event) => {
-              poiHandlers.current.onClusterOpen?.({
-                members: cluster.members,
-                at: contextPointOf(event),
-              })
-            }),
-          ],
-        }
+      if (cluster.members.length === 1 && only !== undefined) {
+        return [placePin(only, cluster.coordinate)]
       }
 
-      const listeners = [
-        marker.on('click', () => {
-          poiHandlers.current.onPoiOpen?.(only)
+      const open = cluster.key === fannedKey
+
+      const hub = createMarker(maps, {
+        map,
+        position: toLatLng(cluster.coordinate),
+        // The members, not just how many: the pin wears their colours in proportion.
+        pin: createClusterPin(cluster.members),
+        advanced: hasMapId,
+      })
+      const hubPin: DrawnPin = {
+        marker: hub,
+        listeners: [
+          hub.on('click', (event) => {
+            // The thing that opened it closes it.
+            if (open) {
+              setFannedKey(null)
+              return
+            }
+            // Small enough to open on the map; anything bigger goes to the caller as a list,
+            // because a fan that size overlaps itself and solves nothing.
+            if (cluster.members.length <= FAN_MAX_MEMBERS) {
+              setFannedKey(cluster.key)
+              return
+            }
+            poiHandlers.current.onClusterOpen?.({
+              members: cluster.members,
+              at: contextPointOf(event),
+            })
+          }),
+        ],
+      }
+
+      if (!open) return [hubPin]
+
+      // Opened. Each member is drawn away from the group, with a line back to it: a fanned pin
+      // is not where its place is, and the line is what makes that a disclosed offset rather
+      // than a quiet relocation. The group's own pin stays as the hub — without it the lines
+      // converge on nothing, and there is no way to close what was opened.
+      const spots = fanPositions(cluster.coordinate, cluster.members.length, currentZoom)
+      return [
+        hubPin,
+        ...cluster.members.map((member, index) => {
+          const at = spots[index] ?? cluster.coordinate
+          const leader = new maps.Polyline({
+            ...FAN_LEADER_STYLE,
+            path: [toLatLng(cluster.coordinate), toLatLng(at)],
+            map,
+          })
+          return { ...placePin(member, at), leader }
         }),
-        // Right-click is the add-to-route path, and it is offered only where it can work.
-        ...(isVerified(only)
-          ? [
-              marker.on('contextmenu', (event) => {
-                contextHandler.current?.({ kind: 'poi', poi: only, at: contextPointOf(event) })
-              }),
-            ]
-          : []),
       ]
-      return { marker, listeners }
     })
 
     return () => {
-      for (const { marker, listeners } of pins) {
+      for (const { marker, listeners, leader } of pins) {
         for (const listener of listeners) listener?.remove()
         marker.detach()
+        leader?.setMap(null)
       }
     }
-  }, [maps, clusters, hasMapId])
+  }, [maps, clusters, hasMapId, fannedKey, currentZoom])
 
   useEffect(() => {
     const map = mapRef.current

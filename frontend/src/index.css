@@ -17,6 +17,13 @@
    * --ink-faint  3.95:1 light / 5.19:1 dark — icon-only controls, needs 3.0
    */
   --ink-muted: rgb(0 0 0 / 0.6);
+
+  /* The three POI group colours, defined once. A condensed pin builds a conic gradient out of
+     these, so a literal here and a literal in the pin code would be two palettes waiting to
+     disagree. Unchanged between schemes: they sit on their own white ring, not on the surface. */
+  --poi-stay: #6d28d9;
+  --poi-supply: #0f766e;
+  --poi-sight: #b45309;
   --ink-faint: rgb(0 0 0 / 0.5);
   --chat-width: 380px;
   color-scheme: light dark;
@@ -1600,19 +1607,19 @@ body {
 
 /* Somewhere to sleep: a rounded block, like a roof. */
 .poi--stay {
-  background: #6d28d9;
+  background: var(--poi-stay);
   border-radius: 30% 30% 45% 45%;
 }
 
 /* Something you need: a circle, the most findable shape at small sizes. */
 .poi--supply {
-  background: #0f766e;
+  background: var(--poi-supply);
   border-radius: 50%;
 }
 
 /* A reason to stop: turned on its corner, so it reads as different at a glance. */
 .poi--sight {
-  background: #b45309;
+  background: var(--poi-sight);
   border-radius: 12%;
   rotate: 45deg;
 }
@@ -1634,10 +1641,14 @@ body {
   font-variant-numeric: tabular-nums;
   line-height: 1;
   color: #fff;
+  /* Set inline from the group's own members — see createClusterPin. This is the fallback for a
+     pin with nothing in it, which should not happen and should not be invisible if it does. */
   background: #334155;
   border: 2px solid #fff;
   border-radius: 50%;
   box-shadow: 0 1px 4px rgb(0 0 0 / 0.4);
+  /* Over the wedges, which are dark but not uniformly so. */
+  text-shadow: 0 1px 2px rgb(0 0 0 / 0.55);
   cursor: pointer;
 }
 
@@ -1892,13 +1903,34 @@ body {
   background: rgb(0 0 0 / 0.07);
 }
 
-/* When the menu is listing places rather than actions: the name leads, the kind follows
-   quietly. Both are read out — choosing between two campgrounds and a diner is when it matters. */
+/* When the menu is listing places rather than actions: the mark and the name lead, the kind
+   follows quietly. The words are read out — choosing between two campgrounds and a diner is when
+   the kind matters — and the mark is decoration, because it is the same shape as the pin. */
 .context-menu__item:has(.context-menu__hint) {
   display: grid;
-  grid-template-columns: 1fr auto;
-  gap: 0.75rem;
-  align-items: baseline;
+  grid-template-columns: auto 1fr auto;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+/* Long place names wrap rather than stretching the menu across the map. */
+.context-menu {
+  max-width: 24rem;
+}
+
+.context-menu__icon {
+  display: grid;
+  place-items: center;
+}
+
+/* The map pin, shrunk into a line of text: same shape, same glyph, same colour, no shadow —
+   a drop shadow at this size is mud rather than depth. */
+.poi--mark {
+  width: 1.0625rem;
+  height: 1.0625rem;
+  font-size: 0.625rem;
+  border-width: 1px;
+  box-shadow: none;
 }
 
 .context-menu__hint {
@@ -1933,7 +1965,6 @@ body {
   }
 
   .poi-cluster {
-    background: #475569;
     border-color: #0f172a;
   }
 

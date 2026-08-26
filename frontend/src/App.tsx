@@ -35,6 +35,7 @@ import { MAP_ID, loadMaps } from './map/googleMaps'
 import type { GoogleMapsLoader } from './map/loadGoogleMaps'
 import { isVerified, poiLabel } from './map/poiPin'
 import { PlaceList } from './poi/PlaceList'
+import { PoiMark } from './poi/PoiMark'
 import { RouteThroughBest } from './poi/RouteThroughBest'
 import { PoiDetailPane } from './poi/PoiDetailPane'
 import { DragSession } from './routing/dragSession'
@@ -618,6 +619,8 @@ function TripSession({
         items: members.map((place) => ({
           key: place.id,
           label: place.name,
+          // The pin itself, shrunk, so a row and a pin are one thing rather than two.
+          icon: <PoiMark category={place.category} />,
           hint: poiLabel(place.category),
           onChoose: () => {
             onPoiOpen(place)

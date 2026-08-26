@@ -117,6 +117,14 @@ export function createPoiPin(poi: Poi): HTMLElement {
 }
 
 /**
+ * The order colours appear in a mixed group's pin.
+ *
+ * Fixed, because the pin is redrawn every time the map regroups and one that reshuffles its
+ * wedges between renders reads as a different place.
+ */
+const GROUP_ORDER: readonly PoiGroup[] = ['stay', 'supply', 'sight']
+
+/**
  * The pin that stands for several places at once.
  *
  * Its one job the individual pins cannot do is say **how many**. Measured on a live corridor,
@@ -124,16 +132,23 @@ export function createPoiPin(poi: Poi): HTMLElement {
  * was whichever happened to be last — so without a number the map quietly under-reports what
  * discovery found.
  *
- * Deliberately not category-coloured. A group of a campground, a diner and a fuel stop has no
- * honest single category, and slicing the pin three ways makes a smaller number harder to read
- * to say something a rider can find out by opening it.
+ * **It wears the colours of what is inside it**, in proportion. Tim's call, and it corrects a
+ * decision this started with: a neutral pin said "several things, unspecified" when it could say
+ * "mostly places to sleep, and one view". The wedges are per *colour*, not per category — nine
+ * categories share three group colours, so a slice per category would draw two purple wedges
+ * side by side and claim to have said something.
+ *
+ * Colours come from CSS custom properties rather than literals here, so the group colours have
+ * one definition and a pin cannot drift from the map's own palette.
  */
-export function createClusterPin(count: number): HTMLElement {
+export function createClusterPin(members: readonly Poi[]): HTMLElement {
+  const count = members.length
   const pin = document.createElement('div')
   // Three digits do not fit in a circle sized for a glyph. Twelve was the largest group measured
   // on a real corridor, so this is a real case rather than a defensive one.
   pin.className = `poi-cluster${count > 9 ? ' poi-cluster--wide' : ''}`
   pin.textContent = String(count)
+  pin.style.background = clusterBackground(members)
 
   const name = `${String(count)} places here`
   // A button, not an image: everything underneath is unreachable except through it.
@@ -141,4 +156,25 @@ export function createClusterPin(count: number): HTMLElement {
   pin.setAttribute('aria-label', name)
   pin.title = name
   return pin
+}
+
+/** One colour where the group is of one kind, wedges in proportion where it is mixed. */
+function clusterBackground(members: readonly Poi[]): string {
+  const shares = GROUP_ORDER.map((group) => ({
+    group,
+    share: members.filter((member) => poiGroup(member.category) === group).length / members.length,
+  })).filter((each) => each.share > 0)
+
+  const only = shares[0]
+  if (only === undefined) return ''
+  if (shares.length === 1) return `var(--poi-${only.group})`
+
+  let sweep = 0
+  const stops = shares.map(({ group, share }) => {
+    const from = sweep * 100
+    sweep += share
+    // Rounded, so the arithmetic that produced them is not written across the pin in decimals.
+    return `var(--poi-${group}) ${String(Math.round(from))}% ${String(Math.round(sweep * 100))}%`
+  })
+  return `conic-gradient(${stops.join(', ')})`
 }

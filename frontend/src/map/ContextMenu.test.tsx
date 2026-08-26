@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from '@testing-library/react'
+import { fireEvent, render, screen, within } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { ContextMenu } from './ContextMenu'
 
@@ -193,6 +193,30 @@ describe('ContextMenu', () => {
     const item = screen.getByRole('menuitem', { name: /Lone Fir/ })
     expect(item).toHaveAccessibleName('Lone Fir Campground')
     expect(item.querySelector('.context-menu__hint')?.textContent).toBe('Campground')
+  })
+
+  it('can lead a row with a mark, without letting it speak', () => {
+    // Listing places, the mark is the pin the rider is looking at on the map — a shape, not a
+    // word, and the row already says "Campground" out loud. Announcing the shape too is noise.
+    render(
+      <ContextMenu
+        at={AT}
+        items={[
+          {
+            key: 'a',
+            label: 'Lone Fir',
+            icon: <span data-testid="mark" aria-hidden="true" />,
+            hint: 'Campground',
+            onChoose: vi.fn(),
+          },
+        ]}
+        onDismiss={vi.fn()}
+      />,
+    )
+
+    const item = screen.getByRole('menuitem', { name: /Lone Fir/ })
+    expect(within(item).getByTestId('mark')).toBeInTheDocument()
+    expect(item).toHaveAccessibleName('Lone Fir Campground')
   })
 
   it('renders nothing at all when there is nothing to offer', () => {

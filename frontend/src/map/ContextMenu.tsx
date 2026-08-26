@@ -16,6 +16,15 @@ export interface ContextMenuItem {
   readonly key: string
   readonly label: string
   /**
+   * A mark to lead the row with, where the menu is listing things that have one.
+   *
+   * A node rather than a character, because the thing worth showing is the place's *pin* — the
+   * coloured shape a rider is actually looking at on the map — and this component has no business
+   * knowing what a POI category is. Whatever is passed must be decorative: every row already
+   * names itself and its kind in words.
+   */
+  readonly icon?: React.ReactNode
+  /**
    * A note beside the label — what kind of place a row is, when the menu is listing places.
    *
    * Its own element rather than folded into the label, so it can be quiet on screen — but still
@@ -107,6 +116,7 @@ export function ContextMenu({ at, items, onDismiss }: ContextMenuProps): React.J
             onDismiss()
           }}
         >
+          {item.icon !== undefined && <span className="context-menu__icon">{item.icon}</span>}
           <span className="context-menu__label">{item.label}</span>
           {item.hint !== undefined && <span className="context-menu__hint">{item.hint}</span>}
         </button>

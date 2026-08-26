@@ -601,3 +601,67 @@ describe('where the riding time came from', () => {
     expect(view.result.current.durationIsEstimated).toBe(false)
   })
 })
+
+describe('per-leg riding time', () => {
+  /**
+   * Deciding which segment is a day is the actual planning task, and a trip total cannot answer
+   * it. So the estimate for each leg is exposed alongside the total rather than only summed —
+   * the responses already carry it per leg, it was simply being added up and discarded.
+   */
+  it('reports the estimate for each leg, in leg order', async () => {
+    const client = {
+      routeLeg: vi.fn((request: RouteLegInput, _options?: RequestOptions) =>
+        Promise.resolve(
+          routeLegResponse({
+            leg: routeLeg({ geometry: [...request.waypoints] }),
+            // Distinguishable per leg, so a mispairing is visible rather than plausible.
+            estimated_duration_s: request.waypoints[0]?.lat === 47 ? 600 : 1800,
+          }),
+        ),
+      ),
+    }
+    const view = renderHook(() => useRouteLegs(client, THREE, legsSpanning(3, 'unpaved')))
+
+    await waitFor(() => {
+      expect(view.result.current.estimatedDurationS).toBe(2400)
+    })
+    expect(view.result.current.legDurationsS).toEqual([600, 1800])
+  })
+
+  it('pairs one entry with every leg, whatever has answered', async () => {
+    // Parallel to `legs`, so a caller can index straight into it. A short array would silently
+    // shift every figure onto the wrong segment.
+    const client = {
+      routeLeg: vi.fn((request: RouteLegInput, _options?: RequestOptions) =>
+        request.waypoints[0]?.lat === 48
+          ? Promise.reject(new Error('no route'))
+          : Promise.resolve(
+              routeLegResponse({
+                leg: routeLeg({ geometry: [...request.waypoints] }),
+                estimated_duration_s: 600,
+              }),
+            ),
+      ),
+    }
+    const view = renderHook(() => useRouteLegs(client, THREE, legsSpanning(3, 'unpaved')))
+
+    await waitFor(() => {
+      expect(view.result.current.unroutableCount).toBe(1)
+    })
+    expect(view.result.current.legDurationsS).toEqual([600, null])
+  })
+
+  it('has an entry per leg before anything has answered', () => {
+    const client = {
+      routeLeg: vi.fn(
+        () =>
+          new Promise<RouteLegResponse>(() => {
+            /* never settles */
+          }),
+      ),
+    }
+    const view = renderHook(() => useRouteLegs(client, THREE, legsSpanning(3, 'unpaved')))
+
+    expect(view.result.current.legDurationsS).toEqual([null, null])
+  })
+})

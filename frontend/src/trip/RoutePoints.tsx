@@ -18,6 +18,7 @@
  * interaction with its own failure modes, and the map is the honest place to express order.
  */
 import { LegModePicker } from './LegModePicker'
+import type { DistanceUnit } from '../units/format'
 import type { LegIntent, TripLeg, Waypoint } from '../api/types'
 
 export interface RoutePointsProps {
@@ -33,6 +34,14 @@ export interface RoutePointsProps {
   readonly reportsSurface?: (intent: LegIntent) => boolean | null
   readonly reportsTrustworthyDuration?: (intent: LegIntent) => boolean | null
   readonly reportsElevation?: (intent: LegIntent) => boolean | null
+  /**
+   * Riding time per leg, parallel to `legs`, from `useRouteLegs`.
+   *
+   * Distance and climb come off each leg's own geometry, but the estimate is computed per request
+   * and does not live on `TripLeg` — so it arrives beside the legs rather than on them.
+   */
+  readonly legDurationsS?: readonly (number | null)[]
+  readonly unit?: DistanceUnit
   readonly onIntentChange?: (legIndex: number, intent: LegIntent) => void
 }
 
@@ -55,6 +64,8 @@ export function RoutePoints({
   reportsSurface,
   reportsTrustworthyDuration,
   reportsElevation,
+  legDurationsS,
+  unit = 'mi',
   onIntentChange,
 }: RoutePointsProps): React.JSX.Element | null {
   // Nothing rather than an empty list: a heading over no rows reads as broken rather than
@@ -127,6 +138,10 @@ export function RoutePoints({
                   reportsSurface={reportsSurface}
                   reportsTrustworthyDuration={reportsTrustworthyDuration ?? (() => null)}
                   reportsElevation={reportsElevation ?? (() => null)}
+                  distanceM={leg.routed?.distance_m ?? null}
+                  durationS={legDurationsS?.[legIndex] ?? null}
+                  ascentM={leg.routed?.ascent_m ?? null}
+                  unit={unit}
                   onChange={onIntentChange}
                 />
               )

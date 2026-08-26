@@ -1307,7 +1307,11 @@ describe('how much the trip climbs', () => {
     await mapReady(fake)
     fireEvent.click(screen.getByRole('button', { name: 'Kilometres' }))
 
-    expect(await screen.findByText(/1,200 m/)).toBeInTheDocument()
+    // Scoped to the trip total: each segment now shows its own climb, so an unscoped matcher
+    // finds the leg figure as well and stops being about the trip.
+    await waitFor(() => {
+      expect(document.querySelector('.route-summary__climb')?.textContent ?? '').toMatch(/1,200 m/)
+    })
     const climb = document.querySelector('.route-summary__climb')?.textContent ?? ''
     expect(climb).toMatch(/unmeasured|not measured/i)
     expect(climb).toMatch(/80 km/)
@@ -1331,7 +1335,9 @@ describe('how much the trip climbs', () => {
     const { fake } = withLegs([3600])
     await mapReady(fake)
 
-    expect(await screen.findByText(/11,800 ft/)).toBeInTheDocument()
+    await waitFor(() => {
+      expect(document.querySelector('.route-summary__climb')?.textContent ?? '').toMatch(/11,800 ft/)
+    })
   })
 })
 

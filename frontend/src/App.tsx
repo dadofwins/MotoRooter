@@ -243,6 +243,7 @@ function TripSession({
 
   const {
     legs,
+    legDurationsS,
     estimatedDurationS,
     durationIsEstimated,
     isRouting,
@@ -763,6 +764,8 @@ function TripSession({
           reportsSurface={capabilities.reportsSurface}
           reportsTrustworthyDuration={capabilities.reportsTrustworthyDuration}
           reportsElevation={capabilities.reportsElevation}
+          legDurationsS={legDurationsS}
+          unit={unit}
           onIntentChange={setLegIntent}
         />
 

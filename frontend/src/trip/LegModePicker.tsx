@@ -12,6 +12,7 @@
  * options* — a warning that appears after the choice is a warning about a decision already made.
  */
 import { LEG_MODES, labelFor } from './legModes'
+import { formatClimb, formatDistance, formatDuration, type DistanceUnit } from '../units/format'
 import type { LegIntent } from '../api/types'
 
 export interface LegModePickerProps {
@@ -36,6 +37,17 @@ export interface LegModePickerProps {
    * choice, because no other engine can supply it for that segment.
    */
   readonly reportsElevation: (intent: LegIntent) => boolean | null
+  /**
+   * What this segment actually is: how far, how long, how much climb.
+   *
+   * Here rather than in a separate row because a rider comparing segments is choosing a mode *and*
+   * sizing a day in the same glance — "deciding which segment is a day" is the planning task a
+   * trip total cannot answer. Null where a figure is not known yet.
+   */
+  readonly distanceM: number | null
+  readonly durationS: number | null
+  readonly ascentM: number | null
+  readonly unit: DistanceUnit
   readonly onChange: (legIndex: number, intent: LegIntent) => void
 }
 
@@ -47,6 +59,10 @@ export function LegModePicker({
   reportsSurface,
   reportsTrustworthyDuration,
   reportsElevation,
+  distanceM,
+  durationS,
+  ascentM,
+  unit,
   onChange,
 }: LegModePickerProps): React.JSX.Element {
   /** A mode with no label yet is still a mode the leg can be on, so it is offered as itself. */
@@ -70,6 +86,21 @@ export function LegModePicker({
   const timeIsModelled = reportsTrustworthyDuration(intent) === false
   const losesClimb = reportsElevation(intent) === false
 
+  /**
+   * What to say about climb, in three cases rather than two.
+   *
+   * A blank would read as zero, which is the confidently-wrong number this project keeps
+   * declining to show. But when the note below already says this engine reports no elevation,
+   * repeating it per segment is three copies of one fact — so silence is only allowed where the
+   * silence is already explained.
+   */
+  const climbText =
+    ascentM !== null
+      ? formatClimb(ascentM, unit)
+      : losesClimb
+        ? null
+        : 'climb not measured'
+
   return (
     <div className="leg-mode">
       <label className="leg-mode__field">
@@ -89,6 +120,21 @@ export function LegModePicker({
           })}
         </select>
       </label>
+
+      {distanceM !== null && (
+        // Distance arrives with the geometry and the estimate can trail it, so each figure appears
+        // when it is known rather than the row waiting for all three and flickering between two
+        // layouts.
+        <p className="leg-mode__figures">
+          {[
+            formatDistance(distanceM, unit),
+            durationS === null ? null : formatDuration(durationS),
+            climbText,
+          ]
+            .filter((part) => part !== null)
+            .join(' · ')}
+        </p>
+      )}
 
       {(losesSurface || losesClimb) && (
         // One note for both, because it is one cause: the engine behind this mode measures

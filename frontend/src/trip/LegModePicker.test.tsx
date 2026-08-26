@@ -24,6 +24,10 @@ function picker(overrides: Partial<Parameters<typeof LegModePicker>[0]> = {}) {
       reportsSurface={() => true}
       reportsTrustworthyDuration={() => true}
       reportsElevation={() => true}
+      distanceM={null}
+      durationS={null}
+      ascentM={null}
+      unit="mi"
       onChange={vi.fn()}
       {...overrides}
     />
@@ -154,5 +158,85 @@ describe('LegModePicker', () => {
     render(picker({ intent: 'highway_connector', reportsElevation: () => null }))
 
     expect(screen.queryByText(/climb/i)).not.toBeInTheDocument()
+  })
+})
+
+/**
+ * The figures for one segment.
+ *
+ * Deciding which segment is a day is the planning task a trip total cannot answer: "269 km, about
+ * 5 h" is one ride, and "Cashmere to Blewett, 40 km, 46 min, 1,200 m" is an itinerary.
+ *
+ * Climb is the awkward one, because Google measures no elevation, so on a mixed trip most segments
+ * have none. Blank would read as zero — the confidently-wrong number this project keeps declining
+ * to show — so the rule is three-way: show it when measured; omit it when the note directly above
+ * already says this engine reports none; say so explicitly when it is missing for any other
+ * reason.
+ */
+describe('LegModePicker figures', () => {
+  it('shows the segment distance and time so a rider can size a day', () => {
+    render(picker({ distanceM: 40_300, durationS: 2760 }))
+
+    const figures = document.querySelector('.leg-mode__figures')?.textContent ?? ''
+    expect(figures).toMatch(/25 mi/)
+    expect(figures).toMatch(/about 45m/)
+  })
+
+  it('shows the climb where the engine measured it', () => {
+    render(picker({ distanceM: 40_300, durationS: 2760, ascentM: 1200 }))
+
+    expect(document.querySelector('.leg-mode__figures')?.textContent ?? '').toMatch(/3,950 ft/)
+  })
+
+  it('leaves climb out when the note above already explains its absence', () => {
+    // Not blank-as-zero and not a repeated sentence: the picker note two lines up already says
+    // this engine reports no climb, so restating it per segment would be three copies of one fact.
+    render(
+      picker({
+        intent: 'highway_connector',
+        distanceM: 176_800,
+        durationS: 7860,
+        ascentM: null,
+        reportsElevation: () => false,
+      }),
+    )
+
+    const figures = document.querySelector('.leg-mode__figures')?.textContent ?? ''
+    expect(figures).not.toMatch(/climb/i)
+    // And the explanation is genuinely present rather than assumed.
+    expect(screen.getByText(/no.*climb/i)).toBeInTheDocument()
+  })
+
+  it('says climb is unmeasured when nothing explains why it is missing', () => {
+    // The engine claims to do elevation and did not return any. Silence here would read as zero.
+    render(
+      picker({
+        distanceM: 40_300,
+        durationS: 2760,
+        ascentM: null,
+        reportsElevation: () => true,
+      }),
+    )
+
+    expect(document.querySelector('.leg-mode__figures')?.textContent ?? '').toMatch(
+      /climb not measured/i,
+    )
+  })
+
+  it('shows nothing at all for a segment that has not routed', () => {
+    // No distance, no time, nothing to compare. An empty figures line is worse than none.
+    render(picker({ distanceM: null, durationS: null }))
+
+    expect(document.querySelector('.leg-mode__figures')).toBeNull()
+  })
+
+  it('shows the distance while the time is still coming', () => {
+    // Distance lands with the geometry and the estimate can trail it; a row that waits for both
+    // flickers between two layouts.
+    render(picker({ distanceM: 40_300, durationS: null }))
+
+    const figures = document.querySelector('.leg-mode__figures')?.textContent ?? ''
+    expect(figures).toMatch(/25 mi/)
+    expect(figures).not.toMatch(/about/)
   })
 })

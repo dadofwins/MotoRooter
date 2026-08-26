@@ -85,6 +85,10 @@ function createFakeMaps({ withMarkerLibrary = true }: { withMarkerLibrary?: bool
     fitBounds(bounds: FakeLatLngBounds): void {
       this.fitted.push(bounds)
     }
+    readonly centred: google.maps.LatLngLiteral[] = []
+    setCenter(at: google.maps.LatLngLiteral): void {
+      this.centred.push(at)
+    }
     #zoom = 12
     getZoom(): number {
       return this.#zoom
@@ -1134,6 +1138,69 @@ describe('MapCanvas', () => {
 
     await waitFor(() => expect(fake.polylines.length).toBeGreaterThan(1))
     expect(fake.maps[0]?.fitted).toHaveLength(1)
+  })
+
+  it('opens where the rider is when there is no route to look at', async () => {
+    // Tim: "is it easy to zoom roughly to the browser location when loading up the page". An
+    // empty map has nowhere better to be.
+    const fake = createFakeMaps()
+    const { rerender } = render(<MapCanvas mapId={MAP_ID} loader={fake.loader} />)
+    await waitFor(() => expect(fake.maps).toHaveLength(1))
+
+    rerender(<MapCanvas mapId={MAP_ID} loader={fake.loader} focus={{ lat: 47.61, lon: -122.33 }} />)
+
+    await waitFor(() => expect(fake.maps[0]?.centred).toHaveLength(1))
+    expect(fake.maps[0]?.centred[0]).toEqual({ lat: 47.61, lng: -122.33 })
+  })
+
+  it('never moves off a route to show where the rider is standing', async () => {
+    // The rule that outranks it. A trip on screen is where they want to be looking; a position
+    // arriving late must not pull the camera off it.
+    const fake = createFakeMaps()
+    const { rerender } = render(
+      <MapCanvas
+        mapId={MAP_ID}
+        loader={fake.loader}
+        waypoints={[waypoint(47), waypoint(47.02)]}
+        legs={[leg(coords(3, 47))]}
+      />,
+    )
+    await waitFor(() => expect(fake.maps[0]?.fitted).toHaveLength(1))
+
+    rerender(
+      <MapCanvas
+        mapId={MAP_ID}
+        loader={fake.loader}
+        waypoints={[waypoint(47), waypoint(47.02)]}
+        legs={[leg(coords(3, 47))]}
+        focus={{ lat: 47.61, lon: -122.33 }}
+      />,
+    )
+
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    expect(fake.maps[0]?.centred).toHaveLength(0)
+  })
+
+  it('still frames a route that arrives after the rider has been located', async () => {
+    // Being centred somewhere is not the same as having framed a route, so the trip the
+    // assistant then plots must still take the camera.
+    const fake = createFakeMaps()
+    const { rerender } = render(
+      <MapCanvas mapId={MAP_ID} loader={fake.loader} focus={{ lat: 47.61, lon: -122.33 }} />,
+    )
+    await waitFor(() => expect(fake.maps[0]?.centred).toHaveLength(1))
+
+    rerender(
+      <MapCanvas
+        mapId={MAP_ID}
+        loader={fake.loader}
+        focus={{ lat: 47.61, lon: -122.33 }}
+        waypoints={[waypoint(47), waypoint(47.02)]}
+        legs={[leg(coords(3, 47))]}
+      />,
+    )
+
+    await waitFor(() => expect(fake.maps[0]?.fitted).toHaveLength(1))
   })
 
   it('offers a retry when loading failed, since a dropped connection is not permanent', async () => {

@@ -32,6 +32,7 @@ import {
 } from './map/MapCanvas'
 import { ContextMenu, type ContextMenuItem } from './map/ContextMenu'
 import { MAP_ID, loadMaps } from './map/googleMaps'
+import { useBrowserLocation, type BrowserLocator } from './map/browserLocation'
 import type { GoogleMapsLoader } from './map/loadGoogleMaps'
 import { isVerified, poiLabel } from './map/poiPin'
 import { PlaceList } from './poi/PlaceList'
@@ -113,6 +114,8 @@ export interface AppProps {
   /** Injectable so tests can drive a fake Maps API. */
   readonly mapLoader?: GoogleMapsLoader
   readonly mapId?: string
+  /** Injectable so tests can answer the permission question without a browser prompt. */
+  readonly locator?: BrowserLocator
   readonly client?: AppClient
   /** Places to start with. A loaded trip's own POIs replace these. */
   readonly pois?: readonly Poi[]
@@ -153,11 +156,24 @@ function TripSession({
   mapId = MAP_ID,
   client = apiClient,
   pois = NO_POIS,
+  locator,
   autoOpenAllowed,
   onLeave,
 }: TripSessionProps): React.JSX.Element {
   const { unit, setUnit } = useDistanceUnit()
   const visited = useVisitedTrips()
+
+  /**
+   * Where the rider is, if the browser will say so without being asked.
+   *
+   * Handed to the canvas as a *focus* rather than as a camera: it applies only while no route has
+   * ever taken the camera, so a trip always outranks a position. The control appears only where
+   * pressing it could work — which, measured, also covers a page served over plain HTTP, since an
+   * insecure origin reports the permission as denied rather than as unasked.
+   *
+   * Up here with the other unconditional hooks, above the front door's early return.
+   */
+  const location = useBrowserLocation(locator)
 
   /**
    * A trip to open without asking: the only one this browser knows, and only when the URL
@@ -181,7 +197,8 @@ function TripSession({
    */
   // Derived from the same decision rather than restating its condition: two expressions of one
   // fact is how they come to disagree.
-  const [entered, setEntered] = useState(() => hasTripInUrl() || autoOpen !== null)
+  const [expectsTrip] = useState(() => hasTripInUrl() || autoOpen !== null)
+  const [entered, setEntered] = useState(expectsTrip)
   /** The name typed at the front door, carried into the trip this session creates. */
   const [chosenName, setChosenName] = useState<string | null>(null)
 
@@ -868,6 +885,18 @@ function TripSession({
    */
   const mapClickHandler = placing ? { onMapClick: addWaypoint } : {}
 
+  /**
+   * Whether to point the camera at the rider, which is a question about the *trip*.
+   *
+   * Withheld whenever a trip exists or is on its way. The canvas has its own guard — it ignores a
+   * focus once a route has framed — but that only covers a position arriving late. The race the
+   * other way is the visible one: a position resolving before a linked trip has loaded would
+   * swing the camera to where the rider is standing and then swing it back, and only the shell
+   * knows a trip is coming.
+   */
+  const showWhereTheyAre =
+    entered && !expectsTrip && waypoints.length === 0 ? location.coordinate : null
+
   return (
     <div className="app">
       <main className="map-pane" aria-label="Route map">
@@ -885,7 +914,20 @@ function TripSession({
           onPoiOpen={onPoiOpen}
           onClusterOpen={onClusterOpen}
           onContextMenu={onMapContextMenu}
+          {...(showWhereTheyAre === null ? {} : { focus: showWhereTheyAre })}
         />
+        {location.canLocate && (
+          // On the map rather than in the rail: it moves the camera, and this is where a rider
+          // reaches for it. Absent rather than disabled where it cannot work.
+          <button
+            type="button"
+            className="map-locate"
+            disabled={location.isLocating}
+            onClick={location.locate}
+          >
+            {location.isLocating ? 'Finding you…' : 'Show where I am'}
+          </button>
+        )}
         {menu !== null && <ContextMenu at={menu.at} items={menu.items} onDismiss={dismissMenu} />}
       </main>
       <aside className="chat-pane" aria-label="Trip assistant">

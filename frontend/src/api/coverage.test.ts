@@ -93,7 +93,17 @@ function withoutComments(source: string): string {
 function isUsed(field: string, source: string): boolean {
   return (
     new RegExp(`\\.${field}\\b`).test(source) ||
-    new RegExp(`['"]${field}['"]`).test(source) ||
+    // Quoted, but in a position that *depends on the field*: an index, an object key, or a
+    // member of a type-level union such as `DefaultsOptional<T, 'avoid_tolls' | …>`.
+    //
+    // `['"]field['"]` on its own matched any string literal with that value, and one finally
+    // collided: a geolocation permission state of `'prompt'` made `ReplanRequest.prompt` look
+    // consumed when nothing sends it. That is the fault this function's own docstring warns
+    // about for bare words, one quote deeper — and it reported coverage that did not exist.
+    new RegExp(`\\[\\s*['"]${field}['"]\\s*\\]`).test(source) ||
+    new RegExp(`['"]${field}['"]\\s*:`).test(source) ||
+    new RegExp(`['"]${field}['"]\\s*\\|`).test(source) ||
+    new RegExp(`\\|\\s*['"]${field}['"]`).test(source) ||
     new RegExp(`\\b${field}\\s*[,:}]`).test(source)
   )
 }

@@ -1950,6 +1950,34 @@ body {
   margin: 0;
 }
 
+/* Where I am. On the map rather than in the rail, because it moves the camera and that is where
+   a rider reaches for it — and absent rather than disabled where it cannot work, since a control
+   that can only fail is a control that lies. */
+.map-locate {
+  position: absolute;
+  right: 0.75rem;
+  bottom: 0.75rem;
+  z-index: 4;
+  padding: 0.4375rem 0.75rem;
+  font: inherit;
+  font-size: 0.8125rem;
+  color: inherit;
+  background: #fff;
+  border: 1px solid rgb(0 0 0 / 0.16);
+  border-radius: 0.375rem;
+  box-shadow: 0 1px 6px rgb(0 0 0 / 0.2);
+  cursor: pointer;
+}
+
+.map-locate:hover:not(:disabled) {
+  background: #f3f4f6;
+}
+
+.map-locate:disabled {
+  color: var(--ink-muted);
+  cursor: default;
+}
+
 /* The right-click menu.
 
    Fixed rather than absolute: the position comes from the pointer event in viewport pixels, and
@@ -2037,6 +2065,16 @@ body {
 
 /* Dark mode is not optional for a tool read outdoors and after dark. */
 @media (prefers-color-scheme: dark) {
+  .map-locate {
+    color: #eee;
+    background: #26262a;
+    border-color: rgb(255 255 255 / 0.22);
+  }
+
+  .map-locate:hover:not(:disabled) {
+    background: #303036;
+  }
+
   .context-menu {
     background: #26262a;
     border-color: rgb(255 255 255 / 0.22);

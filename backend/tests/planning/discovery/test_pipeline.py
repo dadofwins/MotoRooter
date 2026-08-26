@@ -6,6 +6,7 @@ and four vendors; a corridor where one search times out or one anchor cannot be 
 cost those results, not the run that has already paid for the rest.
 """
 
+import json
 from math import pi
 
 from motorooter.llm.errors import LlmUnavailable
@@ -512,3 +513,110 @@ class TestNothingIsLostWithoutSaying:
         )
         assert "failure" not in events[-1].message
         assert "categor" not in events[-1].message
+
+
+class TestTheBarTracksTimeNotSteps:
+    """Tim, twice now: "it got to 99% and then took like an entire minute".
+
+    Measured on a live corridor, one event at a time:
+
+        search + extract    9.4s   drove the bar 0 -> 91%
+        resolve (37)        2.7s   91 -> 97%
+        judge (6)          15.1s   97 -> 99%
+
+    So the slowest stage owned two percentage points and the fastest owned ninety-one. The
+    denominator counted *steps*, and steps are not what a rider is waiting for — a search
+    that returns in 150 ms and a scoring call that takes fifteen seconds were worth one unit
+    each.
+
+    Weighting by candidate count, which is the obvious fix, would have missed it: resolution
+    scales with candidates and was never the problem.
+    """
+
+    @staticmethod
+    def _resolved(index: int):
+        return ResolvedCandidate(
+            candidate=Candidate(
+                name=f"Place {index}",
+                category=PoiCategory.WILD_CAMP,
+                found_near=Coordinate(lat=0.01, lon=-121.0),
+                source="brave",
+            ),
+            place_id=f"ChIJ_{index}",
+            coordinate=Coordinate(lat=0.01, lon=-121.0),
+            category=PoiCategory.WILD_CAMP,
+        )
+
+    async def _events(self, *, resolved_count: int = 3, anchors: int = 4):
+        scores = json.dumps(
+            {
+                "scores": [
+                    {"index": i, "score": 0.8, "reason": "good"} for i in range(resolved_count)
+                ]
+            }
+        )
+        runner = DiscoveryPipeline(
+            namer=StubNamer(),
+            source=FakeSearchSource(),
+            extractor=PlaceExtractor(
+                llm('{"places": [{"result_index": 0, "place_name": "First"}]}')
+            ),
+            resolver=StubResolver(resolved=tuple(self._resolved(i) for i in range(resolved_count))),
+            classifier=CategoryClassifier(llm('{"categories": []}')),
+            judge=CandidateJudge(llm(scores)),
+        )
+        return [
+            event
+            async for event in runner.run(LEG, CATEGORIES, max_anchors=anchors, spacing_m=1000)
+        ]
+
+    async def test_searching_does_not_consume_almost_the_whole_bar(self):
+        """91% for a third of the wall clock is what made the tail look frozen."""
+        events = await self._events()
+        last_search = max(
+            event.progress for event in events if event.stage == "discovery" and event.progress
+        )
+        assert last_search < 0.8
+
+    async def test_scoring_owns_a_share_worth_watching(self):
+        """The stage that takes the longest should move the bar the furthest."""
+        events = await self._events()
+        enrichment = [e.progress for e in events if e.stage == "enrichment" and e.progress]
+        before = max(e.progress for e in events if e.stage == "discovery" and e.progress)
+        assert enrichment[-1] - before > 0.15
+
+    async def test_progress_never_reaches_one_before_the_end(self):
+        events = await self._events()
+        assert all(event.progress < 1.0 for event in events[:-1] if event.progress is not None)
+        assert events[-1].progress == 1.0
+
+    async def test_no_early_event_rounds_up_to_a_hundred_percent(self):
+        """A client renders this as a percentage. 0.999 is below 1.0 and still displays as
+        "100%", which claims completion while the run is still scoring — so the ceiling has
+        to leave room for the rounding, not just for the comparison."""
+        events = await self._events()
+        assert all(
+            round(event.progress * 100) < 100 for event in events[:-1] if event.progress is not None
+        )
+
+    async def test_it_still_only_moves_forwards(self):
+        events = await self._events()
+        values = [event.progress for event in events if event.progress is not None]
+        assert values == sorted(values)
+
+    async def test_the_tail_is_not_pinned_to_a_single_value(self):
+        """The 0.99 cap made every late event render identically, which is precisely where
+        the waiting now happens."""
+        events = await self._events()
+        late = [
+            event.progress
+            for event in events
+            if event.progress is not None and event.progress > 0.9
+        ]
+        assert len(set(late)) > 1
+
+    async def test_the_rider_is_told_scoring_is_next(self):
+        """A bar that stops for fifteen seconds should say what it is waiting for."""
+        events = await self._events()
+        messages = " ".join(e.message for e in events).lower()
+        assert "scoring" in messages

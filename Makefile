@@ -117,8 +117,9 @@ deploy: ## Build and deploy to Cloud Run
 ROLE   ?= $(shell scripts/mail whoami)
 BRANCH ?= $(shell git rev-parse --abbrev-ref HEAD)
 
+handoff: export MSG_BODY = $(MSG)
 handoff: ## Verify, push, and ask the integrator for review. MSG="what to look at"
-	@test -n "$(MSG)" || { echo 'usage: make handoff MSG="what changed and what to focus on"'; exit 1; }
+	@test -n "$$MSG_BODY" || { echo 'usage: make handoff MSG="what changed and what to focus on"'; exit 1; }
 	@test "$(BRANCH)" != "main" || { echo 'refusing: handoff runs from a feature branch, not main'; exit 1; }
 	@test -z "$$(git status --porcelain)" || { echo 'refusing: commit your work first (git status is dirty)'; exit 1; }
 	@git fetch -q origin main
@@ -129,10 +130,11 @@ handoff: ## Verify, push, and ask the integrator for review. MSG="what to look a
 		exit 1; }
 	@$(MAKE) --no-print-directory check
 	@git push -u origin $(BRANCH)
-	@printf '%s\n' "$(MSG)" | scripts/mail send integrator "review request: $(BRANCH)"
+	@printf '%s\n' "$$MSG_BODY" | scripts/mail send integrator "review request: $(BRANCH)"
 
+handoff-blocked: export MSG_BODY = $(MSG)
 handoff-blocked: ## Push a branch that CANNOT pass check alone, for the integrator to resolve.
-	@test -n "$(MSG)" || { echo 'usage: make handoff-blocked MSG="what fails and why you cannot fix it"'; exit 1; }
+	@test -n "$$MSG_BODY" || { echo 'usage: make handoff-blocked MSG="what fails and why you cannot fix it"'; exit 1; }
 	@test "$(BRANCH)" != "main" || { echo 'refusing: not from main'; exit 1; }
 	@test -z "$$(git status --porcelain)" || { echo 'refusing: commit your work first'; exit 1; }
 	@# Deliberately skips `make check`. The gate exists to stop broken work being handed off,
@@ -141,7 +143,7 @@ handoff-blocked: ## Push a branch that CANNOT pass check alone, for the integrat
 	@# means the work sits unpushed and invisible.
 	@git fetch -q origin
 	@git push -u origin $(BRANCH)
-	@printf 'BLOCKED — needs integrator resolution.\n\n%s\n' "$(MSG)" \
+	@printf 'BLOCKED — needs integrator resolution.\n\n%s\n' "$$MSG_BODY" \
 		| scripts/mail send integrator "BLOCKED: $(BRANCH)"
 	@echo "pushed $(BRANCH) and flagged it as blocked. Start something else."
 

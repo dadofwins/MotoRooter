@@ -223,10 +223,28 @@ those roads, not because they are optimal under any cost function. **The LLM mus
 waypoints at roughly 10–15 km spacing.** A tool that returns only start, end and must-sees
 will produce a plausible route down the wrong roads, and nothing downstream will notice.
 
-**3. Provider durations are unusable — compute our own.** `cycling-mountain` returns *bicycle*
-times: 8.0 h for 133 km, about 16 km/h. Trip planning is duration-driven, so a rider would be
-told a four-hour day takes eight. Derive ETA from distance and surface; ignore
-`RouteLeg.duration_s` from this provider for anything user-facing.
+**3. ORS durations are unusable — compute our own. Google's are better than ours.**
+`cycling-mountain` returns *bicycle* times: 8.0 h for 133 km, about 16 km/h. Trip planning is
+duration-driven, so a rider would be told a four-hour day takes eight. Derive ETA from distance
+and surface; ignore `RouteLeg.duration_s` from **that** provider for anything user-facing.
+
+**Corrected 2026-08-25, and the original wording was too broad.** Measured per leg on
+Woodinville → Cashmere → Blewett → Ellensburg:
+
+| leg | engine | distance | provider | derived |
+|---|---|---|---|---|
+| `highway_connector` | google | 176.8 km | **128 min** (83 km/h) | 193 min (55 km/h) |
+| `unpaved` | ors | 40.3 km | 143 min (17 km/h) | **46 min** |
+| `twisty_paved` | google | 52.1 km | **39 min** | 57 min |
+
+Google runs a *car* profile, so on highway its number is the trustworthy one and ours
+overestimates. Summed, the rider is shown **4 h 56 m for a ride of about 3 h 33 m** — a 1.4×
+overestimate, in the direction that makes them plan a shorter day than they could.
+
+So this is **a capability question, not a global rule**: whether a provider's duration can be
+trusted depends on the profile it ran, and that belongs in `ProviderCapabilities` beside
+`reports_surface`, resolved per intent. Do not special-case an engine name at the call site —
+that is the mistake the whole routing architecture exists to prevent.
 
 Unresolved: reported ascent (6,400–8,800 m against the reference's 3,188 m) looks wrong.
 Either the profile takes much steeper lines or ORS elevation is noisy over gravel. Do not show
@@ -438,12 +456,19 @@ that Fast and Twisties cost them the dirt/paved/unsurveyed breakdown.
 **Mode is per-leg, not per-trip.** `Trip.default_intent` seeds new segments;
 `TripLeg.intent` decides how each one actually routes, and a rider can change it per segment
 when creating or dragging a point. The routing layer has supported this since the first
-branch — "a trip is a list of legs, and each leg carries its own routing policy" — and the
-vertical slice's single-leg-spanning-every-waypoint model is the thing standing in the way,
-not the architecture.
+branch — "a trip is a list of legs, and each leg carries its own routing policy".
 
-Splitting into real legs also fixes drag latency: re-routing the affected leg is the design,
-and today "the affected leg" is the entire route.
+**The frontend now splits properly**: N waypoints become N-1 legs, each routed independently
+and cached on the question it asks, so appending a point costs one request rather than
+re-routing the trip. Joints between engines are bridged below 500 m (measured: 0.5 m
+google→ors, 11.3 m ors→google) and left as visible gaps above it, because drawing a straight
+line across a real discontinuity hides a routing defect behind a plausible picture. One
+unroutable segment no longer blanks the rest of the route.
+
+**Expect a mostly-grey route.** On that same trip, 229 of 269 km rendered `unknown`, because
+both Google legs report zero surface spans and only the ORS section carries any. That is the
+capability labelling working, not failing — but it makes the picker's warning *at the moment
+of choosing* load-bearing rather than a nicety.
 
 ## Surface reporting: unknown stays unknown
 

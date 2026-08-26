@@ -700,6 +700,31 @@ POI pins need distinct iconography per category and a right-click "add to route"
 - Every external call is billed per request. Cache aggressively where terms allow, and make the
   test suite hermetic — no test hits a live API.
 
+## Check the things everyone already agrees on
+
+> A belief that has never been measured is not yet a fact, however many people have agreed
+> with it.
+
+Nearly every real find on this project came from a **cheap check on something already
+believed**, not from speculative work:
+
+- The tool set was reviewed and approved; auditing it against the mouse found two tools that
+  would have made chat the only way to do something.
+- The contract was reviewed on both sides; a tripwire found ten fields either unread or
+  silently ignored, including a request field the server had never honoured and the client had
+  built around.
+- The ascent discrepancy had been explained twice — as smoothing, then as sampling density —
+  before measuring it found a sentinel zero neither explanation predicted.
+- The rail had been measured twice and never *rendered*; rendering it found a 250 px void that
+  a height measurement cannot distinguish from 250 px of content.
+- Two engineers' own confident arguments — that the opening line was unreachable, that the
+  route summary would announce noisily — were both refuted by their own five-minute checks.
+
+The corollary for reviews: **a diff cannot show what does not call it.** Nine components were
+merged correct, tested and reachable from nothing, and every one passed review. Guards that fail
+a test beat reviewers who are paying attention, which is why the two coverage tripwires and the
+startup service check exist.
+
 ## TDD
 
 Tests first, then implementation. This is a hard requirement, not a preference.

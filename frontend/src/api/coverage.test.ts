@@ -79,6 +79,27 @@ function withoutComments(source: string): string {
   return source.replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/\/\/[^\n]*/g, ' ')
 }
 
+/**
+ * Whether the source actually *uses* a field, rather than merely containing the word.
+ *
+ * A property access, a string key, or a destructured binding — not any occurrence of the name.
+ * A bare word match reports a field as consumed when its name collides with a module or a local
+ * variable, and that is not hypothetical: auditing the backend for the same class of bug,
+ * `ReplanRequest.prompt` looked consumed because `motorooter.chat.prompt` is a module path. The
+ * field is accepted by the endpoint and silently dropped.
+ *
+ * Today both forms agree on every field here, so this costs nothing and closes the hole before it
+ * hides something. The residual risk runs the safe way: a field read through an unusual shape
+ * reports as unread, which forces a decision rather than hiding one.
+ */
+function isUsed(field: string, source: string): boolean {
+  return (
+    new RegExp(`\\.${field}\\b`).test(source) ||
+    new RegExp(`['"]${field}['"]`).test(source) ||
+    new RegExp(`\\b${field}\\s*[,:}]`).test(source)
+  )
+}
+
 /** Field names the contract declares, across every schema. */
 function contractFields(): Set<string> {
   const schemas = spec.components.schemas as Record<string, { properties?: Record<string, unknown> }>
@@ -121,7 +142,7 @@ describe('contract coverage', () => {
     const source = withoutComments(appSource())
 
     const unconsumed = [...contractFields()]
-      .filter((field) => !new RegExp(`\\b${field}\\b`).test(source))
+      .filter((field) => !isUsed(field, source))
       .filter((field) => !(field in UNREAD))
       .sort()
 
@@ -135,7 +156,7 @@ describe('contract coverage', () => {
     const source = withoutComments(appSource())
 
     const stale = Object.keys(UNREAD)
-      .filter((field) => !fields.has(field) || new RegExp(`\\b${field}\\b`).test(source))
+      .filter((field) => !fields.has(field) || isUsed(field, source))
       .sort()
 
     expect(stale).toEqual([])

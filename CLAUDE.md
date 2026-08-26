@@ -335,7 +335,14 @@ Mirror the routing layer, which exists and works:
   — see the licensing constraint below. Discovery fans out far more requests per user action
   than routing does, so retry-with-backoff is what absorbs the 429s that concurrency earns.
   Backoff on `RateLimited`, give up immediately on `QuotaExceeded`; retrying an exhausted
-  budget is a storm that looks exactly like the outage it is retrying.
+  budget is a storm that looks exactly like the outage it is retrying. **Read the server's
+  retry hint before guessing** — Brave returns `x-ratelimit-reset` in seconds, and blind
+  exponential backoff sleeps far longer than a per-second window needs. Exponential is the
+  fallback for when the header is missing, not the default.
+- **Measure limits against the real key, not the published tier.** Brave documents the free
+  tier at one request per second; our key reports `50;w=1`. Either number would have been
+  quoted confidently from the wrong source, and one of them makes `DEFAULT_CONCURRENCY = 6`
+  a guaranteed 429 generator.
 - **Deduplicate queries before issuing them.** This, not caching, is what reduces request
   volume — and it is unaffected by licensing. Adjacent anchors routinely reverse-geocode to
   the same road name and then issue byte-identical searches: both anchors on the live Chinook

@@ -16,11 +16,10 @@ from typing import Annotated
 from fastapi import APIRouter, Query
 
 from motorooter.api.deps import Places
-from motorooter.api.errors import NotImplementedYet
+from motorooter.api.errors import NotImplementedYet, PlaceNotDisplayable
 from motorooter.api.schemas import ERROR_RESPONSES, ErrorResponse, PoiDetailResponse
 from motorooter.planning.discovery.category import from_places_types
 from motorooter.planning.discovery.details import coordinate_in, strings_in
-from motorooter.planning.discovery.errors import DiscoveryRefused
 from motorooter.trips.models import Poi, PoiCategory, PoiDetail, PoiSource
 
 router = APIRouter(prefix="/api/places", tags=["places"], responses=ERROR_RESPONSES)
@@ -79,11 +78,11 @@ async def get_place_detail(
     coordinate = coordinate_in(body)
     if coordinate is None:
         # Without a location there is nothing to show on a map or pin to a route.
-        raise DiscoveryRefused(f"Places returned no location for {place_id!r}")
+        raise PlaceNotDisplayable(f"Places returned no location for {place_id!r}")
 
     resolved_category = from_places_types(body.get("types") or []) or category
     if resolved_category is None:
-        raise DiscoveryRefused(
+        raise PlaceNotDisplayable(
             f"cannot categorise {place_id!r}: Places gave no usable type and no category "
             "was supplied. Pass ?category= with the value the client already holds."
         )

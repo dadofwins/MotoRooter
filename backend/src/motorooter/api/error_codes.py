@@ -12,9 +12,15 @@ Adding an error means adding it to the table below. `test_error_codes.py` fails 
 exception the API can raise is missing, so the two cannot drift apart.
 """
 
-from motorooter.api.errors import NotImplementedYet
+from motorooter.api.errors import NotImplementedYet, PlaceNotDisplayable
 from motorooter.error_codes import ErrorCode as ErrorCode
 from motorooter.llm.errors import LlmQuotaExceeded, LlmRefused, LlmUnavailable, ToolCallFailed
+from motorooter.planning.discovery.errors import (
+    DiscoveryQuotaExceeded,
+    DiscoveryRateLimited,
+    DiscoveryRefused,
+    DiscoveryUnavailable,
+)
 from motorooter.routing.errors import (
     InvalidRequest,
     NoRouteFound,
@@ -53,6 +59,21 @@ ERROR_TABLE: dict[type[Exception], tuple[int, ErrorCode]] = {
     LlmQuotaExceeded: (429, ErrorCode.LLM_QUOTA_EXCEEDED),
     LlmRefused: (502, ErrorCode.LLM_REFUSED),
     ToolCallFailed: (500, ErrorCode.TOOL_CALL_FAILED),
+    # Discovery. Search, Places and the categoriser all surface these, and none of them was
+    # mapped — every one escaped as an untyped 500 with no code, which is how a rider met
+    # "detail for this place could not be loaded" on a place Google describes well.
+    DiscoveryRateLimited: (429, ErrorCode.DISCOVERY_RATE_LIMITED),
+    DiscoveryQuotaExceeded: (429, ErrorCode.DISCOVERY_QUOTA_EXCEEDED),
+    # A provider rejection — bad key, malformed query, blocked — so ours to fix, not the
+    # client's to retry.
+    DiscoveryRefused: (502, ErrorCode.DISCOVERY_REFUSED),
+    DiscoveryUnavailable: (502, ErrorCode.DISCOVERY_UNAVAILABLE),
+    # No entry for the `DiscoveryError` base, deliberately. A fallback would answer 502 for
+    # a subclass nobody had classified, which is the drift the guard above exists to make
+    # loud — and it would have to share a wire code with one of the specifics, which clients
+    # switch on.
+    # API surface
+    PlaceNotDisplayable: (422, ErrorCode.PLACE_NOT_DISPLAYABLE),
     # Trips
     InvalidSlug: (400, ErrorCode.INVALID_SLUG),
     TripNotFound: (404, ErrorCode.TRIP_NOT_FOUND),

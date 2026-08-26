@@ -13,7 +13,9 @@ from fastapi.testclient import TestClient
 from motorooter.api.error_codes import ERROR_TABLE, STARTUP_ONLY, ErrorCode, resolve
 from motorooter.app import create_app
 from motorooter.llm import errors as llm_errors
-from motorooter.llm.errors import LlmError
+from motorooter.llm.errors import LlmError, LlmUnavailable
+from motorooter.planning.discovery import errors as discovery_errors
+from motorooter.planning.discovery.errors import DiscoveryError
 from motorooter.routing import errors as routing_errors
 from motorooter.routing.errors import NoRouteFound, ProviderUnavailable, RoutingError
 from motorooter.routing.factory import RoutingSettings
@@ -27,7 +29,12 @@ def client():
 
 
 def _concrete_subclasses(base: type[Exception]) -> set[type[Exception]]:
-    module = {RoutingError: routing_errors, TripError: trip_errors, LlmError: llm_errors}[base]
+    module = {
+        RoutingError: routing_errors,
+        TripError: trip_errors,
+        LlmError: llm_errors,
+        DiscoveryError: discovery_errors,
+    }[base]
     return {
         obj
         for _, obj in inspect.getmembers(module, inspect.isclass)
@@ -36,9 +43,15 @@ def _concrete_subclasses(base: type[Exception]) -> set[type[Exception]]:
 
 
 class TestNoDrift:
-    @pytest.mark.parametrize("base", [RoutingError, TripError, LlmError])
+    @pytest.mark.parametrize("base", [RoutingError, TripError, LlmError, DiscoveryError])
     def test_every_domain_exception_is_mapped(self, base):
-        """A new exception with no entry would answer 500 with `internal_error`."""
+        """A new exception with no entry would answer 500 with `internal_error`.
+
+        `DiscoveryError` was missing from this list, and so was every one of its subclasses
+        from the table. A rider opening the detail dialog on a place Google could not type
+        got an untyped 500 with no code and no body, and the guard that exists to prevent
+        exactly that was not looking at the family.
+        """
         unmapped = _concrete_subclasses(base) - set(ERROR_TABLE) - STARTUP_ONLY
         assert not unmapped, f"add these to ERROR_TABLE: {sorted(c.__name__ for c in unmapped)}"
 
@@ -53,6 +66,41 @@ class TestNoDrift:
     def test_startup_only_exceptions_are_not_mapped(self):
         """Mapping one would imply it can reach a request handler. It cannot."""
         assert STARTUP_ONLY.isdisjoint(ERROR_TABLE)
+
+
+class TestEveryMappedErrorIsReachable:
+    """A table entry for an exception nobody registered a handler for never fires.
+
+    Handlers were registered for four base classes; the table had entries for three families
+    that were not among them. So `LlmUnavailable` had a documented 502 and answered 500, and
+    every discovery error did the same — including the one a rider hit, which is why the
+    detail dialog said "could not be loaded" instead of saying what was wrong.
+
+    The drift is invisible from either side: the table looks complete, the handler list looks
+    deliberate, and only a request shows they disagree. So the handlers are derived from the
+    table, and this asserts they still are.
+    """
+
+    def test_every_mapped_exception_has_a_handler(self):
+        app = create_app(RoutingSettings(offline=True))
+        handled = set(app.exception_handlers)
+        for exc_type in ERROR_TABLE:
+            assert any(base in handled for base in exc_type.__mro__), (
+                f"{exc_type.__name__} is in ERROR_TABLE but no handler would catch it, so it "
+                f"answers 500 with internal_error"
+            )
+
+    def test_a_mapped_error_answers_its_status_over_the_wire(self):
+        """End to end, because the two halves agreeing in the abstract is what failed."""
+        app = create_app(RoutingSettings(offline=True))
+
+        @app.get("/api/_boom")
+        async def boom() -> None:
+            raise LlmUnavailable("request to OpenAI failed")
+
+        response = TestClient(app, raise_server_exceptions=False).get("/api/_boom")
+        assert response.status_code == 502
+        assert response.json()["code"] == "llm_unavailable"
 
 
 class TestResolve:

@@ -33,7 +33,15 @@ case "$branch" in
 esac
 
 echo "==> merging $ref"
-git merge --no-ff --no-edit "$ref"
+# The note becomes the merge message as well as the mail. `--no-edit` was writing
+# "Merge remote-tracking branch 'origin/fe/x'" into a log that had been carrying the reasoning
+# for the merge — six of those landed before anyone noticed, which is six explanations lost.
+# The mail is read once; the log is what someone reads in a year.
+if [ -n "$note" ]; then
+  git merge --no-ff -m "Merge $branch" -m "$note" "$ref"
+else
+  git merge --no-ff --no-edit "$ref"
+fi
 
 echo "==> make check"
 if ! make check; then

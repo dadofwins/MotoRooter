@@ -84,10 +84,15 @@ queue rather than as footnotes.
 |---|---|---|
 | `GARMIN_TRACK_POINT_LIMIT = 10_000` | `gpx.py` | **Blocking M2.** Commonly documented for modern units; older handhelds cut at 500 per segment. Needs Tim's device. |
 | `RidingSpeeds` 80/40/55 km/h | `speeds.py` | Original guess. Now applied only to legs whose provider is not trusted on duration, so its blast radius shrank rather than its accuracy improving. |
-| `GAP_REPORT_THRESHOLD_M = 25.0` | leg stitching | Never measured against a real mixed-engine trip. The frontend's 500 m *drawing* threshold was measured (0.5 m and 11.3 m observed); this one was not. |
+| ~~`GAP_REPORT_THRESHOLD_M = 25.0`~~ | leg stitching | **Measured 2026-08-26.** Value unchanged, now known safe rather than hoped. Engine disagreement is bimodal: single-digit metres while both snap to the same road (1.8–5.2 m across a Google/ORS handover, up to 400 m off-road), then hundreds once they choose different roads. 25 sits in an empty band, so anything from ~10 m to ~400 m behaves identically — which is why a guess worked. |
 | discovery cost weights | `pipeline.py` | From one live corridor. Being wrong skews the progress bar rather than breaking it, which is why it is tolerable. |
 
-None except the Garmin limit blocks anything, and all four fail safely. Fix a number here rather
+A reported gap does not mean what the threshold implies, incidentally: it is not "the route has
+a small discontinuity" but "the two engines picked different roads", which for a rider means a
+waypoint far from anything both can use. The warning wording is a product decision and has not
+been changed.
+
+None except the Garmin limit blocks anything, and all of them fail safely. Fix a number here rather
 than an algorithm when one turns out wrong — that is why each is a single constant.
 
 ## Stack

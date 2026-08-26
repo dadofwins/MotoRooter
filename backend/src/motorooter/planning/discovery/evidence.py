@@ -18,10 +18,11 @@ us keep `place_id` and almost nothing else.
 
 from collections.abc import Sequence
 
+from motorooter.planning.discovery.corridor import SearchCorridor
 from motorooter.planning.discovery.models import Evidence, ResolvedCandidate
 from motorooter.planning.metrics import nearest_distance_m, twistiness_deg_per_km
 from motorooter.routing.geo import haversine_m, path_length_m
-from motorooter.routing.models import Coordinate, RouteLeg, Surface
+from motorooter.routing.models import Coordinate, Surface
 from motorooter.trips.models import PoiCategory
 
 DEFAULT_WINDOW_M = 5_000.0
@@ -34,7 +35,7 @@ mountain campsite. A guess, and an argument rather than a constant.
 
 
 def route_window(
-    leg: RouteLeg, point: Coordinate, *, radius_m: float = DEFAULT_WINDOW_M
+    leg: SearchCorridor, point: Coordinate, *, radius_m: float = DEFAULT_WINDOW_M
 ) -> tuple[Coordinate, ...]:
     """The stretch of route within `radius_m` of the nearest point to `point`.
 
@@ -61,7 +62,7 @@ def route_window(
 
 def assemble(
     resolved: ResolvedCandidate,
-    leg: RouteLeg,
+    leg: SearchCorridor,
     *,
     others: Sequence[ResolvedCandidate] = (),
     window_m: float = DEFAULT_WINDOW_M,
@@ -93,7 +94,7 @@ def assemble(
 
 
 def _surface_shares(
-    leg: RouteLeg, window: Sequence[Coordinate]
+    leg: SearchCorridor, window: Sequence[Coordinate]
 ) -> tuple[float | None, float | None, float | None]:
     """Paved, unpaved and unknown shares of the windowed stretch.
 

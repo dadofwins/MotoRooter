@@ -79,14 +79,20 @@ works by asking, which is how everything else in this app scales.
 _SECONDS_PER_HOUR = 3600.0
 
 
-def default_limit(leg: RouteLeg) -> int:
-    """How many places to route through on this leg when nobody said.
+def default_limit(legs: Sequence[RouteLeg]) -> int:
+    """How many places to route through when nobody said, across the whole trip.
 
-    Paced by *time* rather than distance, because the same 400 km is five hours of tarmac
-    and ten of dirt, and it is the hours that decide how often someone wants to get off the
-    bike. At least one: nought would make the feature silently do nothing on a short ride.
+    Paced by *time* rather than distance, because the same 400 km is five hours of tarmac and
+    ten of dirt, and it is the hours that decide how often someone wants to get off the bike.
+
+    Across every leg, not the longest one. On a four-leg 797 km trip the longest leg's 5.1
+    hours gave two stops for 14.5 hours of riding — a rule that quietly scaled with how the
+    rider happened to split their route rather than with how far they were going.
+
+    At least one: nought would make the feature silently do nothing on a short ride, or on a
+    trip with nothing routed yet.
     """
-    hours = leg_duration_s(leg) / _SECONDS_PER_HOUR
+    hours = sum(leg_duration_s(leg) for leg in legs) / _SECONDS_PER_HOUR
     return max(1, int(hours / HOURS_PER_ADDITION))
 
 
@@ -114,41 +120,56 @@ def above_the_floor(pois: Sequence[Poi]) -> tuple[Poi, ...]:
 
 
 def worth_routing_through(
-    pois: Sequence[Poi], *, leg: RouteLeg, limit: int | None = None
+    pois: Sequence[Poi], *, legs: Sequence[RouteLeg], limit: int | None = None
 ) -> tuple[Poi, ...]:
     """The places to route through, best first.
 
     Args:
         pois: everything discovery has saved against the trip. Unscored pins and places
             already on the route are ignored.
-        leg: the routed leg they were found along. Its length sets the detour budget and its
-            riding time sets the default count.
+        legs: the trip's routed legs. Each one carries its own detour budget, and together
+            they set the default count.
         limit: how many at most. `None` asks for `default_limit`. Zero or negative asks for
-            none, which is honoured rather than corrected — a caller that computed its way
-            to zero means it.
+            none, which is honoured rather than corrected — a caller that computed its way to
+            zero means it.
+
+    **The budget is per leg**, against the leg each place actually sits beside. One budget
+    drawn from the longest leg was both too generous next to a short leg and too mean next to
+    a long one, and it let a place beside a 40 km connector spend an allowance earned by a
+    400 km day. The harm lands on a leg, so the bound belongs there.
 
     Best first rather than in route order: this ranks, and `insert_in_route_order` decides
-    where each one goes. Returning them ordered by score is also what lets a caller say "the
-    top three" honestly.
+    where each one goes.
     """
-    allowed = default_limit(leg) if limit is None else limit
-    if allowed <= 0:
+    allowed = default_limit(legs) if limit is None else limit
+    if allowed <= 0 or not legs:
         return ()
 
-    ranked = above_the_floor(pois)
-    budget = DETOUR_BUDGET_FRACTION * leg.distance_m
+    budgets = [DETOUR_BUDGET_FRACTION * leg.distance_m for leg in legs]
     chosen: list[Poi] = []
-    for place in ranked:
+    for place in above_the_floor(pois):
         if len(chosen) >= allowed:
             break
-        cost = _detour_cost_m(place, leg)
-        if cost > budget:
+        index, cost = _nearest_leg(place, legs)
+        if cost > budgets[index]:
             # Skipped rather than stopped: a cheap good place ranked behind an expensive one
-            # must not be lost to it.
+            # must not be lost to it, on this leg or any other.
             continue
-        budget -= cost
+        budgets[index] -= cost
         chosen.append(place)
     return tuple(chosen)
+
+
+def _nearest_leg(place: Poi, legs: Sequence[RouteLeg]) -> tuple[int, float]:
+    """Which leg this place sits beside, and roughly what routing through it would add.
+
+    Nearest rather than any leg it is within reach of: a place between two legs is a detour
+    from the one it is closest to, and charging the further leg would let the same place be
+    afforded twice over.
+    """
+    costs = [_detour_cost_m(place, leg) for leg in legs]
+    index = min(range(len(costs)), key=lambda position: costs[position])
+    return index, costs[index]
 
 
 def _detour_cost_m(place: Poi, leg: RouteLeg) -> float:

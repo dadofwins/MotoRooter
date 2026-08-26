@@ -15,9 +15,32 @@ and only a comparison against a route nobody has would show the difference.
 
 from collections.abc import Sequence
 from itertools import pairwise
+from typing import Protocol
 
 from motorooter.routing.geo import haversine_m, path_length_m
-from motorooter.routing.models import Coordinate
+from motorooter.routing.models import Coordinate, SurfaceSpan
+
+
+class SearchCorridor(Protocol):
+    """The stretch of road discovery searches, as narrowly as discovery actually reads it.
+
+    Two attributes, because those are the two the stages use: anchors and the distance filter
+    read `geometry`, and the judge's evidence reads `surface_spans` around each candidate.
+    Nothing here wants a distance, a duration, a provider or an intent.
+
+    A protocol rather than a `RouteLeg` because a trip's corridor is several legs joined, and
+    the honest join is a `StitchedRoute`. Fabricating a `RouteLeg` to carry it would have to
+    invent a provider and an intent for a route that has several of each — a plausible object
+    that is wrong in exactly the way this codebase keeps catching. Both types satisfy this as
+    they are.
+    """
+
+    @property
+    def geometry(self) -> tuple[Coordinate, ...]: ...
+
+    @property
+    def surface_spans(self) -> tuple[SurfaceSpan, ...]: ...
+
 
 DEFAULT_ANCHOR_SPACING_M = 12_500.0
 """Distance between anchors, in the 10-15 km band M0 measured.

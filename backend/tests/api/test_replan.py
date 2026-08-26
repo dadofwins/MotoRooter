@@ -200,14 +200,30 @@ class TestWhatIsCheckedBeforeTheStreamOpens:
 
 
 class TestWhichLegIsSearched:
-    async def test_the_longest_routed_leg_is_used(self):
-        """A trip is often one long ride and a short connector; searching the connector
-        would look at the wrong half of the map."""
+    """Every routed leg, since Tim ran a four-leg trip and got the first half.
+
+    This used to assert the *longest* leg, which was the right answer when a trip was one leg
+    and the wrong one within a day of multi-leg landing: four comparable legs means the
+    longest is a quarter of the map. The test passed throughout, because it asserted the rule
+    rather than the coverage.
+    """
+
+    async def test_the_whole_route_is_searched_not_the_longest_leg(self):
         pipeline = StubPipeline()
-        trip = routed_trip(leg(distance_m=2_000.0), leg(distance_m=90_000.0))
-        client = client_for(await seeded(trip), pipeline)
+        short, long_ = leg(distance_m=2_000.0), leg(distance_m=90_000.0)
+        client = client_for(await seeded(routed_trip(short, long_)), pipeline)
         client.post("/api/trips/oregon-backcountry/replan", json={})
-        assert pipeline.legs[0].distance_m == 90_000.0
+        searched = pipeline.legs[0]
+        assert searched.geometry[0] == short.geometry[0]
+        assert searched.geometry[-1] == long_.geometry[-1]
+
+    async def test_a_short_opening_connector_is_still_not_the_whole_corridor(self):
+        """The failure the old rule existed to prevent, which must stay prevented."""
+        pipeline = StubPipeline()
+        short, long_ = leg(distance_m=2_000.0), leg(distance_m=90_000.0)
+        client = client_for(await seeded(routed_trip(short, long_)), pipeline)
+        client.post("/api/trips/oregon-backcountry/replan", json={})
+        assert len(pipeline.legs[0].geometry) > len(short.geometry)
 
 
 class TestFailureInsideTheStream:

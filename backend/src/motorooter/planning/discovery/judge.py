@@ -19,18 +19,47 @@ to prefer viewpoints. A preference encoded in a prompt is invisible to tests; a 
 not.
 """
 
+import asyncio
 import json
 import logging
 import re
 from collections.abc import Callable, Sequence
 
+from motorooter.llm.errors import LlmError
 from motorooter.llm.messages import Message, SystemMessage, UserMessage
 from motorooter.llm.protocol import LlmClient
+from motorooter.planning.discovery.corridor import SearchCorridor
 from motorooter.planning.discovery.evidence import assemble
 from motorooter.planning.discovery.models import Evidence, ResolvedCandidate, ScoredCandidate
-from motorooter.routing.models import RouteLeg
 
 logger = logging.getLogger(__name__)
+
+JUDGE_BATCH_SIZE = 20
+"""How many places to score in one call.
+
+The stage had no ceiling, and whole-route search walks off the cliff that leaves: a real
+corridor produced 162 candidates and the request failed outright, so the run reported "0 worth
+showing" — the same summary an empty corridor gives.
+
+Batching touches a decision recorded in CLAUDE.md, so it was measured rather than assumed. The
+same forty places, judged whole and judged in twenties:
+
+    one batch of 40 :  40.8s     (the budget is 45 s, so forty is already the edge)
+    two batches of 20:  25.9s
+    score delta: median 0.05, max 0.25
+    top-3 overlap 3/3, top-5 4/5, top-10 7/10
+
+Median 0.05 is the run-to-run variance of the *identical* whole batch, measured at median 0.05
+and max 0.15. Splitting disturbs the ranking about as much as asking the same question twice
+does — and the whole selection layer is built on the score being a ranking rather than a
+measurement, for exactly that reason.
+
+What the recorded decision objects to is a call *per candidate*. Twenty is still a field to
+compare, and the batches run concurrently, so forty candidates got faster rather than slower.
+
+Twenty rather than a rounder thirty because twenty is what was measured for both latency and
+agreement.
+"""
 
 MAX_LOGGED_REPLY_CHARS = 2000
 """How much of an unusable reply to record.
@@ -82,18 +111,64 @@ class CandidateJudge:
     async def judge(
         self,
         resolved: Sequence[ResolvedCandidate],
-        leg: RouteLeg,
+        leg: SearchCorridor,
         *,
         on_progress: Callable[[int, int], None] | None = None,
     ) -> tuple[ScoredCandidate, ...]:
-        """Score a batch, dropping anything the model did not usably score.
+        """Score every candidate, best first, in batches small enough to come back.
 
-        One call for the batch rather than per candidate: scoring must not become a fan-out
-        multiplier, and a model comparing places against each other ranks them better than
-        one seeing each alone.
+        Not one call per candidate: scoring must not become a fan-out multiplier, and a model
+        comparing places against each other ranks them better than one seeing each alone. That
+        is the decision this keeps. What it drops is *one call for the whole corridor*, which
+        had a cliff in it — see `JUDGE_BATCH_SIZE`.
 
-        Never raises on a bad reply. A model answering with prose should cost the scores from
-        one batch, not a corridor run that has already paid for its searches and lookups.
+        Ranked across batches rather than within them, because selection takes the best few
+        overall and never looks below that.
+
+        Raises:
+            LlmError: every batch failed. A batch that fails alone costs its own scores, the
+                way a failed categorise batch does; all of them failing has to be audible, or
+                a corridor that could not be judged looks like a corridor with nothing in it.
+        """
+        if not resolved:
+            return ()
+
+        batches = [
+            resolved[start : start + JUDGE_BATCH_SIZE]
+            for start in range(0, len(resolved), JUDGE_BATCH_SIZE)
+        ]
+        settled = await asyncio.gather(
+            *(self._judge_batch(batch, leg, on_progress) for batch in batches),
+            return_exceptions=True,
+        )
+
+        scored: list[ScoredCandidate] = []
+        failures: list[LlmError] = []
+        for batch, outcome in zip(batches, settled, strict=True):
+            if isinstance(outcome, BaseException):
+                if not isinstance(outcome, LlmError):
+                    raise outcome
+                logger.warning("judging %d places failed: %s", len(batch), outcome)
+                failures.append(outcome)
+                continue
+            scored.extend(outcome)
+
+        if failures and not scored:
+            raise failures[0]
+        return tuple(sorted(scored, key=lambda item: item.score, reverse=True))
+
+    async def _judge_batch(
+        self,
+        resolved: Sequence[ResolvedCandidate],
+        leg: SearchCorridor,
+        on_progress: Callable[[int, int], None] | None = None,
+    ) -> tuple[ScoredCandidate, ...]:
+        """One call, retried once if it yields nothing usable.
+
+        Never raises on a bad *reply*. A model answering with prose should cost the scores
+        from one batch, not a corridor run that has already paid for its searches and lookups.
+        A failed *request* does raise, so the caller can tell one batch's silence from the
+        model being unreachable.
         """
         if not resolved:
             return ()

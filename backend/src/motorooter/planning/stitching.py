@@ -39,6 +39,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from motorooter.routing.geo import haversine_m, path_length_m
 from motorooter.routing.models import Coordinate, RouteLeg, Surface, SurfaceSpan
+from motorooter.trips.models import Trip
 
 COINCIDENT_TOLERANCE_M = 1.0
 """Below this, two boundary vertices are the same point. Absorbs float and rounding jitter."""
@@ -292,3 +293,25 @@ def stitch(
         bridged_distance_m=bridged,
         leg_start_indices=tuple(starts),
     )
+
+
+def search_corridor(trip: Trip) -> StitchedRoute | None:
+    """Every routed leg, joined, or `None` if nothing has routed.
+
+    **The whole ride, not the biggest part of it.** Discovery used to search
+    `longest_routed_leg`, which was right when a trip was one leg spanning every waypoint and
+    the alternative was searching leg zero — the assistant's version, which on a trip opening
+    with a two-kilometre hop discovered places around the rider's driveway. Multi-leg
+    falsified it: on a four-leg trip the longest leg is a quarter of the map, and a rider got
+    places for the first half of a 495-mile ride and nothing for the second.
+
+    Costed before it was built, on that trip: 12 anchors over the longest leg against 33 over
+    the whole route, which is 2.8x the anchors for 2.9x the route. The per-kilometre cost is
+    flat, because anchor spacing is distance-based. This is the end of an under-count rather
+    than a bigger search.
+
+    Unrouted legs are skipped rather than breaking the corridor, and `stitch` accounts for the
+    joins — bridging boundaries that are engine snapping and reporting the ones that are not.
+    """
+    routed = trip.routed_legs
+    return stitch(routed) if routed else None

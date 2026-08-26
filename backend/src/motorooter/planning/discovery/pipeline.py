@@ -44,6 +44,7 @@ from motorooter.planning.discovery.concurrency import DEFAULT_CONCURRENCY
 from motorooter.planning.discovery.corridor import (
     DEFAULT_MAX_ANCHORS,
     DISCOVERY_ANCHOR_SPACING_M,
+    SearchCorridor,
     anchors,
 )
 from motorooter.planning.discovery.dedupe import DeduplicatingSearchSource
@@ -64,7 +65,7 @@ from motorooter.planning.discovery.naming import PlaceNamer
 from motorooter.planning.discovery.protocol import SearchSource
 from motorooter.planning.discovery.queries import SearchQuery, queries_for
 from motorooter.planning.discovery.resolve import PlacesResolver
-from motorooter.routing.models import Coordinate, RouteLeg
+from motorooter.routing.models import Coordinate
 from motorooter.trips.models import Poi, PoiCategory
 
 logger = logging.getLogger(__name__)
@@ -197,6 +198,19 @@ class _Counts:
     says whether expansion earned its extra searches."""
 
     failures: list[str] = field(default_factory=list)
+    """Stages that gave up, in the words the summary reports.
+
+    Use `failed`, not `failures.append`. A count reaches the rider and the text does not, so
+    a failure recorded without being logged is a run that says "1 stage failures" and nothing
+    else — which is enough to know something broke and not enough to know what. Two live runs
+    were spent inferring a cause that one log line would have named, and then a third, because
+    the site I had fixed was not the site that was failing.
+    """
+
+    def failed(self, stage: str, detail: object) -> None:
+        """Record a stage failure and say so in the log."""
+        logger.warning("discovery stage failed: %s: %s", stage, detail)
+        self.failures.append(f"{stage}: {detail}")
 
 
 class DiscoveryPipeline:
@@ -221,7 +235,7 @@ class DiscoveryPipeline:
 
     async def run(
         self,
-        leg: RouteLeg,
+        leg: SearchCorridor,
         categories: Sequence[PoiCategory],
         *,
         max_anchors: int = DEFAULT_MAX_ANCHORS,
@@ -422,7 +436,7 @@ class DiscoveryPipeline:
             )
         except DiscoveryError as exc:
             # One unnameable anchor is a gap in the corridor, not a failed run.
-            counts.failures.append(f"naming: {exc}")
+            counts.failed("naming", exc)
             return None, None
 
     async def _search(
@@ -435,7 +449,7 @@ class DiscoveryPipeline:
         try:
             results = await source.search(query, near=anchor)
         except DiscoveryError as exc:
-            counts.failures.append(f"search {query.category.value}: {exc}")
+            counts.failed(f"search {query.category.value}", exc)
             return []
         counts.searched += len(results)
         return list(results)
@@ -461,7 +475,7 @@ class DiscoveryPipeline:
             # "Fail fast" is only half the instruction. A timed-out extraction has to cost
             # this anchor's leads and nothing else — without this it aborted the corridor,
             # which the first live run of the parallel pipeline did immediately.
-            counts.failures.append(f"extract near {name}: {exc}")
+            counts.failed(f"extract near {name}", exc)
             return ()
         counts.named += len(extracted)
         return extracted
@@ -490,7 +504,7 @@ class DiscoveryPipeline:
                 try:
                     results = await self._source.search(query, near=road.found_near)
                 except DiscoveryError as exc:
-                    counts.failures.append(f"expansion {road.name}: {exc}")
+                    counts.failed(f"expansion {road.name}", exc)
                     return ()
                 counts.searched += len(results)
                 counts.expanded += len(results)
@@ -499,7 +513,7 @@ class DiscoveryPipeline:
                         results, region=region, searched_for=road.name
                     )
                 except (DiscoveryError, LlmError) as exc:
-                    counts.failures.append(f"expansion extract {road.name}: {exc}")
+                    counts.failed(f"expansion extract {road.name}", exc)
                     return ()
             return attribute(extracted, road)
 
@@ -513,7 +527,7 @@ class DiscoveryPipeline:
     async def _resolve(
         self,
         candidates: Sequence[Candidate],
-        leg: RouteLeg,
+        leg: SearchCorridor,
         counts: _Counts,
         concurrency: int = DEFAULT_CONCURRENCY,
     ) -> tuple[ResolvedCandidate, ...]:
@@ -526,7 +540,7 @@ class DiscoveryPipeline:
             )
             resolved = await self._classifier.classify(resolved)
         except (DiscoveryError, LlmError) as exc:
-            counts.failures.append(f"resolve: {exc}")
+            counts.failed("resolve", exc)
             return ()
 
         resolved = _unique(resolved)
@@ -542,7 +556,7 @@ class DiscoveryPipeline:
     async def _score(
         self,
         resolved: Sequence[ResolvedCandidate],
-        leg: RouteLeg,
+        leg: SearchCorridor,
         counts: _Counts,
         on_progress: Callable[[int, int], None] | None = None,
     ) -> tuple[ScoredCandidate, ...]:
@@ -553,7 +567,7 @@ class DiscoveryPipeline:
         except (DiscoveryError, LlmError) as exc:
             # Everything up to here is already paid for. Losing the scores is bad; losing
             # the run because scoring timed out is worse.
-            counts.failures.append(f"judge: {exc}")
+            counts.failed("judge", exc)
             return ()
 
         # Scoring none of them is a malfunction, not an opinion. `judge` returns empty rather
@@ -562,7 +576,7 @@ class DiscoveryPipeline:
         # summary reading "0 worth showing" that is indistinguishable from an empty corridor.
         # Scoring *some* of them is a judgement and stays quiet.
         if not scored:
-            counts.failures.append(f"judge: scored none of {len(resolved)} places")
+            counts.failed("judge", f"scored none of {len(resolved)} places")
         return scored
 
     @staticmethod

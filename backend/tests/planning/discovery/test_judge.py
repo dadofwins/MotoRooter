@@ -306,3 +306,53 @@ class TestAnUnusableReplyIsRetried:
         client = FakeLlmClient(replies=(AssistantMessage(content="{}"),), repeat_last=True)
         assert await CandidateJudge(client).judge((), LEG) == ()
         assert client.call_count == 0
+
+
+class TestAnUnusableReplyIsRecorded:
+    """Log the reply when scoring produces nothing, rather than waiting to catch one.
+
+    Chasing a bug that resists reproduction while declining to record it when it happens is
+    the expensive order. The retry reduced how often this is seen; it did not explain it, and
+    each unexplained occurrence still throws away a corridor of searches and lookups.
+
+    Server-side only, which is the policy Tim set for exactly this: log the raw thing, send
+    the sanitised thing to the model.
+    """
+
+    @staticmethod
+    def _judge_with(reply: str, caplog):
+        import logging
+
+        caplog.set_level(logging.WARNING, logger="motorooter.planning.discovery.judge")
+        client = FakeLlmClient(replies=(AssistantMessage(content=reply),), repeat_last=True)
+        return client
+
+    async def test_the_reply_is_logged_when_nothing_scores(self, caplog):
+        client = self._judge_with("I think these are all quite nice places really.", caplog)
+        await CandidateJudge(client).judge([resolved("A")], LEG)
+        assert "quite nice places" in caplog.text
+
+    async def test_it_is_logged_at_warning(self, caplog):
+        client = self._judge_with("not json", caplog)
+        await CandidateJudge(client).judge([resolved("A")], LEG)
+        assert any(record.levelname == "WARNING" for record in caplog.records)
+
+    async def test_it_says_how_many_it_was_asked_about(self, caplog):
+        client = self._judge_with("not json", caplog)
+        await CandidateJudge(client).judge([resolved("A"), resolved("B")], LEG)
+        assert "2" in caplog.text
+
+    async def test_a_long_reply_is_truncated(self, caplog):
+        """A model that answers with an essay should not fill the log with it."""
+        from motorooter.planning.discovery.judge import MAX_LOGGED_REPLY_CHARS
+
+        client = self._judge_with("x" * 10_000, caplog)
+        await CandidateJudge(client).judge([resolved("A")], LEG)
+        assert len(caplog.text) < MAX_LOGGED_REPLY_CHARS * 3
+
+    async def test_a_good_reply_logs_nothing(self, caplog):
+        client = self._judge_with(
+            json.dumps({"scores": [{"index": 0, "score": 0.8, "reason": "good"}]}), caplog
+        )
+        await CandidateJudge(client).judge([resolved("A")], LEG)
+        assert not caplog.records

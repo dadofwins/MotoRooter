@@ -7,6 +7,7 @@ cost those results, not the run that has already paid for the rest.
 """
 
 import json
+import logging
 from math import pi
 
 from motorooter.llm.errors import LlmUnavailable
@@ -94,6 +95,22 @@ def pipeline(*, namer=None, source=None, resolver=None, client=None) -> Discover
     )
 
 
+PIPELINE_LOGGER = "motorooter.planning.discovery.pipeline"
+
+NAMES_ONE_PLACE = json.dumps(
+    {"places": [{"result_index": 0, "place_name": "First", "kind": "place", "relevant": True}]}
+)
+"""An extraction reply that actually names something.
+
+"First" because `FakeSearchSource` returns it — extraction may only name places present in the
+text it was given, so an invented name is discarded by the grounding guard and the reply is as
+empty as the default one.
+
+Without a name reaching resolve, `_enrich` short-circuits and a test that breaks the resolver
+asserts against a stage that never ran.
+"""
+
+
 async def collect(runner: DiscoveryPipeline, **kwargs):
     return [event async for event in runner.run(LEG, CATEGORIES, **kwargs)]
 
@@ -164,10 +181,21 @@ class TestItSurvivesItsPartsFailing:
         assert events[-1].stage == "done"
 
     async def test_a_failing_resolve_does_not_end_the_run(self):
+        """The extractor has to name something, or resolve is never reached.
+
+        This asserted only that the run ended, which it did whether or not the resolver was
+        ever called — `_enrich` returns early on an empty candidate list, and the default
+        extraction reply names nothing. Green, and testing the absence of the stage it meant
+        to break.
+        """
         events = await collect(
-            pipeline(resolver=StubResolver(error=DiscoveryUnavailable("places down")))
+            pipeline(
+                client=llm(NAMES_ONE_PLACE),
+                resolver=StubResolver(error=DiscoveryUnavailable("places down")),
+            )
         )
         assert events[-1].stage == "done"
+        assert "failure" in events[-1].message  # the stage was reached and did fail
 
     async def test_failures_are_counted_in_the_summary(self):
         """Silent partial results are the worst outcome: it looks like an empty corridor."""
@@ -523,6 +551,45 @@ class TestNothingIsLostWithoutSaying:
         )
         assert "failure" not in events[-1].message
         assert "categor" not in events[-1].message
+
+
+class TestAFailureIsNamedInTheLog:
+    """Counting a stage failure without logging it cost three live runs in one session.
+
+    The summary says "1 stage failures" and stops. That is enough to know something broke and
+    not enough to know what, so diagnosing one means inferring it — and I inferred the wrong
+    stage twice, fixing a classifier that had already been fixed while the judge was the one
+    failing. The count is what the rider gets; the text is what an engineer needs, and it has
+    to be recorded at the moment it happens because nothing upstream keeps it.
+    """
+
+    @staticmethod
+    def _broken():
+        return pipeline(
+            client=llm(NAMES_ONE_PLACE),
+            resolver=StubResolver(error=DiscoveryUnavailable("places is down")),
+        )
+
+    async def test_a_failing_stage_writes_its_reason_to_the_log(self, caplog):
+        with caplog.at_level(logging.WARNING, logger=PIPELINE_LOGGER):
+            await collect(self._broken(), max_anchors=2, spacing_m=1000)
+        assert "places is down" in caplog.text
+
+    async def test_the_log_names_which_stage(self, caplog):
+        with caplog.at_level(logging.WARNING, logger=PIPELINE_LOGGER):
+            await collect(self._broken(), max_anchors=2, spacing_m=1000)
+        assert "resolve" in caplog.text
+
+    async def test_the_reason_still_reaches_the_summary(self):
+        """The log is for an engineer; the count is what the rider is told. Both, not either."""
+        events = await collect(self._broken(), max_anchors=2, spacing_m=1000)
+        assert "failure" in events[-1].message
+
+    async def test_a_clean_run_logs_no_failure(self, caplog):
+        """Otherwise the log stops being a signal and becomes noise nobody reads."""
+        with caplog.at_level(logging.WARNING, logger=PIPELINE_LOGGER):
+            await collect(pipeline(), max_anchors=2, spacing_m=1000)
+        assert caplog.text == ""
 
 
 class TestTheBarTracksTimeNotSteps:

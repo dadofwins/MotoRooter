@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react'
+import { fireEvent, render, screen } from '@testing-library/react'
 import { describe, expect, it } from 'vitest'
 import { ReplanProgress } from './ReplanProgress'
 import type { ReplanStep } from './useReplan'
@@ -136,5 +136,81 @@ describe('ReplanProgress while the figure holds still', () => {
     const bar = screen.getByRole('progressbar')
     expect(bar).toHaveAttribute('aria-valuenow', '50')
     expect(bar).toHaveStyle({ width: '50%' })
+  })
+})
+
+/**
+ * The history behind the current step, folded away.
+ *
+ * Tim, after planning a real trip: *"the discovery action log is too long. Maybe it could be a
+ * hidden dropdown arrow that you can expand if you want to see? For most cases the white text and
+ * blue progress meter are enough."*
+ *
+ * Read carefully, that is not a request for less information — it says the current line and the
+ * meter **are** doing their job and the accumulation behind them is noise. I built the receding
+ * list because an accumulating log was asked for; he has now used it and told us the accumulation
+ * is the part he does not want by default. So it is collapsed rather than removed, and the count
+ * is on the disclosure so it reads as available rather than absent.
+ */
+describe('ReplanProgress history', () => {
+  const three = [
+    { id: 3, message: 'Scoring 41 candidates', stage: 'judge' },
+    { id: 2, message: 'Resolved 29 places', stage: 'resolve' },
+    { id: 1, message: 'Searched 12 corridors', stage: 'search' },
+  ]
+
+  it('shows the current step without folding it away', () => {
+    // The one line he says is enough. Behind a disclosure it would be the feature being removed.
+    render(<ReplanProgress isRunning progress={0.5} elapsedS={20} log={three} />)
+
+    expect(screen.getByText('Scoring 41 candidates')).toBeVisible()
+  })
+
+  it('folds the earlier steps behind a disclosure, closed', () => {
+    render(<ReplanProgress isRunning progress={0.5} elapsedS={20} log={three} />)
+
+    const disclosure = screen.getByRole('group')
+    expect(disclosure).not.toHaveAttribute('open')
+  })
+
+  it('says how many are behind it, so it reads as available rather than absent', () => {
+    render(<ReplanProgress isRunning progress={0.5} elapsedS={20} log={three} />)
+
+    expect(screen.getByText(/2 earlier steps/i)).toBeInTheDocument()
+  })
+
+  it('counts one earlier step in the singular', () => {
+    render(
+      <ReplanProgress
+        isRunning
+        progress={0.5}
+        elapsedS={20}
+        log={[three[0] as (typeof three)[number], three[1] as (typeof three)[number]]}
+      />,
+    )
+
+    expect(screen.getByText(/1 earlier step\b/i)).toBeInTheDocument()
+  })
+
+  it('shows them when the rider opens it', () => {
+    render(<ReplanProgress isRunning progress={0.5} elapsedS={20} log={three} />)
+
+    fireEvent.click(screen.getByText(/2 earlier steps/i))
+
+    expect(screen.getByText('Searched 12 corridors')).toBeVisible()
+  })
+
+  it('offers no disclosure when there is no history behind the current step', () => {
+    // An empty "0 earlier steps" control is a thing to click that does nothing.
+    render(
+      <ReplanProgress
+        isRunning
+        progress={0.5}
+        elapsedS={20}
+        log={[three[0] as (typeof three)[number]]}
+      />,
+    )
+
+    expect(screen.queryByRole('group')).not.toBeInTheDocument()
   })
 })

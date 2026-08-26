@@ -18,7 +18,7 @@
  * rider waiting needs to tell working from finished from cut off, and all three look identical
  * if the rail only shows text.
  */
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { ApiClient } from '../api/client'
 import { isAbortError, isApiError, isNotImplemented } from '../api/errors'
 import type { ChatEvent, ChatTurn } from '../api/types'
@@ -46,6 +46,15 @@ interface Entry {
   readonly text: string
 }
 
+/**
+ * How close to the bottom still counts as following.
+ *
+ * Not an exact comparison. Rounding, momentum scrolling and sub-pixel line heights mean a log a
+ * rider is sitting at the bottom of routinely reports a few pixels short, and an exact test would
+ * silently stop following after one flick of a trackpad.
+ */
+const STUCK_TO_BOTTOM_PX = 24
+
 /** What the rider is told when a turn cannot run at all. */
 const UNREACHABLE = 'The assistant could not be reached. Check your connection and try again.'
 const NOT_BUILT = 'The assistant is not built yet — this is coming soon.'
@@ -67,6 +76,24 @@ export function ChatRail({ client, resolveSlug, onTripChanged }: ChatRailProps):
   const [draft, setDraft] = useState('')
   const [isRunning, setRunning] = useState(false)
   const [truncated, setTruncated] = useState(false)
+
+  const logRef = useRef<HTMLDivElement | null>(null)
+  /**
+   * Whether the rider is following the conversation or reading back through it.
+   *
+   * A ref rather than state: it changes on every scroll event and nothing renders differently for
+   * it, so making it state would re-render the transcript while someone is scrolling through it.
+   * Starts true, because a fresh rail is at the bottom by definition.
+   */
+  const following = useRef(true)
+
+  // After the DOM has the new entry and before the browser paints, so the transcript never
+  // appears at the old position for a frame.
+  useLayoutEffect(() => {
+    const log = logRef.current
+    if (log === null || !following.current) return
+    log.scrollTop = log.scrollHeight
+  }, [entries, isRunning, truncated])
 
   /** The conversation as the assistant will be shown it. Oldest first. */
   const history = useRef<readonly ChatTurn[]>([])
@@ -171,7 +198,17 @@ export function ChatRail({ client, resolveSlug, onTripChanged }: ChatRailProps):
 
   return (
     <div className="chat">
-      <div className="chat__log">
+      <div
+        className="chat__log"
+        ref={logRef}
+        onScroll={(scrolled) => {
+          // Leaving the bottom stops the following; returning resumes it. No separate control, and
+          // no state that can get stuck in the wrong position.
+          const log = scrolled.currentTarget
+          following.current =
+            log.scrollHeight - log.scrollTop - log.clientHeight <= STUCK_TO_BOTTOM_PX
+        }}
+      >
         {/* The opening state, specified rather than invented: it has to name both ways in, or
             the rail reads as the only way to start. */}
         <p className="chat__greeting">

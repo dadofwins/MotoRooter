@@ -392,6 +392,14 @@ body {
     color: rgb(255 255 255 / 0.5);
   }
 
+  .progress__history > summary {
+    color: rgb(255 255 255 / 0.55);
+  }
+
+  .progress__history > summary:hover {
+    color: rgb(255 255 255 / 0.85);
+  }
+
   .points {
     border-top-color: rgb(255 255 255 / 0.14);
   }
@@ -508,6 +516,21 @@ body {
   margin: 0.125rem 0 0;
   font-size: 0.8125rem;
   font-variant-numeric: tabular-nums;
+}
+
+/* The steps behind the current one, folded away by default.
+   Tim used the log on a real trip and said the current line and the meter are enough — which is a
+   statement that the accumulation is noise, not that he wants less information. So the count is on
+   the disclosure: available rather than absent. */
+.progress__history > summary {
+  font-size: 0.75rem;
+  color: rgb(0 0 0 / 0.55);
+  cursor: pointer;
+  padding: 0.25rem 0;
+}
+
+.progress__history > summary:hover {
+  color: rgb(0 0 0 / 0.8);
 }
 
 /* Where a number came from. Quieter than the figure it qualifies, because it is provenance and

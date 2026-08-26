@@ -19,7 +19,7 @@ import { useEffect, useRef, useState } from 'react'
 import type { ApiClient } from '../api/client'
 import { isNotImplemented } from '../api/errors'
 import type { Poi, PoiDetail } from '../api/types'
-import { isVerified } from '../map/poiPin'
+import { isVerified, poiLabel } from '../map/poiPin'
 import { placeErrorMessage } from '../trip/routeErrorMessage'
 
 export type PlaceReader = Pick<ApiClient, 'placeDetail'>
@@ -30,18 +30,28 @@ export interface PoiDetailDialogProps {
   readonly onClose: () => void
   /** Absent for an unconfirmed suggestion, which cannot be pinned to a route. */
   readonly onAddToRoute?: (poi: Poi) => void
+  /**
+   * Take this place off the trip.
+   *
+   * Offered even where "Add to route" is not: an unconfirmed suggestion cannot be pinned, but it
+   * is exactly the clutter a rider most wants gone.
+   */
+  readonly onIgnore?: (poi: Poi) => void
 }
 
-const CATEGORY_LABELS: Record<Poi['category'], string> = {
-  wild_camp: 'Wild camp',
-  campground: 'Campground',
-  hotel: 'Hotel',
-  unique_stay: 'Unique stay',
-  food: 'Food',
-  fuel: 'Fuel',
-  water: 'Water',
-  viewpoint: 'Viewpoint',
-  mechanic: 'Mechanic',
+/**
+ * Stars for a rating, as decoration over a sentence.
+ *
+ * Half-stars rather than rounding: 4.5 shown as five stars overstates the place, and as four
+ * understates it. The glyphs are `aria-hidden` and the same fact is written out beside them —
+ * glyphs alone fail in sunlight, at a glance, and with a screen reader, and this is a number a
+ * rider uses to choose where to sleep.
+ */
+function stars(rating: number): string {
+  const whole = Math.floor(rating)
+  const half = rating - whole >= 0.25 && rating - whole < 0.75
+  const rounded = rating - whole >= 0.75 ? whole + 1 : whole
+  return '★'.repeat(rounded) + (half ? '⯨' : '') + '☆'.repeat(Math.max(0, 5 - rounded - (half ? 1 : 0)))
 }
 
 /** Five decimals is about a metre — enough to type into a GPS and find the pull-out. */
@@ -56,6 +66,7 @@ export function PoiDetailDialog({
   client,
   onClose,
   onAddToRoute,
+  onIgnore,
 }: PoiDetailDialogProps): React.JSX.Element {
   const verified = isVerified(poi)
   const placeId = poi.place_id ?? null
@@ -99,11 +110,17 @@ export function PoiDetailDialog({
     dialogRef.current?.focus()
   }, [])
 
+  // Which photo is large. Reset by remount: the dialog is created per place, so there is no
+  // stale index to carry between them.
+  const [shownPhoto, setShownPhoto] = useState(0)
+
   const rating = detail?.rating ?? null
   const ratingCount = detail?.user_rating_count ?? null
+  const photos = detail?.photo_urls ?? []
   const hasListing =
     rating !== null ||
-    (detail?.photo_urls.length ?? 0) > 0 ||
+    photos.length > 0 ||
+    (detail?.reviews.length ?? 0) > 0 ||
     (detail?.opening_hours.length ?? 0) > 0 ||
     (detail?.phone ?? null) !== null ||
     (detail?.website ?? null) !== null
@@ -123,7 +140,7 @@ export function PoiDetailDialog({
       <header className="poi-dialog__head">
         {/* Known without asking anyone: showing it immediately makes the click feel answered. */}
         <h2 className="poi-dialog__name">{poi.name}</h2>
-        <p className="poi-dialog__kind">{CATEGORY_LABELS[poi.category]}</p>
+        <p className="poi-dialog__kind">{poiLabel(poi.category)}</p>
       </header>
 
       {poi.note !== null && poi.note !== undefined && <p className="poi-dialog__note">{poi.note}</p>}
@@ -155,10 +172,47 @@ export function PoiDetailDialog({
 
       {status === 'ready' && detail !== null && (
         <>
+          {photos.length > 0 && (
+            <div className="poi-dialog__gallery">
+              <img
+                className="poi-dialog__photo"
+                src={photos[shownPhoto] ?? photos[0]}
+                // Numbered, so a screen-reader user knows there are others and which one this
+                // is. Places photos come with no description to use instead.
+                alt={`${poi.name}, photo ${String(shownPhoto + 1)} of ${String(photos.length)}`}
+                loading="lazy"
+              />
+              {photos.length > 1 && (
+                // Buttons rather than clickable images: this is a control, and it has to be
+                // reachable by keyboard.
+                <div className="poi-dialog__thumbs">
+                  {photos.map((url, index) => (
+                    <button
+                      key={url}
+                      type="button"
+                      className="poi-dialog__thumb"
+                      aria-label={`Show photo ${String(index + 1)} of ${String(photos.length)}`}
+                      aria-current={index === shownPhoto}
+                      onClick={() => setShownPhoto(index)}
+                    >
+                      <img src={url} alt="" loading="lazy" />
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
           {rating !== null && (
             <p className="poi-dialog__rating">
-              <span aria-hidden="true">★</span> {rating.toFixed(1)}
-              {ratingCount !== null && ` (${String(ratingCount)} ratings)`}
+              <span className="poi-dialog__stars" aria-hidden="true">
+                {stars(rating)}
+              </span>{' '}
+              <span className="poi-dialog__rating-text">
+                {rating.toFixed(1)} out of 5
+                {ratingCount !== null &&
+                  ` · ${String(ratingCount)} ${ratingCount === 1 ? 'rating' : 'ratings'}`}
+              </span>
             </p>
           )}
 
@@ -195,12 +249,14 @@ export function PoiDetailDialog({
             )}
           </ul>
 
-          {detail.photo_urls.length > 0 && (
-            <div className="poi-dialog__photos">
-              {detail.photo_urls.map((url) => (
-                <img key={url} src={url} alt={poi.name} loading="lazy" />
+          {detail.reviews.length > 0 && (
+            // Fetched on every call and never rendered until now. What a place is actually like
+            // is the thing a rating cannot tell you.
+            <ul className="poi-dialog__reviews">
+              {detail.reviews.map((review) => (
+                <li key={review}>{review}</li>
               ))}
-            </div>
+            </ul>
           )}
         </>
       )}
@@ -213,6 +269,14 @@ export function PoiDetailDialog({
           // right-click menu they were not told about.
           <button type="button" onClick={() => onAddToRoute(poi)}>
             Add to route
+          </button>
+        )}
+        {onIgnore !== undefined && (
+          // The other half of choosing, and offered whether or not the place can be routed
+          // through. Durable: discovered places are saved into the trip document, so hiding one
+          // without removing it would bring it straight back on the next load.
+          <button type="button" onClick={() => onIgnore(poi)}>
+            Ignore
           </button>
         )}
         <button type="button" onClick={onClose}>

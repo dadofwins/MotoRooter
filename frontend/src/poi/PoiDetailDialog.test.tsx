@@ -262,3 +262,125 @@ describe('PoiDetailDialog', () => {
     expect(screen.queryByRole('img')).not.toBeInTheDocument()
   })
 })
+
+/**
+ * The richer listing Tim asked for: *"make it fancier, let's show images from google places,
+ * stars, ratings, etc along with 'Add to route' and 'ignore'."*
+ *
+ * All of it was already being fetched. `photo_urls`, `rating`, `user_rating_count` and
+ * `reviews` come back on every call and the reviews were never rendered at all — so this is
+ * presentation, not plumbing.
+ *
+ * Two things must survive the redesign, and they are the reason the tests below are shaped this
+ * way: a rating has to be readable without seeing the stars, and a place with no listing has to
+ * keep saying so plainly rather than looking broken.
+ */
+describe('PoiDetailDialog, the listing', () => {
+  it('shows a rating as stars and as words, never as stars alone', async () => {
+    // Glyphs alone fail in sunlight, at a glance, and with a screen reader. The stars are
+    // decoration over a sentence that carries the same fact.
+    const client = fakeClient(detail({ rating: 4.5, user_rating_count: 128 }))
+    render(<PoiDetailDialog poi={poi()} client={client} onClose={vi.fn()} />)
+
+    expect(await screen.findByText(/4\.5 out of 5/i)).toBeInTheDocument()
+    expect(screen.getByText(/128 ratings/i)).toBeInTheDocument()
+  })
+
+  it('says one rating rather than 1 ratings', async () => {
+    const client = fakeClient(detail({ rating: 5, user_rating_count: 1 }))
+    render(<PoiDetailDialog poi={poi()} client={client} onClose={vi.fn()} />)
+
+    expect(await screen.findByText(/1 rating\b/i)).toBeInTheDocument()
+  })
+
+  it('shows the reviews, which were fetched and thrown away', async () => {
+    const client = fakeClient(
+      detail({ reviews: ['Great gravel access, quiet midweek.', 'Vault toilet, no water.'] }),
+    )
+    render(<PoiDetailDialog poi={poi()} client={client} onClose={vi.fn()} />)
+
+    expect(await screen.findByText(/Great gravel access/)).toBeInTheDocument()
+    expect(screen.getByText(/Vault toilet/)).toBeInTheDocument()
+  })
+
+  it('shows one photo large with the rest as choosable thumbnails', async () => {
+    const client = fakeClient(
+      detail({ photo_urls: ['https://example.test/a.jpg', 'https://example.test/b.jpg'] }),
+    )
+    render(<PoiDetailDialog poi={poi()} client={client} onClose={vi.fn()} />)
+
+    const shown = await screen.findByRole('img', { name: /Lone Fir Campground, photo 1 of 2/i })
+    expect(shown).toHaveAttribute('src', 'https://example.test/a.jpg')
+    expect(screen.getByRole('button', { name: /photo 2 of 2/i })).toBeInTheDocument()
+  })
+
+  it('changes the large photo when a thumbnail is chosen', async () => {
+    const client = fakeClient(
+      detail({ photo_urls: ['https://example.test/a.jpg', 'https://example.test/b.jpg'] }),
+    )
+    render(<PoiDetailDialog poi={poi()} client={client} onClose={vi.fn()} />)
+    await screen.findByRole('img', { name: /photo 1 of 2/i })
+
+    fireEvent.click(screen.getByRole('button', { name: /photo 2 of 2/i }))
+
+    expect(await screen.findByRole('img', { name: /photo 2 of 2/i })).toHaveAttribute(
+      'src',
+      'https://example.test/b.jpg',
+    )
+  })
+
+  it('offers no thumbnails for a single photo', async () => {
+    // A gallery of one is a picture. The strip would be a control that does nothing.
+    const client = fakeClient(detail({ photo_urls: ['https://example.test/a.jpg'] }))
+    render(<PoiDetailDialog poi={poi()} client={client} onClose={vi.fn()} />)
+
+    expect(await screen.findByRole('img', { name: /Lone Fir Campground/i })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /photo 1 of 1/i })).not.toBeInTheDocument()
+  })
+
+  it('still says plainly when there is no listing at all', async () => {
+    // The case this app is *for*. Dispersed camping is what Places knows least about, and the
+    // redesign must not turn "nothing known" back into an empty shell.
+    const client = fakeClient(
+      detail({ rating: null, user_rating_count: null, photo_urls: [], reviews: [] }),
+    )
+    render(<PoiDetailDialog poi={poi()} client={client} onClose={vi.fn()} />)
+
+    expect(await screen.findByText(/normal for anywhere wild/i)).toBeInTheDocument()
+  })
+
+  it('offers Ignore, which is the other half of choosing', async () => {
+    const onIgnore = vi.fn()
+    const place = poi()
+    render(
+      <PoiDetailDialog
+        poi={place}
+        client={fakeClient()}
+        onClose={vi.fn()}
+        onIgnore={onIgnore}
+      />,
+    )
+
+    fireEvent.click(await screen.findByRole('button', { name: /^ignore$/i }))
+
+    expect(onIgnore).toHaveBeenCalledWith(place)
+  })
+
+  it('offers Ignore even for a place that cannot be added to a route', () => {
+    // An unconfirmed suggestion cannot be pinned, but a rider can certainly decide they do not
+    // want to see it again — and it is the clutter they most want gone.
+    const onIgnore = vi.fn()
+    render(
+      <PoiDetailDialog
+        poi={poi({ source: 'llm_suggested', place_id: null })}
+        client={fakeClient()}
+        onClose={vi.fn()}
+        onIgnore={onIgnore}
+      />,
+    )
+
+    expect(screen.queryByRole('button', { name: /add to route/i })).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: /^ignore$/i }))
+    expect(onIgnore).toHaveBeenCalled()
+  })
+})

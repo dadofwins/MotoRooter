@@ -281,12 +281,14 @@ const ROUTE_RESPONSE: RouteLegResponse = routeLegResponse({
  */
 function fakeRouter(response: RouteLegResponse = ROUTE_RESPONSE) {
   return {
+    // Annotated rather than inferred: an empty `pois: []` infers `never[]`, and a test that
+    // then supplies a real place cannot type-check against it.
     // eslint-disable-next-line @typescript-eslint/require-await
     replan: vi.fn(async function* (
       _slug: string,
       _request: ReplanRequest,
       _options?: RequestOptions,
-    ) {
+    ): AsyncGenerator<ReplanEvent, void, undefined> {
       // Nothing found, which is the honest default and today's common outcome.
       yield { stage: 'done', message: 'Done', pois: [], legs: [], progress: 1 }
     }),
@@ -1235,6 +1237,108 @@ describe('App arriving', () => {
     await waitFor(() => {
       expect(router.getTrip).toHaveBeenCalledWith('wabdr-north', expect.anything())
     })
+  })
+})
+
+describe('deciding about the places discovery found', () => {
+  /** A trip already carrying discovered places, which is what a replan leaves behind. */
+  function withPlaces() {
+    window.history.replaceState(null, '', '/?trip=wabdr-north')
+    const fake = createFakeMaps()
+    const router = fakeRouter()
+    router.getTrip.mockResolvedValue(
+      tripFixture({
+        slug: 'wabdr-north',
+        name: 'WABDR North',
+        waypoints: [waypointFixture(47, -120), waypointFixture(48, -120)],
+        pois: [
+          poiFixture({ id: 'a', name: 'Lone Fir', category: 'campground', source: 'places', place_id: 'p1' }),
+          poiFixture({ id: 'b', name: 'Chevron', category: 'fuel', source: 'places', place_id: 'p2' }),
+        ],
+      }),
+    )
+    render(<App mapLoader={fake.loader} mapId="motorooter-test-vector" client={router} />)
+    return { fake, router }
+  }
+
+  it('lists them in the rail, because pins alone were not findable', async () => {
+    // Tim, after a run that found twenty-nine places: "I don't see any to click on". They were
+    // pins. He was right anyway — the rail is where a rider decides.
+    const { fake } = withPlaces()
+    await mapReady(fake)
+
+    expect(await screen.findByRole('button', { name: /^Lone Fir/ })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /^Chevron/ })).toBeInTheDocument()
+  })
+
+  it('opens the same dialog from a list row as from a pin', async () => {
+    const { fake } = withPlaces()
+    await mapReady(fake)
+
+    fireEvent.click(await screen.findByRole('button', { name: /^Lone Fir/ }))
+
+    expect(await screen.findByRole('dialog', { name: 'Lone Fir' })).toBeInTheDocument()
+  })
+
+  it('takes an ignored place off the trip, not just off the screen', async () => {
+    // Discovered places are persisted — `placed` feeds the save — so hiding one without
+    // removing it means it comes straight back on the next load.
+    const { fake, router } = withPlaces()
+    await mapReady(fake)
+    await screen.findByRole('button', { name: /^Lone Fir/ })
+
+    fireEvent.click(screen.getByRole('button', { name: 'Ignore Lone Fir' }))
+
+    await waitFor(() => {
+      expect(screen.queryByRole('button', { name: /^Lone Fir/ })).not.toBeInTheDocument()
+    })
+    await waitFor(() => expect(router.updateTrip).toHaveBeenCalled(), { timeout: 3000 })
+    const saved = router.updateTrip.mock.calls.at(-1)?.[1].pois ?? []
+    expect(saved.map((place) => place.id)).toEqual(['b'])
+  })
+
+  it('lets the rider put back a place they ignored by mistake', async () => {
+    // One click removes something a two-minute discovery run found, so a mis-click needs a way
+    // back that is not "run discovery again".
+    const { fake } = withPlaces()
+    await mapReady(fake)
+    await screen.findByRole('button', { name: /^Lone Fir/ })
+
+    fireEvent.click(screen.getByRole('button', { name: 'Ignore Lone Fir' }))
+    fireEvent.click(await screen.findByRole('button', { name: /undo/i }))
+
+    expect(await screen.findByRole('button', { name: /^Lone Fir/ })).toBeInTheDocument()
+  })
+
+  it('keeps an ignored place off the list when a replan finds it again', async () => {
+    // The stream unions into what is shown, so an ignore that only filtered the document would
+    // be undone by the next run turning the same place up.
+    const { fake, router } = withPlaces()
+    await mapReady(fake)
+    await screen.findByRole('button', { name: /^Lone Fir/ })
+    fireEvent.click(screen.getByRole('button', { name: 'Ignore Lone Fir' }))
+    await waitFor(() => {
+      expect(screen.queryByRole('button', { name: /^Lone Fir/ })).not.toBeInTheDocument()
+    })
+
+    router.replan.mockImplementation(
+      // eslint-disable-next-line @typescript-eslint/require-await
+      async function* () {
+        yield {
+          stage: 'discovery',
+          message: 'Found places',
+          progress: 1,
+          pois: [
+            poiFixture({ id: 'a', name: 'Lone Fir', category: 'campground', source: 'places', place_id: 'p1' }),
+          ],
+          legs: [],
+        }
+      },
+    )
+    fireEvent.click(screen.getByRole('button', { name: /find places/i }))
+
+    await waitFor(() => expect(router.replan).toHaveBeenCalled())
+    expect(screen.queryByRole('button', { name: /^Lone Fir/ })).not.toBeInTheDocument()
   })
 })
 

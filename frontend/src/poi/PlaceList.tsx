@@ -1,0 +1,99 @@
+/**
+ * The discovered places, as a list.
+ *
+ * Built because of what Tim said after a *successful* discovery run — "I don't see any to click
+ * on" — of twenty-nine places that had been found, resolved and judged. They were pins, and he
+ * was right anyway: twenty-nine pins on a map is a haystack, and the rail is where a rider
+ * decides.
+ *
+ * The job is triage, not detail. Enough to tell one place from another **without a Places call**,
+ * because Google's terms mean anything richer has to be re-fetched every time it is shown, and
+ * paying for twenty-nine of those to draw a list would be absurd. So a row carries what the
+ * trip document already holds: what kind of place it is, whether it is on the route, whether it
+ * was ever confirmed, and the discovery judge's own note about why it was kept.
+ *
+ * Grouped by the same three groups the pins use, so the list and the map agree about what a
+ * thing is — a rider matching one to the other should not have to do a puzzle.
+ */
+import { isVerified, poiGlyph, poiGroup, poiLabel, type PoiGroup } from '../map/poiPin'
+import type { Poi } from '../api/types'
+
+export interface PlaceListProps {
+  readonly pois: readonly Poi[]
+  readonly onOpen: (poi: Poi) => void
+  /** Take it off the trip. Durable, because discovered places are saved into the document. */
+  readonly onIgnore: (poi: Poi) => void
+}
+
+const GROUP_ORDER: readonly { group: PoiGroup; title: string }[] = [
+  { group: 'stay', title: 'Stays' },
+  { group: 'supply', title: 'Supplies' },
+  { group: 'sight', title: 'Sights' },
+]
+
+export function PlaceList({ pois, onOpen, onIgnore }: PlaceListProps): React.JSX.Element | null {
+  // Nothing rather than an empty panel: a heading over no rows reads as broken rather than as a
+  // discovery run nobody has made yet.
+  if (pois.length === 0) return null
+
+  return (
+    <section className="places" aria-label="Places found">
+      <h2 className="places__title">
+        Places · <span className="places__count">{pois.length} places</span>
+      </h2>
+
+      {GROUP_ORDER.map(({ group, title }) => {
+        const inGroup = pois.filter((poi) => poiGroup(poi.category) === group)
+        // A heading over nothing is worse than a missing heading: it reads as a failed search
+        // for that kind of place rather than as one that was never made.
+        if (inGroup.length === 0) return null
+
+        return (
+          <div key={group} className="places__group">
+            <h3 className="places__group-title">{title}</h3>
+            <ul className="places__list">
+              {inGroup.map((poi) => (
+                <li key={poi.id} className="places__row">
+                  <button
+                    type="button"
+                    className="places__open"
+                    onClick={() => onOpen(poi)}
+                  >
+                    <span className="places__glyph" aria-hidden="true">
+                      {poiGlyph(poi.category)}
+                    </span>
+                    <span className="places__body">
+                      <span className="places__name">{poi.name}</span>
+                      <span className="places__meta">
+                        {poiLabel(poi.category)}
+                        {poi.on_route === true && ' · on the route'}
+                        {/* Said here rather than discovered as a missing button in the dialog:
+                            an unresolved suggestion cannot be pinned to a route at all. */}
+                        {!isVerified(poi) && ' · unconfirmed'}
+                      </span>
+                      {poi.note !== null && poi.note !== undefined && poi.note !== '' && (
+                        // The judge's own reason for keeping it, and the only real signal that
+                        // costs nothing to show.
+                        <span className="places__note">{poi.note}</span>
+                      )}
+                    </span>
+                  </button>
+                  <button
+                    type="button"
+                    className="places__ignore"
+                    // Named, because a column of bare crosses is unusable with a screen reader
+                    // and ambiguous with a mouse once the list is twenty-nine long.
+                    aria-label={`Ignore ${poi.name}`}
+                    onClick={() => onIgnore(poi)}
+                  >
+                    ×
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )
+      })}
+    </section>
+  )
+}

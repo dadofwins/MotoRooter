@@ -13,18 +13,24 @@ absent one — it puts the wrong icon on the map and gets filtered into the wron
 nothing about it looks broken.
 """
 
-import asyncio
 import json
 import logging
 import re
 from collections.abc import Iterable, Sequence
 from types import MappingProxyType
+from typing import TypeVar
 
 from motorooter.llm.errors import LlmError
 from motorooter.llm.messages import Message, SystemMessage, UserMessage
 from motorooter.llm.protocol import LlmClient
+from motorooter.planning.discovery.concurrency import (
+    DEFAULT_CONCURRENCY,
+    bounded_gather,
+)
 from motorooter.planning.discovery.models import ResolvedCandidate
 from motorooter.trips.models import PoiCategory
+
+T = TypeVar("T")
 
 logger = logging.getLogger(__name__)
 
@@ -194,8 +200,8 @@ class CategoryClassifier:
             pending[start : start + CLASSIFY_BATCH_SIZE]
             for start in range(0, len(pending), CLASSIFY_BATCH_SIZE)
         ]
-        settled = await asyncio.gather(
-            *(self._classify_batch(batch) for batch in batches), return_exceptions=True
+        settled = await bounded_gather(
+            [self._classify_batch(batch) for batch in batches], DEFAULT_CONCURRENCY
         )
 
         updated = list(resolved)

@@ -6,6 +6,7 @@ reply, so a model cannot move a pin, rename a place or contradict a distance no 
 it returns.
 """
 
+import asyncio
 import json
 import logging
 from math import pi
@@ -15,6 +16,7 @@ import pytest
 from motorooter.llm.errors import LlmError, LlmUnavailable
 from motorooter.llm.messages import AssistantMessage
 from motorooter.llm.providers.fake import FakeLlmClient
+from motorooter.planning.discovery.concurrency import DEFAULT_CONCURRENCY
 from motorooter.planning.discovery.judge import (
     JUDGE_BATCH_SIZE,
     CandidateJudge,
@@ -577,6 +579,48 @@ class TestProgressCountsTheStageNotTheBatch:
 
     async def test_a_single_batch_still_counts_up_from_one(self):
         assert await self._counts(3) == [(1, 3), (2, 3), (3, 3)]
+
+
+class TestItRespectsTheStageConcurrencyCeiling:
+    """The judge got the same unbounded fan-out as the categoriser, on the same afternoon.
+
+    `concurrency.py` states six in flight per stage, against the tightest per-minute ceiling
+    in the stack, because exceeding one produces a wave of 429s indistinguishable from an
+    outage. Gathering every batch at once means a corridor with forty batches makes forty
+    calls at once — growth without bound in corridor length, which is precisely the property
+    batching was introduced to remove.
+    """
+
+    class Counting(FakeLlmClient):
+        def __init__(self) -> None:
+            super().__init__(
+                replies=(AssistantMessage(content='{"scores": []}'),), repeat_last=True
+            )
+            self.in_flight = 0
+            self.peak = 0
+
+        async def complete(self, messages, tools):
+            self.in_flight += 1
+            self.peak = max(self.peak, self.in_flight)
+            try:
+                await asyncio.sleep(0)
+                return await super().complete(messages, tools)
+            finally:
+                self.in_flight -= 1
+
+    async def test_it_does_not_exceed_the_stage_ceiling(self):
+        client = self.Counting()
+        await CandidateJudge(client).judge(
+            [resolved(f"P{index}") for index in range(JUDGE_BATCH_SIZE * 20)], LEG
+        )
+        assert client.peak <= DEFAULT_CONCURRENCY
+
+    async def test_it_does_run_them_concurrently(self):
+        client = self.Counting()
+        await CandidateJudge(client).judge(
+            [resolved(f"P{index}") for index in range(JUDGE_BATCH_SIZE * 20)], LEG
+        )
+        assert client.peak > 1
 
 
 class TestTheStageCounterItself:

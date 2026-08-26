@@ -331,6 +331,10 @@ mean is dragged toward zero by the very points being detected.
 
 Climb figures are no longer suppressed on these grounds.
 
+**Not reported upstream, and that is settled.** Tim's call — the workaround stands on its own and
+does not depend on ORS changing anything. `docs/upstream/ors-elevation-sentinel.md` keeps the
+reproduction as a record of what the filter was written against; it is not a to-do.
+
 ## Discovery architecture
 
 Discovery has **four** stages, and they answer different questions with different tools.

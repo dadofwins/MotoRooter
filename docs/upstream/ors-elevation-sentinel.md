@@ -1,9 +1,16 @@
 # Upstream report: ORS returns elevation `0` for failed lookups on `cycling-mountain`
 
-**Status: written, not filed.** Filing this on openrouteservice's tracker is an outward-facing
-action and needs whoever owns the account to do it. The text below is ready to paste.
+**Status: WILL NOT BE FILED. Tim's decision, 2026-08-26: "let's drop that and not worry about
+it. Let's just workaround."**
 
-Written while the measurement was fresh, which is the only time this is cheap to write.
+Kept as a record of the diagnosis, not as a pending action. **Do not file it, and do not treat
+it as unfinished work.** Our own fix is merged and independent of anything upstream does:
+`ors.py` computes ascent from the returned elevations and treats an exact `0` as a sentinel when
+the route's own median says it cannot be real.
+
+What survives here is the reproduction and the elimination, which are worth keeping only for one
+reason — if the sentinel filter ever misbehaves, this is the evidence about what it was written
+against, and re-deriving it would cost another afternoon.
 
 ---
 

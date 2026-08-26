@@ -384,6 +384,21 @@ body {
     color: #fca5a5;
   }
 
+  .gpx {
+    border-top-color: rgb(255 255 255 / 0.14);
+  }
+
+  .gpx__contents,
+  .gpx__pending {
+    color: rgb(255 255 255 / 0.6);
+  }
+
+  .gpx__error {
+    color: #fca5a5;
+    background: rgb(220 38 38 / 0.16);
+    border-left-color: #ef4444;
+  }
+
   .categories__group-title,
   .categories__cost {
     color: rgb(255 255 255 / 0.55);
@@ -521,6 +536,37 @@ body {
 
 .points__remove:hover {
   color: #b91c1c;
+}
+
+/* The file for the device. Says what travels before the click, because a rider who discovers on
+   the trail that their track was thinned will not forgive it. */
+.gpx {
+  margin-top: 1rem;
+  padding-top: 1rem;
+  border-top: 1px solid rgb(0 0 0 / 0.12);
+}
+
+.gpx__contents {
+  margin: 0.375rem 0 0;
+  font-size: 0.75rem;
+  line-height: 1.4;
+  color: rgb(0 0 0 / 0.55);
+}
+
+.gpx__pending {
+  margin: 0.375rem 0 0;
+  font-size: 0.75rem;
+  color: rgb(0 0 0 / 0.6);
+}
+
+.gpx__error {
+  margin: 0.375rem 0 0;
+  padding: 0.375rem 0.5rem;
+  font-size: 0.75rem;
+  color: #7f1d1d;
+  background: rgb(220 38 38 / 0.1);
+  border-left: 3px solid #b91c1c;
+  border-radius: 0.25rem;
 }
 
 /* What discovery looks for. Beside the button it changes, because it is part of this run and it

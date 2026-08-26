@@ -941,6 +941,16 @@
             "title": "Created At",
             "type": "string"
           },
+          "default_intent": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/LegIntent"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "duration_is_estimated": {
             "description": "Whether any part of the total was derived rather than reported.\n\nTrue unless every routed leg carried a trustworthy duration, and true for a trip\nwith no geometry at all \u2014 claiming exactness for a total of zero is worse than\nadmitting it is a guess. A number that looks exact when half of it is derived is the\nfailure this exists to prevent.",
             "readOnly": true,
@@ -1171,6 +1181,17 @@
       "UpdateTripRequest": {
         "description": "Replace a trip's editable content.\n\nA full replacement rather than a patch: the frontend holds the authoritative trip\nstate while editing, and partial updates would need conflict rules that an\nunauthenticated prototype cannot enforce anyway.",
         "properties": {
+          "default_intent": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/LegIntent"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "What kind of trip this is. Seeds any leg added later, on either the map or the chat path; each leg's own intent still decides how it routes. Send it when the rider picks a mode for the whole trip rather than for one section."
+          },
           "legs": {
             "anyOf": [
               {

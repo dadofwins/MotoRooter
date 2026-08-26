@@ -12,6 +12,7 @@ handlers turn them into status codes.
 
 from collections.abc import Sequence
 
+from motorooter.routing.models import LegIntent
 from motorooter.trips.errors import TripModifiedConcurrently
 from motorooter.trips.models import Poi, Trip, TripLeg, Waypoint, utc_now
 from motorooter.trips.store import TripStore
@@ -33,6 +34,7 @@ def merged(
     waypoints: Sequence[Waypoint] | None = None,
     legs: Sequence[TripLeg] | None = None,
     pois: Sequence[Poi] | None = None,
+    default_intent: LegIntent | None = None,
 ) -> Trip:
     """Apply a partial edit to a trip.
 
@@ -49,6 +51,9 @@ def merged(
             "waypoints": tuple(waypoints) if waypoints is not None else existing.waypoints,
             "legs": tuple(legs) if legs is not None else existing.legs,
             "pois": tuple(pois) if pois is not None else existing.pois,
+            "default_intent": (
+                default_intent if default_intent is not None else existing.default_intent
+            ),
             "edited_at": utc_now() if geometry_changed else existing.edited_at,
         }
     )
@@ -64,6 +69,7 @@ async def edit_trip(
     waypoints: Sequence[Waypoint] | None = None,
     legs: Sequence[TripLeg] | None = None,
     pois: Sequence[Poi] | None = None,
+    default_intent: LegIntent | None = None,
 ) -> Trip:
     """Apply a partial edit, refusing to clobber a concurrent one.
 
@@ -80,7 +86,14 @@ async def edit_trip(
     """
     for attempt in range(1, MAX_UPDATE_ATTEMPTS + 1):
         versioned = await store.get_versioned(slug)
-        candidate = merged(versioned.trip, name=name, waypoints=waypoints, legs=legs, pois=pois)
+        candidate = merged(
+            versioned.trip,
+            name=name,
+            waypoints=waypoints,
+            legs=legs,
+            pois=pois,
+            default_intent=default_intent,
+        )
         try:
             return await store.put(candidate, if_version=versioned.version)
         except TripModifiedConcurrently:

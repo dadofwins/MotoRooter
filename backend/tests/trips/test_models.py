@@ -262,6 +262,22 @@ class TestTotals:
         assert trip().total_unpaved_fraction == 0.0
 
 
+class TestDefaultIntent:
+    """What kind of trip this is, remembered on the trip rather than only on its legs.
+
+    Without it the mode lives *only* in legs that currently exist, so a trip stripped back
+    to one waypoint and rebuilt comes back paved — silently, and after the rider said
+    "as much fun offroad as possible".
+    """
+
+    def test_a_trip_need_not_say_what_kind_it_is(self):
+        """Absent, not paved. Most trips are built by mouse and never state a preference."""
+        assert trip().default_intent is None
+
+    def test_a_trip_can_say_what_kind_it_is(self):
+        assert trip(default_intent=LegIntent.UNPAVED).default_intent is LegIntent.UNPAVED
+
+
 class TestSchemaEvolution:
     def test_carries_a_schema_version(self):
         """Trips are JSON in a bucket; migrations need a version to branch on."""

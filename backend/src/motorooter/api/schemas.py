@@ -131,6 +131,14 @@ class UpdateTripRequest(BaseModel):
     waypoints: list[Waypoint] | None = None
     legs: list[TripLeg] | None = None
     pois: list[Poi] | None = None
+    default_intent: LegIntent | None = Field(
+        default=None,
+        description=(
+            "What kind of trip this is. Seeds any leg added later, on either the map or the "
+            "chat path; each leg's own intent still decides how it routes. Send it when the "
+            "rider picks a mode for the whole trip rather than for one section."
+        ),
+    )
 
 
 class ReplanRequest(BaseModel):

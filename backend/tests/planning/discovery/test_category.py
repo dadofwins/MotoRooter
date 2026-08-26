@@ -15,13 +15,20 @@ The query's category is never used. Not as a fallback either: a plausible-lookin
 category is worse than an absent one.
 """
 
+import asyncio
+
 import pytest
 
+from motorooter.llm.messages import AssistantMessage
+from motorooter.llm.providers.fake import FakeLlmClient
 from motorooter.planning.discovery.category import (
+    CLASSIFY_BATCH_SIZE,
     PLACES_TYPE_TO_CATEGORY,
+    CategoryClassifier,
     from_places_types,
     is_a_place,
 )
+from motorooter.planning.discovery.concurrency import DEFAULT_CONCURRENCY
 from motorooter.trips.models import PoiCategory
 
 
@@ -293,6 +300,66 @@ class TestItSurvivesAWholeRouteOfCandidates:
         client = FakeLlmClient(replies=(LlmUnavailable("timed out"),))
         with pytest.raises(LlmUnavailable):
             await CategoryClassifier(client).classify(self._batch(3))
+
+
+class TestItRespectsTheStageConcurrencyCeiling:
+    """Batching replaced one unbounded call with unbounded calls.
+
+    `concurrency.py` states the rule: six in flight per stage, "chosen against the tightest
+    per-minute ceiling in the stack", because the failure mode of exceeding one is a wave of
+    429s that looks exactly like the service being broken. `resolve` has always honoured it
+    with a semaphore. The two stages batched on 2026-08-26 did not — they gathered every
+    batch at once, so a long enough corridor puts as many calls in flight as it has batches.
+
+    Which is the same shape as the cliff the batching fixed: something that grew without
+    bound with corridor length. Nine concurrent calls worked on a 797 km trip; nobody has
+    tried three thousand.
+    """
+
+    class Counting(FakeLlmClient):
+        """Records the high-water mark of calls in flight."""
+
+        def __init__(self, reply: AssistantMessage) -> None:
+            super().__init__(replies=(reply,), repeat_last=True)
+            self.in_flight = 0
+            self.peak = 0
+
+        async def complete(self, messages, tools):
+            self.in_flight += 1
+            self.peak = max(self.peak, self.in_flight)
+            try:
+                await asyncio.sleep(0)  # let every other batch start before this one returns
+                return await super().complete(messages, tools)
+            finally:
+                self.in_flight -= 1
+
+    @staticmethod
+    def _batch(size: int):
+        return [
+            TestTheModelFillsWhatPlacesCannot._resolved(f"Place {index}") for index in range(size)
+        ]
+
+    @staticmethod
+    def _client():
+        return TestItRespectsTheStageConcurrencyCeiling.Counting(
+            TestTheModelFillsWhatPlacesCannot._says({"categories": []})
+        )
+
+    async def test_it_does_not_exceed_the_stage_ceiling(self):
+        client = self._client()
+        await CategoryClassifier(client).classify(self._batch(CLASSIFY_BATCH_SIZE * 20))
+        assert client.peak <= DEFAULT_CONCURRENCY
+
+    async def test_it_does_run_them_concurrently(self):
+        """The bound must not become "one at a time", which is the shape batching replaced."""
+        client = self._client()
+        await CategoryClassifier(client).classify(self._batch(CLASSIFY_BATCH_SIZE * 20))
+        assert client.peak > 1
+
+    async def test_every_batch_still_runs(self):
+        client = self._client()
+        await CategoryClassifier(client).classify(self._batch(CLASSIFY_BATCH_SIZE * 3))
+        assert len(client.conversations) == 3
 
 
 class TestARoadIsNeverAPlace:

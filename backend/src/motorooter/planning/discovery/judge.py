@@ -19,18 +19,24 @@ to prefer viewpoints. A preference encoded in a prompt is invisible to tests; a 
 not.
 """
 
-import asyncio
 import json
 import logging
 import re
 from collections.abc import Callable, Sequence
+from typing import TypeVar
 
 from motorooter.llm.errors import LlmError
 from motorooter.llm.messages import Message, SystemMessage, UserMessage
 from motorooter.llm.protocol import LlmClient
+from motorooter.planning.discovery.concurrency import (
+    DEFAULT_CONCURRENCY,
+    bounded_gather,
+)
 from motorooter.planning.discovery.corridor import SearchCorridor
 from motorooter.planning.discovery.evidence import assemble
 from motorooter.planning.discovery.models import Evidence, ResolvedCandidate, ScoredCandidate
+
+T = TypeVar("T")
 
 logger = logging.getLogger(__name__)
 
@@ -142,12 +148,12 @@ class CandidateJudge:
         # something different to each of them. Tim watched it go 7/20, 17/20, 10/20. Safe
         # without a lock: asyncio is single-threaded and this only moves between awaits.
         counted = _StageCount(len(resolved), on_progress)
-        settled = await asyncio.gather(
-            *(
+        settled = await bounded_gather(
+            [
                 self._judge_batch(batch, leg, counted.batch(), of_total=len(resolved))
                 for batch in batches
-            ),
-            return_exceptions=True,
+            ],
+            DEFAULT_CONCURRENCY,
         )
 
         scored: list[ScoredCandidate] = []

@@ -12,6 +12,10 @@ needs to emit several progress events per unit of work and the resolver needs in
 back, and no one helper is a good fit for both.
 """
 
+import asyncio
+from collections.abc import Coroutine, Sequence
+from typing import Any
+
 DEFAULT_CONCURRENCY = 6
 """Requests in flight per stage.
 
@@ -25,3 +29,29 @@ Per stage, not per run, so two stages overlapping can put twice this in flight. 
 accounted for in the headroom above rather than coordinated, since a global budget would
 couple stages that otherwise know nothing about each other.
 """
+
+
+async def bounded_gather[T](
+    tasks: Sequence[Coroutine[Any, Any, T]], limit: int = DEFAULT_CONCURRENCY
+) -> list[T | BaseException]:
+    """Run `tasks` concurrently, at most `limit` at once, settling rather than raising.
+
+    Here rather than in either caller because two stages need it and a copy in each is the
+    drift this codebase keeps paying for.
+
+    Batching a stage removes one unbounded call and puts unbounded *calls* in its place: a
+    corridor with forty batches makes forty requests at once, which is growth in corridor
+    length all over again. Both stages batched on 2026-08-26 shipped that way, and the
+    ceiling above says exactly why it matters — exceeding a provider's per-minute limit
+    produces a wave of 429s indistinguishable from an outage.
+
+    Settles rather than raises, because every caller here degrades on a partial failure and
+    needs to see which task failed rather than only the first exception.
+    """
+    gate = asyncio.Semaphore(max(limit, 1))
+
+    async def run(task: Coroutine[Any, Any, T]) -> T:
+        async with gate:
+            return await task
+
+    return list(await asyncio.gather(*(run(task) for task in tasks), return_exceptions=True))

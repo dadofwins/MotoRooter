@@ -277,3 +277,52 @@ class TestPhotos:
         )
         urls = client.get("/api/places/ChIJ_halfway").json()["detail"]["photo_urls"]
         assert len(urls) == 1
+
+
+class TestThePhotoKeyIsSeparable:
+    """A photo URL carries its key into an unauthenticated page.
+
+    Today the Maps browser key and the Places *server* key are the same value, so every POI
+    dialog would hand a visitor a working, unrestricted key the moment there is a public URL
+    — billing exposure with no ceiling on an app that is world-readable by design.
+
+    The fix is a second key, restricted by HTTP referrer and to Places Photos, used only for
+    the URLs that reach a browser. It falls back rather than being required: a missing key
+    must not 501 the dialog on a prototype nobody has deployed. But the fallback is *loud*,
+    because a deployment silently publishing its server key is exactly what should be noisy.
+    """
+
+    def test_the_photo_key_is_used_when_configured(self, places_returning):
+        client = places_returning(
+            {
+                "id": "ChIJ_x",
+                "displayName": {"text": "Somewhere"},
+                "location": {"latitude": 47.0, "longitude": -121.0},
+                "types": ["campground"],
+                "photos": [{"name": "places/ChIJ_x/photos/ref0"}],
+            }
+        )
+        client.app.state.places = PlaceDetails(api_key="server-key", photo_key="browser-key")
+        urls = client.get("/api/places/ChIJ_x").json()["detail"]["photo_urls"]
+        assert "browser-key" in urls[0]
+        assert "server-key" not in urls[0]
+
+    def test_it_falls_back_to_the_server_key(self, places_returning):
+        """So a prototype with one key still shows photos."""
+        client = places_returning(
+            {
+                "id": "ChIJ_x",
+                "displayName": {"text": "Somewhere"},
+                "location": {"latitude": 47.0, "longitude": -121.0},
+                "types": ["campground"],
+                "photos": [{"name": "places/ChIJ_x/photos/ref0"}],
+            }
+        )
+        client.app.state.places = PlaceDetails(api_key="server-key")
+        urls = client.get("/api/places/ChIJ_x").json()["detail"]["photo_urls"]
+        assert "server-key" in urls[0]
+
+    def test_the_fallback_is_reported(self):
+        """`photo_key_is_shared` is what the startup warning reads."""
+        assert PlaceDetails(api_key="k").photo_key_is_shared is True
+        assert PlaceDetails(api_key="k", photo_key="b").photo_key_is_shared is False

@@ -132,6 +132,13 @@ class TestGuardrails:
         placed = anchors(route, spacing_m=1_000, max_anchors=20)
         assert placed[-1] == route[-1]
 
+    @pytest.mark.parametrize("cap", [0, 1, -1])
+    def test_fewer_than_two_anchors_is_refused(self, cap):
+        """Both ends are always anchors, so one is not a possible answer — and the widening
+        arithmetic divides by `max_anchors - 1`. A test asking for one found the crash."""
+        with pytest.raises(ValueError, match="max_anchors"):
+            anchors(straight(10_000), max_anchors=cap)
+
     def test_capping_widens_the_spacing_rather_than_clustering_at_the_start(self):
         """The mean gap cannot see this, which is the point.
 

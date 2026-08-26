@@ -77,6 +77,11 @@ def anchors(
     if spacing_m <= 0:
         msg = f"spacing_m must be positive, got {spacing_m}"
         raise ValueError(msg)
+    if max_anchors < 2:
+        # Both ends are always anchors, so one is not a possible answer — and the widening
+        # arithmetic below divides by `max_anchors - 1`. Found by a test passing 1.
+        msg = f"max_anchors must be at least 2 (both route ends), got {max_anchors}"
+        raise ValueError(msg)
     if len(geometry) < 2:
         return tuple(geometry)
 

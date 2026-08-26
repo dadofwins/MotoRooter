@@ -311,3 +311,51 @@ class TestRegionDisambiguation:
         extract, _ = extractor(says({"places": [extraction(0, "Road to Snag Lake, Washington")]}))
         found = await extract.extract(RESULTS, region="Washington")
         assert found[0].name == "Road to Snag Lake, Washington"
+
+
+class TestItSaysWhatEachNameIs:
+    """Roads are leads, places are results, and only the model can tell them apart here."""
+
+    async def test_a_road_is_marked_as_one(self):
+        extract, _ = extractor(
+            says(
+                {"places": [{"result_index": 0, "place_name": "Road to Snag Lake", "kind": "road"}]}
+            )
+        )
+        found = await extract.extract(RESULTS)
+        assert found[0].kind.value == "road"
+
+    async def test_a_place_is_marked_as_one(self):
+        extract, _ = extractor(
+            says(
+                {
+                    "places": [
+                        {"result_index": 0, "place_name": "Road to Snag Lake", "kind": "place"}
+                    ]
+                }
+            )
+        )
+        assert (await extract.extract(RESULTS))[0].kind.value == "place"
+
+    async def test_an_omitted_kind_defaults_to_place(self):
+        """The safe direction: a misfiled road resolves to nothing and is dropped, while a
+        misfiled place would be expanded into searches and never pinned."""
+        extract, _ = extractor(says({"places": [extraction(0, "Road to Snag Lake")]}))
+        assert (await extract.extract(RESULTS))[0].kind.value == "place"
+
+    async def test_an_unrecognised_kind_defaults_to_place(self):
+        extract, _ = extractor(
+            says(
+                {
+                    "places": [
+                        {"result_index": 0, "place_name": "Road to Snag Lake", "kind": "banana"}
+                    ]
+                }
+            )
+        )
+        assert (await extract.extract(RESULTS))[0].kind.value == "place"
+
+    async def test_the_prompt_explains_the_distinction(self):
+        _, client = extractor(says({"places": []}))
+        await PlaceExtractor(client).extract(RESULTS)
+        assert '"road"' in str(client.conversations[-1])

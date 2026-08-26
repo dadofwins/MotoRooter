@@ -34,7 +34,7 @@ from typing import Any
 from motorooter.llm.messages import Message, SystemMessage, UserMessage
 from motorooter.llm.protocol import LlmClient
 from motorooter.planning.discovery.grounding import appears_in, normalize
-from motorooter.planning.discovery.models import Candidate
+from motorooter.planning.discovery.models import Candidate, CandidateKind
 
 logger = logging.getLogger(__name__)
 
@@ -62,10 +62,13 @@ Rules:
 - Name the specific place someone would stop at, never the geography containing it. Do not
   name states, counties, cities, towns, national forests, national parks, mountain ranges or
   the search area itself. "Road to Snag Lake" yes; "Okanogan-Wenatchee National Forest" no.
+- Say what each name is. `"kind": "place"` for somewhere a rider can stop — a campsite, a
+  diner, a viewpoint. `"kind": "road"` for a road, highway, byway or scenic drive. A road is
+  worth naming even though nobody stops at one: it says where to look next.
 - Mark a result irrelevant if it is about a different region from the one being searched.
 - Return only JSON, in this shape:
 
-{"places": [{"result_index": 0, "place_name": "...", "relevant": true}]}
+{"places": [{"result_index": 0, "place_name": "...", "kind": "place", "relevant": true}]}
 """
 
 
@@ -168,7 +171,12 @@ class PlaceExtractor:
             logger.info("dropped extracted place %r: not present in the result it came from", name)
             return None
 
-        return source.model_copy(update={"name": name.strip()})
+        # An unrecognised kind falls back to `place`, which is the safe direction: a
+        # misfiled road resolves to nothing and is dropped, while a misfiled place would be
+        # expanded into searches and never pinned.
+        raw_kind = entry.get("kind")
+        kind = CandidateKind.ROAD if raw_kind == CandidateKind.ROAD.value else CandidateKind.PLACE
+        return source.model_copy(update={"name": name.strip(), "kind": kind})
 
 
 def _places_in(content: str | None) -> list[dict[str, Any]]:

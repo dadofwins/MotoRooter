@@ -303,6 +303,28 @@ the detour worth it for this rider, does the ride report say it washes out in sp
 receives the computed metrics and the search snippets and returns a score with a reason —
 never a coordinate it invented, and never a number it could have been given.
 
+### Reasoning effort is per-stage, and it is measured
+
+The rule above has a corollary that cost a day to find: **when you do ask the model, ask for
+only the thinking the task needs.**
+
+Extraction was the pipeline's bottleneck, and it looked like a timeout problem. It was not.
+A batch of fifteen snippets took **35–44 s** at the default reasoning budget and **2.9–3.4 s**
+at `reasoning_effort: minimal`, returning the same six places. The slow runs were not more
+accurate — one of them proposed "Washington State, USA", the region it had been handed, as
+somewhere to visit. Extraction is constrained to names present in its input, so the model is
+copying, not deciding, and there is nothing for reasoning to add.
+
+Judging measured the *opposite*, which is why this is a per-stage setting and not a global
+one. The same candidate scored 0.90 at the default, 0.65 at `minimal`, 0.45 at `low`. There
+the thinking is the answer, and a threefold speedup that reorders the list is not a speedup.
+
+So: **measure each stage before setting its budget, and record the numbers next to the
+constant.** Two stages of one pipeline wanted opposite settings, and guessing was wrong in
+both directions — the timeout was raised from 8 s to 25 s on measurement and still failed,
+because the measurement answered the wrong question. A timeout below normal latency does not
+fail fast, it fails always: the run completes, reports no error, and returns nothing.
+
 ### Building it
 
 Mirror the routing layer, which exists and works:

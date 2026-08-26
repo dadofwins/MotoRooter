@@ -18,6 +18,8 @@ from motorooter.planning.discovery.factory import (
     build_discovery,
     settings_from_env,
 )
+from motorooter.planning.discovery.retry import RetryingSearchSource
+from motorooter.planning.discovery.sources.brave import BraveSearchSource
 
 
 def configured() -> DiscoverySettings:
@@ -87,3 +89,23 @@ class TestTheStagesGetTheClientTheyWereArguedFor:
     def test_the_two_budgets_are_actually_different(self):
         """Guards the collapse this started as: one shared client for every stage."""
         assert EXTRACT_TIMEOUT_S < JUDGE_TIMEOUT_S
+
+
+class TestSearchIsRetried:
+    """The layer has to be reachable, which is the thing this project keeps getting wrong.
+
+    Six things merged today were correct, tested, and called by nobody. A retry decorator
+    that exists and is not wrapped around the source is the seventh, and it would look
+    exactly like working code right up until the first 429.
+    """
+
+    def test_the_source_is_wrapped_in_retry(self):
+        pipeline = build_discovery(configured())
+        assert pipeline is not None
+        assert isinstance(pipeline._source, RetryingSearchSource)
+
+    def test_the_brave_source_is_still_underneath(self):
+        """Wrapped, not replaced — candidates carry the source name as provenance."""
+        pipeline = build_discovery(configured())
+        assert pipeline is not None
+        assert pipeline._source.name == BraveSearchSource(api_key="k").name

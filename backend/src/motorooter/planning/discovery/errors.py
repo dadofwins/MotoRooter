@@ -26,6 +26,18 @@ class DiscoveryRateLimited(DiscoveryError):
 
     retryable = True
 
+    def __init__(self, message: str, *, retry_after_s: float | None = None) -> None:
+        """
+        Args:
+            message: what happened.
+            retry_after_s: how long upstream says to wait, when it says. Brave returns
+                `x-ratelimit-reset` in seconds — measured at 1 on our key, against a window
+                of one second — so a guess would sleep an order of magnitude too long. The
+                caller decides whether to believe it; this only carries it.
+        """
+        super().__init__(message)
+        self.retry_after_s = retry_after_s
+
 
 class DiscoveryQuotaExceeded(DiscoveryError):
     """The search budget is spent. Retrying gains nothing but delay."""

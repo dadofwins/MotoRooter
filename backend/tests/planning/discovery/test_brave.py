@@ -263,3 +263,49 @@ class TestWhichDiscoveryError:
     async def test_rate_limited_is_retryable_and_quota_is_not(self):
         assert DiscoveryRateLimited("x").retryable is True
         assert DiscoveryQuotaExceeded("x").retryable is False
+
+
+def _a_query():
+    return queries_for("Chinook Pass", [PoiCategory.WILD_CAMP])[0]
+
+
+class TestItReportsWhenToComeBack:
+    """Brave says how long to wait, and the retry layer is useless without it being read.
+
+    `x-ratelimit-reset` is seconds until each quota window resets, one value per window in
+    the policy — measured as `1, 515820` on our key, meaning one second for the per-second
+    window and six days for the monthly one. The first is the one that matters; the second
+    would hang a replan for a week.
+    """
+
+    @staticmethod
+    async def _rate_limited(headers: dict[str, str]) -> DiscoveryRateLimited:
+        with respx.mock(assert_all_called=False) as mock:
+            mock.get(url__startswith=BRAVE_SEARCH_URL).mock(
+                return_value=httpx.Response(429, json={}, headers=headers)
+            )
+            with pytest.raises(DiscoveryRateLimited) as caught:
+                await BraveSearchSource(api_key="k").search(_a_query(), near=ANCHOR)
+        return caught.value
+
+    async def test_the_reset_header_is_carried(self):
+        exc = await self._rate_limited({"x-ratelimit-reset": "1"})
+        assert exc.retry_after_s == pytest.approx(1.0)
+
+    async def test_the_shortest_window_wins(self):
+        """Two windows, comma-separated. Waiting for the monthly one would hang for days."""
+        exc = await self._rate_limited({"x-ratelimit-reset": "1, 515820"})
+        assert exc.retry_after_s == pytest.approx(1.0)
+
+    async def test_a_missing_header_leaves_it_unset(self):
+        """Then the retry layer guesses, which is what the guess is for."""
+        assert (await self._rate_limited({})).retry_after_s is None
+
+    async def test_a_nonsense_header_is_ignored(self):
+        """Upstream input. A header that is not a number must not become a delay."""
+        assert (await self._rate_limited({"x-ratelimit-reset": "soon"})).retry_after_s is None
+
+    async def test_retry_after_is_honoured_too(self):
+        """The standard header, in case Brave or a proxy sends it instead."""
+        exc = await self._rate_limited({"retry-after": "2"})
+        assert exc.retry_after_s == pytest.approx(2.0)

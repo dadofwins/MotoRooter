@@ -23,6 +23,7 @@ from motorooter.planning.discovery.judge import CandidateJudge
 from motorooter.planning.discovery.naming import PlaceNamer
 from motorooter.planning.discovery.pipeline import DiscoveryPipeline
 from motorooter.planning.discovery.resolve import PlacesResolver
+from motorooter.planning.discovery.retry import RetryingSearchSource
 from motorooter.planning.discovery.sources.brave import BraveSearchSource
 
 EXTRACT_TIMEOUT_S = 15.0
@@ -137,7 +138,12 @@ def build_discovery(settings: DiscoverySettings) -> DiscoveryPipeline | None:
     quick = model(EXTRACT_TIMEOUT_S, EXTRACT_EFFORT)
     return DiscoveryPipeline(
         namer=PlaceNamer(api_key=settings.places_api_key or "", client=client),
-        source=BraveSearchSource(api_key=settings.brave_api_key or "", client=client),
+        # Wrapped, not replaced: candidates carry the source name as provenance, and the
+        # decorator passes it through. Retry is the whole of the decorator stack here —
+        # Brave's terms forbid caching results, so there is no cache to compose with it.
+        source=RetryingSearchSource(
+            BraveSearchSource(api_key=settings.brave_api_key or "", client=client)
+        ),
         extractor=PlaceExtractor(quick),
         resolver=PlacesResolver(api_key=settings.places_api_key or "", client=client),
         classifier=CategoryClassifier(quick),

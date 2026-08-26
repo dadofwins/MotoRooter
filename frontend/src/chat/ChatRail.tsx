@@ -22,6 +22,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react
 import type { ApiClient } from '../api/client'
 import { isAbortError, isApiError, isNotImplemented } from '../api/errors'
 import type { ChatEvent, ChatTurn } from '../api/types'
+import { toolActivityLabel } from './chatEvents'
 
 export type ChatClient = Pick<ApiClient, 'chat'>
 
@@ -109,7 +110,15 @@ export function ChatRail({ client, resolveSlug, onTripChanged }: ChatRailProps):
    */
   const [toolProgress, setToolProgress] = useState<number | null>(null)
   const [elapsedS, setElapsedS] = useState(0)
-  /** When this turn began, so the wait is measured rather than counted — see `useReplan`. */
+  /**
+   * When the line currently on screen went up, so the wait is measured rather than counted.
+   *
+   * The *step* rather than the turn, which is a distinction a real turn made expensive: the
+   * judge's first call took 16.6 seconds with the line frozen on "scoring 10 places", because
+   * that stage is one model call for the whole batch and has nothing to say until it returns.
+   * A turn-wide figure reads "27s" there and answers a question nobody asked. How long the thing
+   * in front of you has been the thing in front of you is what separates working from hung.
+   */
   const startedAt = useRef(0)
 
   // The interval drives the render; the clock supplies the number. Counting ticks would make the
@@ -123,6 +132,21 @@ export function ChatRail({ client, resolveSlug, onTripChanged }: ChatRailProps):
       clearInterval(timer)
     }
   }, [isRunning])
+
+  /**
+   * Put a line up, and restart the clock under it.
+   *
+   * One function so the two cannot come apart: a line that changed without the clock resetting
+   * would report the previous step's age against this step's words.
+   */
+  const showActivity = useCallback((line: string | null) => {
+    setActivity((shown) => {
+      if (shown === line) return shown
+      startedAt.current = Date.now()
+      setElapsedS(0)
+      return line
+    })
+  }, [])
 
   const logRef = useRef<HTMLDivElement | null>(null)
   /**
@@ -173,7 +197,7 @@ export function ChatRail({ client, resolveSlug, onTripChanged }: ChatRailProps):
       running.current = controller
       setRunning(true)
       setTruncated(false)
-      setActivity(null)
+      showActivity(null)
       setToolProgress(null)
       startedAt.current = Date.now()
       setElapsedS(0)
@@ -211,10 +235,14 @@ export function ChatRail({ client, resolveSlug, onTripChanged }: ChatRailProps):
             }
             break
           case 'tool_started':
-            // The current activity, and also kept in the transcript: one is what is happening,
-            // the other is what happened.
-            if (item.message !== '') setActivity(item.message)
-            if (item.message !== '') append('tool', item.message)
+            // What is *happening*, and only that. It used to reach the transcript as well, on the
+            // grounds that starting and finishing are different facts — but the note is empty on
+            // the wire today, so nothing showed, and the moment backend fills it in a six-tool
+            // turn becomes twelve lines of log. That is exactly what Tim asked to have folded
+            // away on the replan side. Finished is the one that describes what happened.
+            //
+            // The tool's own name when it says nothing about itself, which today is always.
+            showActivity(item.message === '' ? toolActivityLabel(item.tool) : item.message)
             // A new tool has its own scale, and does not inherit the last one's figure.
             setToolProgress(null)
             break
@@ -222,13 +250,17 @@ export function ChatRail({ client, resolveSlug, onTripChanged }: ChatRailProps):
             // Replaces itself and never reaches the transcript. That distinction is why this is
             // a separate kind: twenty lines of "scoring 3/41" sitting under the answer is worse
             // than the silence it replaces.
-            if (item.message !== '') setActivity(item.message)
+            if (item.message !== '') showActivity(item.message)
             // Null is unknown rather than zero — not every tool can say, and a determinate bar
             // at nothing reads as stuck.
             setToolProgress(item.progress ?? null)
             break
           case 'tool_finished':
             setToolProgress(null)
+            // Back to the generic line: measured, two seconds pass between a tool finishing and
+            // the model saying anything, and holding the finished tool's name through that claims
+            // work that is over.
+            showActivity(null)
             // Named while it runs. "Thinking…" for twenty seconds is indistinguishable from a
             // hang, and discovery genuinely takes that long.
             if (item.message !== '') append('tool', item.message)
@@ -251,19 +283,19 @@ export function ChatRail({ client, resolveSlug, onTripChanged }: ChatRailProps):
           if (controller.signal.aborted) return
           running.current = null
           setRunning(false)
-          setActivity(null)
+          showActivity(null)
         },
         (reason: unknown) => {
           if (isAbortError(reason) || controller.signal.aborted) return
           running.current = null
           setRunning(false)
-          setActivity(null)
+          showActivity(null)
           const failure = failureText(reason)
           append(failure.kind, failure.text)
         },
       )
     },
-    [append, client, isRunning, onTripChanged, resolveSlug],
+    [append, client, isRunning, onTripChanged, resolveSlug, showActivity],
   )
 
   return (

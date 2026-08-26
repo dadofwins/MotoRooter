@@ -16,6 +16,7 @@ import {
 } from './api/fixtures'
 import type {
   ChatEvent,
+  GeocodeResponse,
   ChatRequest,
   Coordinate,
   CreateTripRequest,
@@ -44,6 +45,9 @@ import type {
  */
 function stubUnbuilt() {
   return {
+    geocode: vi.fn((_query: string, _options?: RequestOptions & { readonly near?: Coordinate }) =>
+      Promise.resolve({ results: [] as GeocodeResponse['results'] }),
+    ),
     exportGpx: vi.fn((_slug: string, _options?: RequestOptions) =>
       Promise.reject(new ApiNotImplementedError({ detail: 'gpx export is not implemented yet' })),
     ),
@@ -1243,6 +1247,74 @@ describe('App arriving', () => {
     await waitFor(() => {
       expect(router.getTrip).toHaveBeenCalledWith('wabdr-north', expect.anything())
     })
+  })
+})
+
+describe('adding a point by typing its name', () => {
+  /**
+   * The half of the original trip-creation spec that never shipped — "type a starting and ending
+   * address or choose to click on the map" — because geocoding did not exist until now.
+   */
+  async function ready() {
+    const fake = createFakeMaps()
+    const router = fakeRouter()
+    render(<App mapLoader={fake.loader} mapId="motorooter-test-vector" client={router} />)
+    await mapReady(fake)
+    return { fake, router }
+  }
+
+  async function look(text: string): Promise<void> {
+    fireEvent.change(screen.getByRole('searchbox', { name: /add a place by name/i }), {
+      target: { value: text },
+    })
+    fireEvent.click(screen.getByRole('button', { name: /^search$/i }))
+    await Promise.resolve()
+  }
+
+  it('puts the chosen place on the route, named rather than as a coordinate', async () => {
+    // The point of typing a name: the route reads back as places instead of numbers, which is
+    // the last thing in the app that made a rider read coordinates.
+    const { fake, router } = await ready()
+    router.geocode.mockResolvedValue({
+      results: [
+        {
+          name: 'Leavenworth',
+          place_id: 'ChIJ1',
+          coordinate: { lat: 47.5962, lon: -120.6615 },
+          address: 'Leavenworth, WA 98826, USA',
+          kinds: ['locality'],
+        },
+      ],
+    })
+
+    await look('leavenworth')
+    fireEvent.click(await screen.findByRole('button', { name: /Leavenworth, WA 98826/ }))
+
+    await waitFor(() => {
+      expect(screen.getByText(/1 point placed/)).toBeInTheDocument()
+    })
+    const rows = within(screen.getByRole('region', { name: 'Route points' })).getAllByRole(
+      'listitem',
+    )
+    expect(rows[0]?.textContent ?? '').toMatch(/Leavenworth/)
+    expect(fake.markers.filter((marker) => marker.map !== null).length).toBeGreaterThan(0)
+  })
+
+  it('biases the search toward the trip once it has a point', async () => {
+    // What makes "Leavenworth" the Washington one. Sent only when there is somewhere to bias
+    // toward — a made-up centre would silently prefer one real place over another.
+    const { fake, router } = await ready()
+    router.geocode.mockResolvedValue({ results: [] })
+
+    await look('leavenworth')
+    await waitFor(() => expect(router.geocode).toHaveBeenCalled())
+    expect(router.geocode.mock.calls[0]?.[1]?.near).toBeUndefined()
+
+    fake.clickMap(47.75, -122.16)
+    await look('leavenworth')
+
+    await waitFor(() => expect(router.geocode).toHaveBeenCalledTimes(2))
+    expect(router.geocode.mock.calls[1]?.[1]?.near).toEqual({ lat: 47.75, lon: -122.16 })
   })
 })
 

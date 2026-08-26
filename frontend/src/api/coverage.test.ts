@@ -42,15 +42,6 @@ const UNREAD: Record<string, string> = {
   prefers_unpaved: 'the mode picker states the intent, not the engine behind it',
 
   // Trip metadata with no place in the UI.
-  // STAGING — added by the integrator when `be/geocode` landed, because the endpoint's producer
-  // cannot edit this file and the consumer cannot build against a type that does not exist yet.
-  // `fe/place-search` consumes all three. These entries expire by themselves: the tripwire fails
-  // on an allowlisted field that *is* read, so landing that branch turns them red and forces
-  // their removal. Delete them there rather than here.
-  address: 'consumed by fe/place-search, landing next — needed to tell Stevens Pass from Stevens',
-  kinds: 'consumed by fe/place-search, landing next',
-  results: 'consumed by fe/place-search, landing next',
-
   created_at: 'the rail shows the trip name, not its age',
   schema_version: 'migrations are the backend concern; the client compiles against one shape',
 

@@ -45,6 +45,8 @@ export type ReplanEvent = Schemas['ReplanEvent']
 export type PoiDetailResponse = Schemas['PoiDetailResponse']
 
 // Assistant conversation
+export type GeocodeResponse = Schemas['GeocodeResponse']
+export type GeocodeResult = Schemas['GeocodeResult']
 export type ChatRequest = Schemas['ChatRequest']
 export type ChatEvent = Schemas['ChatEvent']
 export type ChatTurn = Schemas['ChatTurn']

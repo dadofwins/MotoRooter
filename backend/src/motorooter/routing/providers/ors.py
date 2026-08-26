@@ -11,7 +11,9 @@ bicycle access rules. That approximation is the main reason to move to a self-ho
 instance with a custom moto profile.
 """
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
+from itertools import pairwise
+from statistics import median
 from typing import Any
 
 import httpx
@@ -272,7 +274,9 @@ class OrsProvider:
                 distance_m=summary["distance"],
                 duration_s=summary["duration"],
                 surface_spans=self._parse_surface_spans(properties, len(geometry) - 1),
-                ascent_m=properties.get("ascent"),
+                # Computed, not read. `properties.ascent` is self-consistent with the
+                # elevations ORS returns and both are wrong together; see `ascent_from`.
+                ascent_m=ascent_from(positions),
                 provider=name,
                 intent=request.intent,
             )
@@ -305,3 +309,58 @@ class OrsProvider:
                 )
             )
         return tuple(spans)
+
+
+SENTINEL_ELEVATION_M = 0.0
+IMPLAUSIBLE_DROP_M = 100.0
+"""What marks a failed elevation lookup rather than a real place at sea level.
+
+ORS returns exactly 0 when its elevation lookup fails, and only on `cycling-mountain` —
+measured at twelve points of 2,763 on one corridor and four of 311 on another, with
+`driving-car` returning none on either. Because ascent is a cumulative sum of positive
+deltas, each excursion to sea level and back adds twice the local elevation: those twelve
+points inflated a corridor's reported ascent from 3,605 m to 6,729 m, or 229 m/km over a
+paved highway pass, which is a sustained 23% gradient.
+
+**Zero alone is not the signal.** Sea level is a real elevation and a coastal route must not
+have its geometry treated as corrupt, so a sentinel is identified by the *discontinuity* —
+an exact zero that its neighbours say cannot be right. A hundred metres is far beyond any
+step real terrain puts between two points a few tens of metres apart, and far below the
+hundreds of metres a sentinel introduces.
+"""
+
+
+def ascent_from(positions: Sequence[Sequence[float]]) -> float | None:
+    """Cumulative positive elevation change, ignoring failed lookups.
+
+    Summed naively — positive deltas, no smoothing, no threshold — because that is how the
+    reference figures this is compared against are computed, and a different method would
+    make the comparison meaningless rather than better.
+
+    `None` rather than 0.0 when there is no elevation data: a leg routed without elevation
+    has not climbed nothing, it has not been measured, and reporting zero would be a claim.
+    """
+    elevations = [position[2] for position in positions if len(position) >= 3]
+    if not elevations:
+        return None
+
+    usable = [value for value in elevations if not _is_sentinel(value, elevations)]
+    if not usable:
+        return None
+    return sum(max(0.0, later - earlier) for earlier, later in pairwise(usable))
+
+
+def _is_sentinel(value: float, elevations: Sequence[float]) -> bool:
+    """Whether this exact zero is a failed lookup rather than sea level.
+
+    Judged against the route's own median, which is robust to however many sentinels there
+    are — a mean would be dragged towards zero by the very points being detected.
+    """
+    if value != SENTINEL_ELEVATION_M:
+        return False
+    real = [item for item in elevations if item != SENTINEL_ELEVATION_M]
+    if not real:
+        # Every point is zero. Either a genuinely flat sea-level route or a total failure,
+        # and nothing in the data distinguishes them, so believe it.
+        return False
+    return median(real) - SENTINEL_ELEVATION_M > IMPLAUSIBLE_DROP_M

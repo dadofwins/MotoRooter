@@ -651,6 +651,39 @@ describe('App and points of interest', () => {
     expect(await screen.findByText(/3 points placed/i)).toBeInTheDocument()
   })
 
+  it('adds a place into one leg without re-routing its neighbour', async () => {
+    // Found by the call count on the test above, which is not the same as being tested. The
+    // handler discarded the leg structure, so a pairwise one was re-derived: adding one
+    // campground split the leg it landed in, cost two requests instead of one, and re-routed
+    // the segment on the far side of the trip that nobody had touched.
+    const fake = createFakeMaps()
+    const router = fakeRouter()
+    render(
+      <App mapLoader={fake.loader} mapId="motorooter-test-vector" client={router} pois={[CAMP]} />,
+    )
+    await mapReady(fake)
+    fake.clickMap(47.6, -120.7)
+    fake.clickMap(48.1, -120.2)
+    fake.clickMap(48.5, -120.0)
+    await waitFor(() => expect(router.routeLeg).toHaveBeenCalledTimes(2))
+
+    act(() => {
+      fake.poiMarkers()[0]?.contextMenu()
+    })
+
+    await waitFor(() => expect(router.routeLeg).toHaveBeenCalledTimes(3))
+    // One request, and it is the leg the place was inserted into — now three waypoints long
+    // rather than two legs of two.
+    expect(router.routeLeg.mock.calls[2]?.[0].waypoints).toEqual([
+      { lat: 47.6, lon: -120.7 },
+      { lat: 47.9, lon: -120.35 },
+      { lat: 48.1, lon: -120.2 },
+    ])
+    // And nothing else was asked about. The far leg is untouched road.
+    await new Promise((resolve) => setTimeout(resolve, 40))
+    expect(router.routeLeg).toHaveBeenCalledTimes(3)
+  })
+
   it('says why an unconfirmed suggestion cannot be added, rather than ignoring the click', async () => {
     // A disabled control with no explanation is the thing this avoids: the rider is told the
     // place has not been confirmed, which is information about the suggestion, not an error.
@@ -1073,6 +1106,101 @@ describe('App arriving', () => {
 
     await waitFor(() => {
       expect(router.getTrip).toHaveBeenCalledWith('wabdr-north', expect.anything())
+    })
+  })
+})
+
+describe('a trip made of legs', () => {
+  it('asks only about the leg the rider just added', async () => {
+    // A trip used to be one leg spanning every waypoint, so the fourth click re-routed the
+    // whole thing: the wait and the bill both grew with the length of the trip, and "re-request
+    // the affected leg only" was honest right up to the point where the affected leg was all
+    // 274 km of it.
+    const fake = createFakeMaps()
+    const router = fakeRouter()
+    render(<App mapLoader={fake.loader} mapId="motorooter-test-vector" client={router} />)
+    await mapReady(fake)
+
+    fake.clickMap(47.0, -120.0)
+    fake.clickMap(47.5, -120.5)
+    fake.clickMap(48.0, -121.0)
+    fake.clickMap(48.5, -121.5)
+
+    await waitFor(() => {
+      expect(router.routeLeg).toHaveBeenCalledTimes(3)
+    })
+    // Every request is a pair. Before this, they were 2, 3 and 4 waypoints long.
+    for (const call of router.routeLeg.mock.calls) {
+      expect(call[0].waypoints).toHaveLength(2)
+    }
+  })
+
+  it('asks nothing again when the rider removes the point they just placed', async () => {
+    const fake = createFakeMaps()
+    const router = fakeRouter()
+    render(<App mapLoader={fake.loader} mapId="motorooter-test-vector" client={router} />)
+    await mapReady(fake)
+    fake.clickMap(47.0, -120.0)
+    fake.clickMap(47.5, -120.5)
+    fake.clickMap(48.0, -121.0)
+    await waitFor(() => {
+      expect(router.routeLeg).toHaveBeenCalledTimes(2)
+    })
+
+    fireEvent.click(screen.getByRole('button', { name: /remove last point/i }))
+
+    // The first leg is untouched, so there is nothing to ask. It used to cost a request for
+    // the whole remaining route.
+    await waitFor(() => {
+      expect(screen.getByText(/2 points placed/)).toBeInTheDocument()
+    })
+    expect(router.routeLeg).toHaveBeenCalledTimes(2)
+  })
+
+  it('keeps the rest of the route when one segment cannot be routed', async () => {
+    // Partial beats total. One dead segment is not a dead trip, and blanking the map throws
+    // away work the rider can still use.
+    const fake = createFakeMaps()
+    const router = fakeRouter()
+    router.routeLeg.mockImplementation((request: RouteLegInput) =>
+      request.waypoints[0]?.lat === 47.5
+        ? Promise.reject(new ApiError({ status: 422, code: 'no_route_found', detail: 'no road' }))
+        : Promise.resolve(ROUTE_RESPONSE),
+    )
+    render(<App mapLoader={fake.loader} mapId="motorooter-test-vector" client={router} />)
+    await mapReady(fake)
+
+    fake.clickMap(47.0, -120.0)
+    fake.clickMap(47.5, -120.5)
+    fake.clickMap(48.0, -121.0)
+
+    expect(await screen.findByText(/1 segment could not be routed/i)).toBeInTheDocument()
+    // The first leg still has a line on the map.
+    await waitFor(() => {
+      expect(fake.polylines.filter((line) => line.map !== null).length).toBeGreaterThan(0)
+    })
+  })
+
+  it('stops saying a segment failed once the rider removes it', async () => {
+    const fake = createFakeMaps()
+    const router = fakeRouter()
+    router.routeLeg.mockImplementation((request: RouteLegInput) =>
+      request.waypoints[0]?.lat === 47.5
+        ? Promise.reject(new ApiError({ status: 422, code: 'no_route_found', detail: 'no road' }))
+        : Promise.resolve(ROUTE_RESPONSE),
+    )
+    render(<App mapLoader={fake.loader} mapId="motorooter-test-vector" client={router} />)
+    await mapReady(fake)
+    fake.clickMap(47.0, -120.0)
+    fake.clickMap(47.5, -120.5)
+    fake.clickMap(48.0, -121.0)
+    await screen.findByText(/1 segment could not be routed/i)
+
+    fireEvent.click(screen.getByRole('button', { name: /remove last point/i }))
+
+    // A warning about a segment that no longer exists cannot be dismissed.
+    await waitFor(() => {
+      expect(screen.queryByText(/could not be routed/i)).not.toBeInTheDocument()
     })
   })
 })

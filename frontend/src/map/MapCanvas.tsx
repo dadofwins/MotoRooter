@@ -21,8 +21,9 @@ import { distanceM } from '../routing/geo'
 import { createMapOptions, toCoordinate, toLatLng, type MapColorScheme } from './mapOptions'
 import { polylineStyle, toRouteSegments } from './routeLayer'
 import { createClusterPin, createPoiPin, isVerified } from './poiPin'
-import { clusterPois } from './cluster'
+import { clusterPois, type PoiCluster } from './cluster'
 import { FAN_MAX_MEMBERS, fanPositions } from './fan'
+import { FAN_DURATION_MS, runFanAnimation } from './fanAnimation'
 import { createDragHandle, createWaypointPin, waypointKind } from './waypointPin'
 
 /** Stable identities: inline defaults would rebuild every overlay on every render. */
@@ -143,6 +144,8 @@ interface DrawnPin {
   readonly listeners: readonly (google.maps.MapsEventListener | null)[]
   /** The line back to the group and its casing, on a fanned member. */
   readonly leader?: readonly google.maps.Polyline[]
+  /** The group this pin is a member of, on a fanned member: what the opening animates around. */
+  readonly opening?: PoiCluster
 }
 
 /**
@@ -712,21 +715,53 @@ export function MapCanvas({
       // is not where its place is, and the line is what makes that a disclosed offset rather
       // than a quiet relocation. The group's own pin stays as the hub — without it the lines
       // converge on nothing, and there is no way to close what was opened.
-      const spots = fanPositions(cluster.coordinate, cluster.members.length, currentZoom)
+      //
+      // Built closed, at the group itself, and opened by the animation below. Nothing waits for
+      // it: the pins exist and are clickable from the first frame.
+      const closed = fanPositions(cluster.coordinate, cluster.members.length, currentZoom, 0)
       return [
         hubPin,
         ...cluster.members.map((member, index) => {
-          const at = spots[index] ?? cluster.coordinate
+          const at = closed[index] ?? cluster.coordinate
           const path = [toLatLng(cluster.coordinate), toLatLng(at)]
           const leader = [FAN_LEADER_CASING, FAN_LEADER_STYLE].map(
             (style) => new maps.Polyline({ ...style, path, map }),
           )
-          return { ...placePin(member, at), leader }
+          return { ...placePin(member, at), leader, opening: cluster }
         }),
       ]
     })
 
+    /**
+     * Open the fan.
+     *
+     * One loop over the pins *and* their lines, because they are different kinds of overlay and
+     * only this layer can see both — a CSS transition on a marker's content would move the pins
+     * and leave the strokes at full extent, which reads worse than no motion at all. It is also
+     * why no React animation library can do this: nothing React renders is moving.
+     */
+    const opening = pins.filter((pin) => pin.opening !== undefined)
+    const cluster = opening[0]?.opening
+    const stopAnimating =
+      cluster === undefined
+        ? undefined
+        : runFanAnimation(FAN_DURATION_MS, (progress) => {
+            const spots = fanPositions(
+              cluster.coordinate,
+              cluster.members.length,
+              currentZoom,
+              progress,
+            )
+            const hub = toLatLng(cluster.coordinate)
+            opening.forEach(({ marker, leader }, index) => {
+              const at = toLatLng(spots[index] ?? cluster.coordinate)
+              marker.move(at)
+              for (const line of leader ?? []) line.setPath([hub, at])
+            })
+          })
+
     return () => {
+      stopAnimating?.()
       for (const { marker, listeners, leader } of pins) {
         for (const listener of listeners) listener?.remove()
         marker.detach()

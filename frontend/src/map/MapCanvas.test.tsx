@@ -1,7 +1,8 @@
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
 import { MapCanvas } from './MapCanvas'
-import { FAN_MAX_MEMBERS } from './fan'
+import { FAN_MAX_MEMBERS, fanPositions } from './fan'
+import { FAN_DURATION_MS } from './fanAnimation'
 import type { GoogleMaps } from './loadGoogleMaps'
 import { poi as placeFixture, routeLeg } from '../api/fixtures'
 import type { Coordinate, Poi, TripLeg, Waypoint } from '../api/types'
@@ -1516,6 +1517,88 @@ describe('MapCanvas fanning a small group', () => {
       poi: places[1],
       at: { x: 12, y: 34 },
     })
+  })
+
+  it('opens the fan rather than replacing the pin with eight', async () => {
+    // Tim asked for the motion in his first message about clustering. Without it, one pin becomes
+    // eight and the rider has to work out that they came from somewhere.
+    //
+    // Frames are faked explicitly: requestAnimationFrame is not in vitest's default set, so a
+    // test that only calls useFakeTimers runs this on real frames and waits for real time.
+    vi.useFakeTimers({
+      toFake: ['requestAnimationFrame', 'cancelAnimationFrame', 'performance', 'Date'],
+    })
+    try {
+      const fake = createFakeMaps()
+      render(<MapCanvas mapId={MAP_ID} loader={fake.loader} zoom={12} pois={crowd(3)} />)
+      await vi.waitFor(() => expect(fake.clusterPins()).toHaveLength(1))
+
+      act(() => {
+        fake.clusterMarkers()[0]?.click({ x: 100, y: 100 })
+      })
+      // Asserted without an intervening `waitFor`, deliberately: under fake timers `waitFor`
+      // advances the clock while it polls, which would run the whole animation before the first
+      // assertion and quietly make this a test of the finished state twice over.
+      expect(fake.poiPins()).toHaveLength(3)
+
+      // Before any frame: every member is still on the group, so they are seen to leave it.
+      const hub = fake.clusterMarkers()[0]?.position as { lat: number; lng: number }
+      const started = fake.poiMarkers().map((marker) => marker.position as { lat: number; lng: number })
+      for (const at of started) {
+        expect(Math.hypot(at.lat - hub.lat, at.lng - hub.lng)).toBeLessThan(1e-6)
+      }
+
+      act(() => {
+        vi.advanceTimersByTime(FAN_DURATION_MS * 2)
+      })
+
+      // And afterwards they are where a static fan would have put them.
+      const settled = fake.poiMarkers().map((marker) => marker.position as { lat: number; lng: number })
+      const target = fanPositions({ lat: hub.lat, lon: hub.lng }, 3, 12)
+      settled.forEach((at, index) => {
+        expect(at.lat).toBeCloseTo(target[index]?.lat ?? 0, 9)
+        expect(at.lng).toBeCloseTo(target[index]?.lon ?? 0, 9)
+      })
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('carries the leader lines with the pins rather than letting them snap', async () => {
+    // The half that makes it worth doing at all: these are map-rendered strokes, so nothing that
+    // animates the markers' own DOM can touch them. Pins that travel while their lines are
+    // already at full extent looks worse than no animation.
+    vi.useFakeTimers({
+      toFake: ['requestAnimationFrame', 'cancelAnimationFrame', 'performance', 'Date'],
+    })
+    try {
+      const fake = createFakeMaps()
+      render(<MapCanvas mapId={MAP_ID} loader={fake.loader} zoom={12} pois={crowd(3)} />)
+      await vi.waitFor(() => expect(fake.clusterPins()).toHaveLength(1))
+
+      act(() => {
+        fake.clusterMarkers()[0]?.click({ x: 100, y: 100 })
+      })
+      expect(fake.poiPins()).toHaveLength(3)
+
+      const spanOf = (line: (typeof fake.polylines)[number]): number => {
+        const [from, to] = line.path
+        if (from === undefined || to === undefined) return 0
+        return Math.hypot(to.lat - from.lat, to.lng - from.lng)
+      }
+      const leaders = fake.polylines.filter((line) => line.map !== null && line.path.length === 2)
+      expect(leaders.length).toBeGreaterThan(0)
+      // Frame zero: the lines have no length either, because both ends are on the group.
+      for (const line of leaders) expect(spanOf(line)).toBeLessThan(1e-6)
+
+      act(() => {
+        vi.advanceTimersByTime(FAN_DURATION_MS * 2)
+      })
+
+      for (const line of leaders) expect(spanOf(line)).toBeGreaterThan(0)
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('keeps the group pin as the hub the lines run back to', async () => {

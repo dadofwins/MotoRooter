@@ -67,11 +67,17 @@ const MAX_RADIUS_PX = 72
  * are noise, and a fan that reproduced them would be unreadable while looking meaningful.
  *
  * Deterministic, because a fan that reshuffles while it is open is worse than one that overlaps.
+ *
+ * `progress` is how far open it is, and the animation is nothing more than this same layout at a
+ * growing radius. One formula rather than two, so no frame mid-flight can disagree with where the
+ * pins finish — and at 0 every pin sits on the group, which is what makes them read as coming
+ * *from* it rather than sliding in from nowhere.
  */
 export function fanPositions(
   centre: Coordinate,
   count: number,
   zoom: number,
+  progress = 1,
 ): readonly Coordinate[] {
   if (count <= 0) return []
 
@@ -86,7 +92,8 @@ export function fanPositions(
   // Bounded at both ends: below, so a pair still reads as a fan; above, so no pin wanders off its
   // own place. The upper bound is what the member ceiling is really protecting — past about
   // thirteen members the clamp binds and the pins start to touch again whatever the radius says.
-  const radius = Math.min(MAX_RADIUS_PX, Math.max(MIN_RADIUS_PX, needed))
+  const open = Math.min(MAX_RADIUS_PX, Math.max(MIN_RADIUS_PX, needed))
+  const radius = open * Math.min(1, Math.max(0, progress))
 
   const hub = pixelsAt(centre, zoom)
   return Array.from({ length: count }, (_, index) => {

@@ -183,6 +183,102 @@ async function run() {
       lineSeen ? ('domEvent=' + !!lineSeen.domEvent) : 'a synthesised right-click on the line did not arrive');
   });
 
+  // The drag gesture, which is the largest cluster of unchecked beliefs in the canvas and the
+  // one the plan calls its hardest piece. Every failure here is quiet: a line that cannot be
+  // grabbed reads as the map ignoring you, and a gesture that never ends leaves panning switched
+  // off until a reload.
+  await check('drag gesture', async () => {
+    const path = [{ lat: 47.44, lng: -120.62 }, { lat: 47.56, lng: -120.38 }];
+    const line = new google.maps.Polyline({ map, path, strokeWeight: 12, strokeColor: '#1f6feb' });
+    const got = { down: null, move: null, up: null, click: null, mapDown: null };
+    line.addListener('mousedown', (e) => { got.down ??= e; });
+    map.addListener('mousemove', (e) => { got.move ??= e; });
+    map.addListener('mouseup', (e) => { got.up ??= e; });
+    map.addListener('click', (e) => { got.click ??= e; });
+    map.addListener('mousedown', (e) => { got.mapDown ??= e; });
+    await new Promise((r) => setTimeout(r, 700));
+
+    const box = document.getElementById('map').getBoundingClientRect();
+    const at = (dx, dy) => ({
+      x: Math.round(box.left + box.width / 2 + dx),
+      y: Math.round(box.top + box.height / 2 + dy),
+    });
+    const send = (type, point, extra) =>
+      document.elementFromPoint(point.x, point.y)?.dispatchEvent(new MouseEvent(type, {
+        bubbles: true, cancelable: true, clientX: point.x, clientY: point.y, ...extra,
+      }));
+
+    // A press on the line, a move away from it, a release. The order a real gesture arrives in.
+    send('pointerdown', at(0, 0), { button: 0 });
+    send('mousedown', at(0, 0), { button: 0 });
+    await new Promise((r) => setTimeout(r, 150));
+    // Sent to whatever is under the pointer *and* to the map container: after a press the target
+    // element can change, and a move that lands on a different node is not evidence about the API.
+    const container = document.getElementById('map');
+    const both = (type, point, extra) => {
+      send(type, point, extra);
+      container?.dispatchEvent(new MouseEvent(type, {
+        bubbles: true, cancelable: true, clientX: point.x, clientY: point.y, ...extra,
+      }));
+    };
+    both('pointermove', at(40, 30), { buttons: 1 });
+    both('mousemove', at(40, 30), { buttons: 1 });
+    await new Promise((r) => setTimeout(r, 150));
+    both('pointerup', at(40, 30), { button: 0 });
+    both('mouseup', at(40, 30), { button: 0 });
+    await new Promise((r) => setTimeout(r, 400));
+
+    const coords = (e) => (e && e.latLng ? e.latLng.lat().toFixed(4) + ',' + e.latLng.lng().toFixed(4) : 'no latLng');
+    record('polyline.mousedown', got.down ? 'PASS' : 'INCONCLUSIVE', got.down ? coords(got.down) : 'not delivered');
+    record('map.mousemove', got.move ? 'PASS' : 'INCONCLUSIVE', got.move ? coords(got.move) : 'not delivered');
+    record('map.mouseup', got.up ? 'PASS' : 'INCONCLUSIVE', got.up ? coords(got.up) : 'not delivered');
+    // The control. A map-level mouse event at the same offset point, dispatched the same way:
+    // if this arrives and move/up did not, the API is the answer; if it does not arrive either,
+    // the synthesis never reached the map and none of those three rows means anything.
+    record('CONTROL map.mousedown at the same point', got.mapDown ? 'PASS' : 'FAIL',
+      got.mapDown ? coords(got.mapDown) : 'no map-level mouse event arrived from synthesis');
+    // The belief the canvas *compensates* for: if no click follows a drag, the compensation eats
+    // the rider's next deliberate one instead.
+    record('click after a drag', got.click ? 'PASS' : 'INCONCLUSIVE',
+      got.click ? 'a click did follow the mouseup' : 'no click followed the mouseup');
+  });
+
+  await check('draggable toggles', async () => {
+    const before = map.get('draggable');
+    map.setOptions({ draggable: false });
+    await new Promise((r) => setTimeout(r, 200));
+    const during = map.get('draggable');
+    map.setOptions({ draggable: true });
+    await new Promise((r) => setTimeout(r, 200));
+    record('setOptions draggable', during === false ? 'PASS' : 'FAIL',
+      'before=' + before + ' during=' + during + ' after=' + map.get('draggable'));
+  });
+
+  // The no-Map-ID fallback, left unverified last time. Legacy markers draw into the map's own
+  // overlay DOM, so the earlier attempt dispatched at a point another marker was covering.
+  await check('legacy marker right-click', async () => {
+    const legacy = new google.maps.Marker({
+      map, position: { lat: 47.56, lng: -120.44 }, title: 'legacy probe',
+    });
+    let seen = null;
+    legacy.addListener('contextmenu', (e) => { seen = e; });
+    await new Promise((r) => setTimeout(r, 700));
+    // Its own element, found by the title it was given, rather than a guess at a pixel.
+    const node = document.querySelector('[title="legacy probe"]') ?? document.querySelector('area[title="legacy probe"]');
+    record('legacy marker in DOM', node ? 'PASS' : 'FAIL', node ? node.tagName : 'no element with that title');
+    if (node) {
+      const box = node.getBoundingClientRect();
+      const x = Math.round(box.left + box.width / 2) || 1;
+      const y = Math.round(box.top + box.height / 2) || 1;
+      for (const type of ['pointerdown', 'mousedown', 'contextmenu']) {
+        node.dispatchEvent(new MouseEvent(type, { bubbles: true, cancelable: true, clientX: x, clientY: y, button: 2 }));
+      }
+      await new Promise((r) => setTimeout(r, 300));
+    }
+    record('legacy.contextmenu', seen ? 'PASS' : 'INCONCLUSIVE',
+      seen ? 'fired' : 'no event from a synthesised right-click on its own element');
+  });
+
   // DEGRADING — wrong means jank rather than breakage.
   await check('marker.position cost', async () => {
     const t0 = performance.now();

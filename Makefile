@@ -130,8 +130,10 @@ build: ## Build the container image
 	docker build -f infra/Dockerfile -t $(IMAGE):latest .
 
 deploy: ## Build and deploy to Cloud Run
+	@# _TAG from git, because $$SHORT_SHA is empty for a directory submit and docker rejects
+	@# an empty tag. Falls back to the cloudbuild default if this is not a git checkout.
 	gcloud builds submit --config infra/cloudbuild.yaml \
-		--substitutions=_SERVICE=$(SERVICE),_REGION=$(REGION)
+		--substitutions=_SERVICE=$(SERVICE),_REGION=$(REGION),_TAG=$(shell git rev-parse --short HEAD)
 
 ROLE   ?= $(shell scripts/mail whoami)
 BRANCH ?= $(shell git rev-parse --abbrev-ref HEAD)

@@ -9,6 +9,11 @@ substitutions:
   # vector map. Kept as a substitution rather than a secret so there is one fewer thing to
   # create, and so a wrong value is visible in a diff.
   _MAP_ID: ffc32e82f67c6512a1cac139
+  # The image tag. `$SHORT_SHA` is populated only for builds started by a *trigger* from a git
+  # source — `gcloud builds submit` uploads a directory with no commit context, so it expands to
+  # empty and docker rejects `motorooter:` as an invalid reference. The Makefile passes the real
+  # short sha, where git is actually available; `latest` is the fallback for a bare submit.
+  _TAG: latest
 
 availableSecrets:
   secretManager:
@@ -32,13 +37,13 @@ steps:
         docker build -f infra/Dockerfile \
           --build-arg VITE_GOOGLE_MAPS_BROWSER_KEY="$$BROWSER_KEY" \
           --build-arg VITE_GOOGLE_MAPS_MAP_ID="${_MAP_ID}" \
-          -t ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_SERVICE}/${_SERVICE}:$SHORT_SHA \
+          -t ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_SERVICE}/${_SERVICE}:${_TAG} \
           .
 
   - name: gcr.io/cloud-builders/docker
     args:
       - push
-      - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_SERVICE}/${_SERVICE}:$SHORT_SHA
+      - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_SERVICE}/${_SERVICE}:${_TAG}
 
   - name: gcr.io/google.com/cloudsdktool/cloud-sdk
     entrypoint: gcloud
@@ -46,7 +51,7 @@ steps:
       - run
       - deploy
       - ${_SERVICE}
-      - --image=${_REGION}-docker.pkg.dev/$PROJECT_ID/${_SERVICE}/${_SERVICE}:$SHORT_SHA
+      - --image=${_REGION}-docker.pkg.dev/$PROJECT_ID/${_SERVICE}/${_SERVICE}:${_TAG}
       - --region=${_REGION}
       - --platform=managed
       - --allow-unauthenticated

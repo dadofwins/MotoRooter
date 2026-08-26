@@ -144,9 +144,14 @@ export function useReplan(client: Replanner): ReplanState {
         const stream = client.replan(
           slug,
           {
-            // Sent explicitly rather than relied upon as a default: a replan that silently
-            // discarded hand-placed POIs would be the worst kind of surprise.
-            preserve_pinned: true,
+            // No `preserve_pinned`. It was declared, defaulted to true, sent explicitly here —
+            // and never read by the handler. Pinned POIs survive a replan because the *client*
+            // unions the stream into what it already holds, and that is the only place it can
+            // happen: replan streams and never writes the trip, so asking the server to preserve
+            // anything would mean the slow path writing the fast path's document. The behaviour
+            // was right for a reason nobody had written down; it is written down here, and there
+            // is now a test for the union rather than for the request.
+            //
             // Omitted rather than empty. Discovery fans out one metered search per anchor per
             // category, and asking for none costs the route-search stage for nothing.
             ...(categories === undefined || categories.length === 0

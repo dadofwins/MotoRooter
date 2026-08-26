@@ -1714,6 +1714,44 @@ describe('deciding about the places discovery found', () => {
     expect(await screen.findByRole('button', { name: /^Lone Fir/ })).toBeInTheDocument()
   })
 
+  it('keeps the places already on the trip when a replan finds different ones', async () => {
+    // The test that should have existed all along. `preserve_pinned` was declared, defaulted to
+    // true, and sent by this client — and the handler never read it. The rider's places survive
+    // because *this side* unions the stream into what the trip already holds, which is the only
+    // place it can happen: replan streams and never writes the trip. The behaviour was right for
+    // a reason nobody had written down, and it was asserted nowhere.
+    const { fake, router } = withPlaces()
+    await mapReady(fake)
+    await screen.findByRole('button', { name: /^Lone Fir/ })
+
+    router.replan.mockImplementation(
+      // eslint-disable-next-line @typescript-eslint/require-await
+      async function* () {
+        yield {
+          stage: 'discovery',
+          message: 'Found places',
+          progress: 1,
+          pois: [
+            poiFixture({
+              id: 'new',
+              name: 'Halfway Flat',
+              category: 'wild_camp',
+              source: 'places',
+              place_id: 'p9',
+            }),
+          ],
+          legs: [],
+        }
+      },
+    )
+    fireEvent.click(screen.getByRole('button', { name: /find places/i }))
+
+    // The new one arrives and the rider's own two are still there.
+    expect(await screen.findByRole('button', { name: /^Halfway Flat/ })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /^Lone Fir/ })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /^Chevron/ })).toBeInTheDocument()
+  })
+
   it('keeps an ignored place off the list when a replan finds it again', async () => {
     // The stream unions into what is shown, so an ignore that only filtered the document would
     // be undone by the next run turning the same place up.

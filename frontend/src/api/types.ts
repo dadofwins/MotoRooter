@@ -73,8 +73,20 @@ export type RouteLegInput = DefaultsOptional<
   'avoid_tolls' | 'avoid_highways' | 'avoid_ferries' | 'want_elevation'
 >
 
-/** `ReplanRequest` with the backend-defaulted `preserve_pinned` made optional. */
-export type ReplanInput = DefaultsOptional<ReplanRequest, 'preserve_pinned'>
+/**
+ * `ReplanRequest` without `preserve_pinned`.
+ *
+ * The field was declared, defaulted to true, sent by this client — and never read by the handler.
+ * It is being removed, because there is no honest server-side implementation: replan streams and
+ * never writes the trip, so preserving a rider's POIs is something only the client can do, and it
+ * already does by unioning the stream into what the trip holds.
+ *
+ * A deliberate bridge rather than a `Pick`-based alias. `Omit` does not require its key to exist
+ * in the type, so this compiles both while the field is still declared *and* after it is removed —
+ * which lets the two sides land in either order with no red build in between. Once the field is
+ * gone this becomes a no-op and can be deleted as pure cleanup.
+ */
+export type ReplanInput = Omit<ReplanRequest, 'preserve_pinned'>
 
 /**
  * Stable error codes from `ErrorResponse.code`. Switch on these rather than on the

@@ -157,6 +157,16 @@ export interface TripSave {
   readonly name: string | null
   readonly status: SaveStatus
   readonly error: Error | null
+  /**
+   * The slug of a trip that definitely exists, creating one if there is none yet.
+   *
+   * "Created on the first waypoint" is the mouse's trigger, not the only one. Chat is
+   * addressed by slug and the app's opening line invites the rider to *describe* a trip before
+   * placing anything, so that invitation needs a document to talk about. Same creation path as
+   * the mouse — including the name typed at the front door — because two ways of creating a
+   * trip is two things to keep in step.
+   */
+  readonly ensure: () => Promise<string>
 }
 
 export interface TripSaveOptions {
@@ -202,6 +212,40 @@ export function useTripSave(
     onConflict.current = options.onConflict
   }, [options.onConflict])
 
+  /**
+   * A creation in flight.
+   *
+   * Held so two callers get one trip: the rider sending a chat message and placing a point in
+   * the same breath would otherwise make two documents, the second silently orphaning the
+   * first. Cleared on failure, because a dropped request is not an answer to remember.
+   */
+  const creating = useRef<Promise<string> | null>(null)
+
+  const ensure = useCallback((): Promise<string> => {
+    if (slug !== null) return Promise.resolve(slug)
+    if (creating.current !== null) return creating.current
+
+    const started = client
+      .createTrip({ name: options.name ?? DEFAULT_TRIP_NAME, slug: generateSlug() })
+      .then((trip) => {
+        setCreated({ slug: trip.slug, name: trip.name })
+        writeSlugToUrl(trip.slug)
+        return trip.slug
+      })
+    creating.current = started
+    started.catch(() => {
+      creating.current = null
+    })
+    return started
+  }, [client, slug, options.name])
+
+  // Held in a ref so the debounced save can call it without depending on its identity: a
+  // change of name would otherwise re-run the save effect and re-write the trip.
+  const ensureTrip = useRef(ensure)
+  useEffect(() => {
+    ensureTrip.current = ensure
+  }, [ensure])
+
   /** Identifies the content, so an unchanged trip is never written twice. */
   const contentKey = useMemo(() => JSON.stringify(content), [content])
   const savedKey = useRef<string | null>(null)
@@ -215,19 +259,12 @@ export function useTripSave(
       const current = latest.current
 
       const write = async (): Promise<void> => {
-        let target = slug
-        if (target === null) {
-          // First content: bring a trip into existence, quietly.
-          setStatus('creating')
-          const trip = await client.createTrip(
-            { name: options.name ?? DEFAULT_TRIP_NAME, slug: generateSlug() },
-            { signal: controller.signal },
-          )
-          if (controller.signal.aborted) return
-          target = trip.slug
-          setCreated({ slug: trip.slug, name: trip.name })
-          writeSlugToUrl(trip.slug)
-        }
+        // Through `ensure` rather than creating inline, so there is one creation path with one
+        // in-flight guard. Two paths raced: a chat turn and the first waypoint arriving
+        // together each found no slug and each made a trip.
+        if (slug === null) setStatus('creating')
+        const target = await ensureTrip.current()
+        if (controller.signal.aborted) return
 
         setStatus('saving')
         await client.updateTrip(
@@ -265,5 +302,9 @@ export function useTripSave(
     }
   }, [client, contentKey, slug, options.name])
 
-  return { slug, name: created?.name ?? null, status, error }
+  // A plain object, unlike the hooks that return helpers keyed on by long-lived state. `ensure`
+  // is itself a stable `useCallback`, which is the identity a caller actually depends on;
+  // wrapping this in `useMemo` made the compiler read the factory as render code touching the
+  // in-flight-creation ref.
+  return { slug, name: created?.name ?? null, status, error, ensure }
 }

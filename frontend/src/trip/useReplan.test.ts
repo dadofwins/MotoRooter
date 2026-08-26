@@ -378,6 +378,39 @@ describe('the progress log', () => {
     expect(messages).not.toContain('First run')
   })
 
+  it('measures elapsed time rather than counting ticks', async () => {
+    // Browsers throttle `setInterval` hard in a background tab, and this is exactly the case
+    // the counter exists for: Tim's complaint was about a wait long enough that he went and
+    // did something else. Counting ticks made a five-minute wait display as barely one.
+    vi.useFakeTimers()
+    try {
+      const client = {
+        replan: vi.fn(
+          // eslint-disable-next-line require-yield
+          async function* (_slug: string, _request: ReplanRequest, _options?: RequestOptions) {
+            await new Promise(() => undefined)
+          },
+        ),
+      }
+      const { result } = renderHook(() => useReplan(client))
+
+      await act(async () => {
+        result.current.start('wabdr-north')
+        await Promise.resolve()
+      })
+
+      // One tick delivered, sixty seconds of wall clock passed — a throttled background tab.
+      await act(async () => {
+        vi.setSystemTime(Date.now() + 60_000)
+        await vi.advanceTimersByTimeAsync(1000)
+      })
+
+      expect(result.current.elapsedS).toBeGreaterThanOrEqual(60)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('counts the seconds, because "a few minutes" is the complaint it answers', async () => {
     vi.useFakeTimers()
     try {

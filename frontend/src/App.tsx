@@ -33,6 +33,7 @@ import { DragSession } from './routing/dragSession'
 import { addPoiToRoute, isLegStale, type RouteEdit } from './routing/tripEdits'
 import { replanErrorMessage, routeErrorMessage } from './trip/routeErrorMessage'
 import { SurfaceSummary } from './trip/SurfaceSummary'
+import { ChatRail } from './chat/ChatRail'
 import { Landing } from './landing/Landing'
 import {
   DEFAULT_INTENT,
@@ -59,6 +60,7 @@ type AppClient = Pick<
   | 'getTrip'
   | 'updateTrip'
   | 'replan'
+  | 'chat'
 >
 
 const NO_POIS: readonly Poi[] = []
@@ -481,11 +483,6 @@ function TripSession({
             New trip
           </button>
         </div>
-        <p className="greeting">
-          Describe your trip and I&rsquo;ll help plan it for you! Or set a start and end point on
-          the map.
-        </p>
-
         {waypoints.length > 0 && (
           <div className="route-summary">
             {/* Stated in words as well as drawn, so the map is not the only feedback. */}
@@ -573,6 +570,12 @@ function TripSession({
             Kilometres
           </button>
         </div>
+
+        {/* The accelerator, not the requirement. It sits below the route it talks about, and
+            everything it can do is reachable with the mouse above it. `reload` rather than a
+            local merge: the assistant edited the document, so the document wins — replaying
+            events into state here would make two models of one trip. */}
+        <ChatRail client={client} resolveSlug={save.ensure} onTripChanged={reload} />
 
         {openPoi !== null && (
           <PoiDetailDialog

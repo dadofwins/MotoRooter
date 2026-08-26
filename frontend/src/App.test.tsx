@@ -13,6 +13,8 @@ import {
   waypoint as waypointFixture,
 } from './api/fixtures'
 import type {
+  ChatEvent,
+  ChatRequest,
   Coordinate,
   CreateTripRequest,
   ReplanEvent,
@@ -29,6 +31,30 @@ import type {
  * requirement.** Placing the start and end of a trip has to work with nothing but the
  * mouse, so these tests drive the map rather than the chat rail.
  */
+
+/**
+ * A chat endpoint that answers the way the real one does today: 501.
+ *
+ * Spread into every client literal, because a required method added to `AppClient` otherwise
+ * breaks each of them at once — the same reason `src/api/fixtures.ts` exists for response
+ * shapes. The rail's own behaviour is tested in `src/chat/ChatRail.test.tsx`.
+ */
+function stubChat() {
+  return {
+    chat: vi.fn(
+      // Annotated rather than inferred: a body that only throws infers `AsyncGenerator<never>`,
+      // and a test that then supplies a real event cannot type-check against it.
+      // eslint-disable-next-line @typescript-eslint/require-await, require-yield
+      async function* (
+        _slug: string,
+        _request: ChatRequest,
+        _options?: RequestOptions,
+      ): AsyncGenerator<ChatEvent, void, undefined> {
+        throw new ApiNotImplementedError({ detail: 'chat is not implemented yet' })
+      },
+    ),
+  }
+}
 
 const PIN_PROBE_ID = 'pin-probe'
 
@@ -263,6 +289,7 @@ function fakeRouter(response: RouteLegResponse = ROUTE_RESPONSE) {
     placeDetail: vi.fn((_placeId: string, _options?: RequestOptions) =>
       Promise.reject(new ApiNotImplementedError({ detail: 'Places enrichment is not implemented yet' })),
     ),
+      ...stubChat(),
   }
 }
 
@@ -353,6 +380,7 @@ describe('App routing the placed points', () => {
       placeDetail: vi.fn((_placeId: string, _options?: RequestOptions) =>
         Promise.reject(new ApiNotImplementedError({ detail: 'not implemented yet' })),
       ),
+      ...stubChat(),
     }
     render(<App mapLoader={fake.loader} mapId="motorooter-test-vector" client={router} />)
     await mapReady(fake)
@@ -383,6 +411,7 @@ describe('App routing the placed points', () => {
       placeDetail: vi.fn((_placeId: string, _options?: RequestOptions) =>
         Promise.reject(new ApiNotImplementedError({ detail: 'not implemented yet' })),
       ),
+      ...stubChat(),
     }
     render(<App mapLoader={fake.loader} mapId="motorooter-test-vector" client={router} />)
     await mapReady(fake)
@@ -406,6 +435,7 @@ describe('App routing the placed points', () => {
       placeDetail: vi.fn((_placeId: string, _options?: RequestOptions) =>
         Promise.reject(new ApiNotImplementedError({ detail: 'not implemented yet' })),
       ),
+      ...stubChat(),
     }
     render(<App mapLoader={fake.loader} mapId="motorooter-test-vector" client={router} />)
     await mapReady(fake)
@@ -444,6 +474,7 @@ describe('App dragging the route', () => {
       placeDetail: vi.fn((_placeId: string, _options?: RequestOptions) =>
         Promise.reject(new ApiNotImplementedError({ detail: 'not implemented yet' })),
       ),
+      ...stubChat(),
     }
 
     render(<App mapLoader={fake.loader} mapId="motorooter-test-vector" client={router} />)
@@ -1233,6 +1264,77 @@ describe('dragging one leg of a multi-leg trip', () => {
 
     await waitFor(() => expect(router.routeLeg).toHaveBeenCalledTimes(1))
     expect(router.routeLeg.mock.calls[0]?.[0].intent).toBe('highway_connector')
+  })
+})
+
+describe('the assistant rail', () => {
+  it('offers the assistant without a trip existing first', async () => {
+    // The opening line invites describing a trip before placing anything, so the composer has
+    // to be usable from a cold start or the app's own first sentence is decoration.
+    const fake = createFakeMaps()
+    render(<App mapLoader={fake.loader} mapId="motorooter-test-vector" client={fakeRouter()} />)
+    await mapReady(fake)
+
+    expect(screen.getByRole('textbox', { name: /ask the assistant/i })).not.toBeDisabled()
+    expect(screen.getByText(/describe your trip/i)).toBeInTheDocument()
+  })
+
+  it('creates a trip for the first message and talks about that trip', async () => {
+    const fake = createFakeMaps()
+    const router = fakeRouter()
+    render(<App mapLoader={fake.loader} mapId="motorooter-test-vector" client={router} />)
+    await mapReady(fake)
+
+    fireEvent.change(screen.getByRole('textbox', { name: /ask the assistant/i }), {
+      target: { value: 'three days of dirt out of Leavenworth' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }))
+
+    await waitFor(() => expect(router.createTrip).toHaveBeenCalledTimes(1))
+    const created = router.createTrip.mock.calls[0]?.[0].slug
+    await waitFor(() => expect(router.chat).toHaveBeenCalledTimes(1))
+    // The same document the mouse would have created, not a second one.
+    expect(router.chat.mock.calls[0]?.[0]).toBe(created)
+  })
+
+  it('re-reads the trip when the assistant edits it', async () => {
+    // The rule the whole design turns on: one document, read back, never reconstructed from
+    // the event stream. Two models of one trip diverge silently.
+    window.history.replaceState(null, '', '/?trip=wabdr-north')
+    const fake = createFakeMaps()
+    const router = fakeRouter()
+    router.getTrip.mockResolvedValue(tripFixture({ slug: 'wabdr-north', name: 'WABDR North' }))
+    router.chat.mockImplementation(
+      // eslint-disable-next-line @typescript-eslint/require-await
+      async function* () {
+        yield { kind: 'done' as const, message: '', tool: null, trip_changed: true, truncated: false }
+      },
+    )
+    render(<App mapLoader={fake.loader} mapId="motorooter-test-vector" client={router} />)
+    await mapReady(fake)
+    await waitFor(() => expect(router.getTrip).toHaveBeenCalledTimes(1))
+
+    fireEvent.change(screen.getByRole('textbox', { name: /ask the assistant/i }), {
+      target: { value: 'add a campground' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }))
+
+    await waitFor(() => expect(router.getTrip).toHaveBeenCalledTimes(2))
+  })
+
+  it('says the assistant is not built yet rather than reporting a failure', async () => {
+    // It 501s today. Presenting that as an error trains a rider to distrust the rail once it
+    // does work.
+    const fake = createFakeMaps()
+    render(<App mapLoader={fake.loader} mapId="motorooter-test-vector" client={fakeRouter()} />)
+    await mapReady(fake)
+
+    fireEvent.change(screen.getByRole('textbox', { name: /ask the assistant/i }), {
+      target: { value: 'hello' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }))
+
+    expect(await screen.findByText(/not built yet/i)).toBeInTheDocument()
   })
 })
 

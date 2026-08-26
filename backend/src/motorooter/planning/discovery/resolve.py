@@ -20,6 +20,7 @@ little else, so ratings and photos are not requested here at all — the field m
 determines the billing tier, so asking for data we may not keep would cost money for nothing.
 """
 
+import asyncio
 import dataclasses
 import logging
 from collections.abc import Sequence
@@ -28,6 +29,7 @@ from typing import Any
 import httpx
 
 from motorooter.planning.discovery.category import from_places_types
+from motorooter.planning.discovery.concurrency import DEFAULT_CONCURRENCY
 from motorooter.planning.discovery.errors import (
     DiscoveryQuotaExceeded,
     DiscoveryRateLimited,
@@ -110,6 +112,7 @@ class PlacesResolver:
         *,
         route: Sequence[Coordinate] = (),
         corridor_m: float = DEFAULT_CORRIDOR_M,
+        concurrency: int = DEFAULT_CONCURRENCY,
     ) -> tuple[ResolvedCandidate, ...]:
         """Resolve each candidate, dropping whatever does not survive.
 
@@ -118,35 +121,45 @@ class PlacesResolver:
             route: the corridor. Empty means no distance filtering — resolving a single name
                 without a route is legitimate.
             corridor_m: how far off the route a place may sit.
+            concurrency: lookups in flight at once.
 
-        Sequential rather than concurrent: Places is metered per request and this runs behind
-        a user-visible replan, so a burst buys little and risks the rate limiter.
+        Concurrent, but bounded. A corridor yields dozens of names and each is one metered
+        lookup, so doing them in turn left the slowest stretch of discovery in place after
+        the rest was fixed. The bound is the point: Places rate-limits, and thirty at once is
+        what trips it.
+
+        Results keep the order they were given in. Completion order is a race, and a list
+        that reshuffles between two runs over the same corridor looks broken.
         """
-        resolved: list[ResolvedCandidate] = []
-        for candidate in candidates:
-            found = await self._lookup(candidate)
+        limit = asyncio.Semaphore(max(concurrency, 1))
+
+        async def resolve_one(candidate: Candidate) -> ResolvedCandidate | None:
+            async with limit:
+                found = await self._lookup(candidate)
             if found is None:
-                continue
+                return None
 
             distance = nearest_distance_m(route, found.coordinate) if route else None
             if distance is not None and distance > corridor_m:
                 logger.info("dropped %r: %.0f m off the corridor", candidate.name, distance)
-                continue
+                return None
 
-            resolved.append(
-                ResolvedCandidate(
-                    candidate=candidate,
-                    place_id=found.place_id,
-                    coordinate=found.coordinate,
-                    # From what Places says it is, never from the query that found it.
-                    category=from_places_types(found.types),
-                    places_types=found.types,
-                    rating=found.rating,
-                    user_rating_count=found.user_rating_count,
-                    distance_off_route_m=distance,
-                )
+            return ResolvedCandidate(
+                candidate=candidate,
+                place_id=found.place_id,
+                coordinate=found.coordinate,
+                # From what Places says it is, never from the query that found it.
+                category=from_places_types(found.types),
+                places_types=found.types,
+                rating=found.rating,
+                user_rating_count=found.user_rating_count,
+                distance_off_route_m=distance,
             )
-        return tuple(resolved)
+
+        # gather rather than as-completed: it preserves input order for free, and there is
+        # nothing to stream to — the caller wants the whole set before judging.
+        settled = await asyncio.gather(*(resolve_one(candidate) for candidate in candidates))
+        return tuple(item for item in settled if item is not None)
 
     async def _lookup(self, candidate: Candidate) -> _Place | None:
         payload: dict[str, Any] = {

@@ -25,6 +25,26 @@ from motorooter.planning.discovery.pipeline import DiscoveryPipeline
 from motorooter.planning.discovery.resolve import PlacesResolver
 from motorooter.planning.discovery.sources.brave import BraveSearchSource
 
+EXTRACT_TIMEOUT_S = 25.0
+"""How long a structured extraction may take before it is abandoned.
+
+Extraction reads a handful of snippets and returns a short list, so it has no business
+taking the 120 s a chat turn is allowed — one stalled call was holding an anchor for two
+minutes.
+
+Twenty-five rather than the single digits that were proposed, because eight was measured
+against the live API and timed out on *ordinary* calls: a batch of ten snippets through
+gpt-5-mini does not reliably return in under ten seconds, and a limit below normal latency
+does not fail fast, it fails always. What actually bounds the damage is that a timeout now
+costs one anchor's leads instead of the run.
+
+Chat keeps the long default, which is why this is separate rather than lowered globally.
+"""
+
+JUDGE_TIMEOUT_S = 45.0
+"""Longer than extraction: scoring reasons over a whole corridor is a real piece of work,
+and losing it loses everything the run has already paid for."""
+
 DEFAULT_MODEL = "gpt-5-mini"
 """Pinned here rather than inline, so which model answers is a deploy decision.
 
@@ -75,14 +95,23 @@ def build_discovery(settings: DiscoverySettings) -> DiscoveryPipeline | None:
         return None
 
     client = httpx.AsyncClient()
-    model: LlmClient = OpenAiClient(
-        api_key=settings.openai_api_key or "", model=settings.model, client=client
-    )
+
+    def model(timeout_s: float) -> LlmClient:
+        return OpenAiClient(
+            api_key=settings.openai_api_key or "",
+            model=settings.model,
+            client=client,
+            timeout_s=timeout_s,
+        )
+
+    # Two budgets rather than one: a stalled extraction should cost an anchor's leads in
+    # seconds, while a stalled judgement would lose everything the run has already paid for.
+    quick = model(EXTRACT_TIMEOUT_S)
     return DiscoveryPipeline(
         namer=PlaceNamer(api_key=settings.places_api_key or "", client=client),
         source=BraveSearchSource(api_key=settings.brave_api_key or "", client=client),
-        extractor=PlaceExtractor(model),
+        extractor=PlaceExtractor(quick),
         resolver=PlacesResolver(api_key=settings.places_api_key or "", client=client),
-        classifier=CategoryClassifier(model),
-        judge=CandidateJudge(model),
+        classifier=CategoryClassifier(quick),
+        judge=CandidateJudge(model(JUDGE_TIMEOUT_S)),
     )

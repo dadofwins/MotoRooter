@@ -4,9 +4,27 @@
 
 FROM node:22-alpine AS frontend
 WORKDIR /build
+
+# Vite inlines `import.meta.env.VITE_*` at build time, so these must be present *here* rather
+# than at deploy. Supplying them as runtime environment variables does nothing: the strings are
+# already compiled into the bundle by then.
+#
+# Getting this wrong does not fail the build. It produces a working API, a working assistant,
+# and a blank grey rectangle where the map should be — and `.env.local` is gitignored, so the
+# values are not in the build context to fall back on.
+ARG VITE_GOOGLE_MAPS_BROWSER_KEY
+ARG VITE_GOOGLE_MAPS_MAP_ID
+ENV VITE_GOOGLE_MAPS_BROWSER_KEY=${VITE_GOOGLE_MAPS_BROWSER_KEY} \
+    VITE_GOOGLE_MAPS_MAP_ID=${VITE_GOOGLE_MAPS_MAP_ID}
+
 COPY frontend/package.json frontend/package-lock.json ./
 RUN npm ci
 COPY frontend/ ./
+
+# Refuse to ship a bundle with no map. A build arg that never arrived is silent otherwise, and
+# the symptom appears only in a browser, only after a deploy.
+RUN test -n "$VITE_GOOGLE_MAPS_BROWSER_KEY" \
+      || (echo "VITE_GOOGLE_MAPS_BROWSER_KEY is empty — the map would not render" >&2; exit 1)
 RUN npm run build
 
 

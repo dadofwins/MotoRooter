@@ -1,19 +1,39 @@
 # Build and deploy the single Cloud Run service.
-# Secrets stay in Secret Manager and are bound at deploy time, never baked into the image.
+# Secrets stay in Secret Manager and are bound at deploy time, never baked into the image —
+# with one deliberate exception, explained on the build step below.
 
 substitutions:
   _SERVICE: motorooter
   _REGION: us-west1
+  # A Map ID is a style identifier, not a credential: it appears in every page that renders a
+  # vector map. Kept as a substitution rather than a secret so there is one fewer thing to
+  # create, and so a wrong value is visible in a diff.
+  _MAP_ID: ffc32e82f67c6512a1cac139
+
+availableSecrets:
+  secretManager:
+    - versionName: projects/$PROJECT_ID/secrets/google-maps-browser-key/versions/latest
+      env: BROWSER_KEY
 
 steps:
+  # `bash` rather than the docker builder's default args, because a build arg has to be
+  # interpolated from a secretEnv and the args form cannot reach one.
+  #
+  # The browser key is compiled into the JavaScript bundle, so it is public by construction —
+  # that is what makes baking it in acceptable here, and why it must be the *referrer-restricted*
+  # key rather than the server one. The server key is bound at runtime below and never reaches
+  # the image.
   - name: gcr.io/cloud-builders/docker
+    entrypoint: bash
+    secretEnv: [BROWSER_KEY]
     args:
-      - build
-      - -f
-      - infra/Dockerfile
-      - -t
-      - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_SERVICE}/${_SERVICE}:$SHORT_SHA
-      - .
+      - -c
+      - |
+        docker build -f infra/Dockerfile \
+          --build-arg VITE_GOOGLE_MAPS_BROWSER_KEY="$$BROWSER_KEY" \
+          --build-arg VITE_GOOGLE_MAPS_MAP_ID="${_MAP_ID}" \
+          -t ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_SERVICE}/${_SERVICE}:$SHORT_SHA \
+          .
 
   - name: gcr.io/cloud-builders/docker
     args:
@@ -35,7 +55,10 @@ steps:
       # back to in-memory storage: healthy service, different trips per instance, everything
       # lost on the next revision. The app now refuses to start without it for that reason.
       - --set-env-vars=MOTOROOTER_TRIPS_BUCKET=${PROJECT_ID}-motorooter-trips
-      - --set-secrets=ORS_API_KEY=ors-api-key:latest,GOOGLE_MAPS_SERVER_KEY=google-maps-server-key:latest,OPENAI_API_KEY=openai-api-key:latest
+      # All five the app reads. Brave is the first stage of discovery and the browser key is
+      # what keeps photo URLs from publishing the server key — omitting either leaves a service
+      # that starts cleanly and is wrong in a way only a rider notices.
+      - --set-secrets=ORS_API_KEY=ors-api-key:latest,GOOGLE_MAPS_SERVER_KEY=google-maps-server-key:latest,GOOGLE_MAPS_BROWSER_KEY=google-maps-browser-key:latest,OPENAI_API_KEY=openai-api-key:latest,BRAVE_SEARCH_API_KEY=brave-search-api-key:latest
 
 options:
   logging: CLOUD_LOGGING_ONLY

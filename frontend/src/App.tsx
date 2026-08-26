@@ -848,9 +848,25 @@ function TripSession({
   // This browser's record of where it has been, updated whenever a trip is known — created
   // here, or arrived at by link.
   const knownSlug = save.slug
-  // A trip created this session is never re-read, so its name comes from the save rather than
-  // from a stored document that will stay null all session.
-  const knownName = stored?.name ?? save.name
+  /**
+   * What to call this trip, in descending order of authority.
+   *
+   * A **read document wins**: a rename elsewhere, or a conflict that replaced this rider's
+   * change, is what the trip is actually called. The **save** comes next, because a trip created
+   * this session is never re-read and the stored document stays null all session. The **typed
+   * name** is last — the thing we intend to call it rather than the thing it is called.
+   *
+   * That last one exists because creation happens on the first *waypoint*, not at the front
+   * door, so a rider who typed a name and pressed Start had told us what the trip was called and
+   * been shown nothing. Second time this heading has been wrong in that direction; it read
+   * "Untitled trip" for a named trip this morning, for the same reason — the name was somewhere
+   * the heading was not looking.
+   *
+   * Shown plainly rather than hedged. Whether the trip exists on a server is a different claim
+   * from what it is called, and it already has its own line, which appears when it becomes true.
+   * Two signals saying one thing each beats a heading that mumbles about both.
+   */
+  const knownName = stored?.name ?? save.name ?? chosenName
   const remember = visited.remember
   useEffect(() => {
     if (knownSlug !== null) remember({ slug: knownSlug, name: knownName ?? 'Untitled trip' })

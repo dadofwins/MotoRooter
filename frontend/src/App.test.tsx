@@ -1230,6 +1230,75 @@ describe('App arriving', () => {
     expect(router.createTrip.mock.calls[0]?.[0].name).toBe('Cascades loop')
   })
 
+  it('shows the name as soon as it is given, not when the trip is created', async () => {
+    // Tim: "After creating a new trip the trip name should show up at the top of the side bar."
+    // The heading was right once a trip existed — and a trip is created by the first *waypoint*,
+    // so a rider who typed a name, pressed Start and looked at the rail saw nothing at all.
+    //
+    // The second time this heading has been wrong in the same direction: it showed "Untitled
+    // trip" for a named trip this morning. Same root — the name exists somewhere it is not
+    // looking.
+    window.history.replaceState(null, '', '/')
+    const fake = createFakeMaps()
+    render(<App mapLoader={fake.loader} mapId="motorooter-test-vector" client={fakeRouter()} />)
+
+    fireEvent.change(screen.getByRole('textbox', { name: /trip name/i }), {
+      target: { value: 'WABDR North' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: /start a new trip/i }))
+
+    // No point placed, so nothing is saved yet. The name is still the rider's.
+    expect(await screen.findByRole('heading', { name: 'WABDR North' })).toBeInTheDocument()
+  })
+
+  it('says nothing about being saved until it is', async () => {
+    // The honest pair. The name is shown plainly because it is the trip's identity and the
+    // rider's own word for it; whether it exists on a server is a different claim, carried by
+    // the line that appears when it becomes true. Two signals, one each, rather than a hedge in
+    // the heading saying the same thing worse.
+    window.history.replaceState(null, '', '/')
+    const fake = createFakeMaps()
+    render(<App mapLoader={fake.loader} mapId="motorooter-test-vector" client={fakeRouter()} />)
+
+    fireEvent.change(screen.getByRole('textbox', { name: /trip name/i }), {
+      target: { value: 'WABDR North' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: /start a new trip/i }))
+    await screen.findByRole('heading', { name: 'WABDR North' })
+
+    expect(screen.queryByText(/shareable/i)).not.toBeInTheDocument()
+  })
+
+  it('prefers the stored name over the one that was typed', async () => {
+    // A document that has been read is authoritative, and the case that makes it matter is a
+    // conflict: somebody else's edit won, this rider's change was replaced by theirs, and the
+    // trip is now called what *they* called it. Showing the typed name over that would tell this
+    // rider they still have a trip they no longer have.
+    //
+    // Both names have to exist at once for the order to mean anything — with only one present,
+    // any order passes. That is what a mutation showed: promoting the typed name to the front
+    // survived until this test existed.
+    window.history.replaceState(null, '', '/')
+    const fake = createFakeMaps()
+    const router = fakeRouter()
+    router.updateTrip.mockRejectedValue(
+      new ApiError({ status: 409, code: 'trip_modified_concurrently', detail: 'contended' }),
+    )
+    router.getTrip.mockResolvedValue(tripFixture({ slug: 'derived', name: 'Theirs' }))
+    render(<App mapLoader={fake.loader} mapId="motorooter-test-vector" client={router} />)
+
+    fireEvent.change(screen.getByRole('textbox', { name: /trip name/i }), {
+      target: { value: 'Mine' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: /start a new trip/i }))
+    await waitFor(() => expect(fake.maps).toHaveLength(1))
+    fake.clickMap(47.6, -120.7)
+
+    expect(
+      await screen.findByRole('heading', { name: 'Theirs' }, { timeout: 3000 }),
+    ).toBeInTheDocument()
+  })
+
   it('shows and remembers the name it created the trip with', async () => {
     // The test that was missing. The existing one asserts on createTrip's *request*, which was
     // correct and passing while everything downstream fell back to "Untitled trip": a trip

@@ -16,20 +16,30 @@
 /**
  * How long the fan takes to open.
  *
- * Reasoned from what the gesture is for rather than picked. A rider clicks a group **in order to
- * click something inside it**, so the animation is in the way by definition, and Tim's two
- * standing complaints about this app have both been about waiting.
+ * **Measured against what the gesture is for, not chosen for feel.** A rider clicks a group in
+ * order to click something inside it, so the number that matters is *when the pins stop
+ * overlapping each other* — before that, a click lands on the wrong place. That is arithmetic:
+ * the pins clear once the chord between neighbours exceeds a pin's 28 px, and the easing says
+ * when that fraction of the travel is done.
  *
- * Bounded below by what reads as motion: under about 100 ms the eye takes it as a jump, and at
- * 180 ms this is roughly eleven frames — enough to see the pins leave the group. Bounded above by
- * the app's own vocabulary: the progress bar transitions in 300 ms, and that is a bar filling
- * rather than something you are reaching for. Two thirds of it is right for something under the
- * cursor.
+ * | members | chord when open | clear at | 120 ms | **180 ms** | 300 ms |
+ * |---|---|---|---|---|---|
+ * | 2 | 88.0 px | 12% | 14 ms | **22 ms** | 36 ms |
+ * | 4 | 62.2 px | 18% | 22 ms | **33 ms** | 54 ms |
+ * | 6 | 44.0 px | 29% | 34 ms | **52 ms** | 86 ms |
+ * | 8 | 33.7 px | 45% | 54 ms | **81 ms** | 134 ms |
  *
- * The travel is 44–65 px, so this is about 300 px/s: a flick rather than a glide.
+ * The worst case is the one to size against, and 300 ms puts it at 134 ms — past the point where
+ * a delay stops being motion and starts being a wait. 120 ms clears in 54 ms but spends only
+ * seven frames doing it, and rendering the frames at matched instants shows it: at 50 ms it is
+ * already 80% open, so the motion is over before it registers. 180 ms is eleven frames, clears
+ * the worst case at 81 ms, and at 50 ms is visibly mid-flight.
  *
- * **Nothing waits for it.** The pins exist and are clickable from the first frame, so a rider
- * quicker than the animation hits a moving target rather than a locked one.
+ * It also sits inside the app's own vocabulary — the progress bar transitions in 300 ms, and that
+ * is a bar filling rather than something under the cursor.
+ *
+ * **Nothing waits for it either way.** The pins exist and are clickable from the first frame, so
+ * a rider quicker than the animation hits a moving target rather than a locked one.
  */
 export const FAN_DURATION_MS = 180
 

@@ -535,6 +535,50 @@ describe('MapCanvas dragging the route', () => {
     expect(map?.draggable).toBe(true)
   })
 
+  it('stops waiting for a click that is not coming', async () => {
+    // **Measured against the live API.** A trusted press-release that stays put emits a `click`;
+    // a trusted press-move-release does not — Maps suppresses it because the pointer travelled.
+    // Both halves were checked, because "no click after a drag" means nothing without the
+    // control saying a click is producible at all.
+    //
+    // So the flag armed at drag-end waits for something that never arrives, and swallows the
+    // rider's *next deliberate* click instead: one lost waypoint per drag, silently. The window
+    // is what makes this robust either way — a real post-drag click arrives immediately, and an
+    // absent one expires.
+    vi.useFakeTimers({ toFake: ['Date', 'performance'] })
+    try {
+      const fake = createFakeMaps()
+      const onMapClick = vi.fn()
+      render(
+        <MapCanvas
+          mapId={MAP_ID}
+          loader={fake.loader}
+          legs={[leg(coords(3))]}
+          onMapClick={onMapClick}
+          onLegGrab={() => true}
+        />,
+      )
+      await vi.waitFor(() => expect(fake.polylines).toHaveLength(1))
+      const map = fake.maps[0]
+
+      act(() => {
+        fake.polylines[0]?.mouseDown({ lat: 47, lon: -120 })
+        map?.mouseMove({ lat: 47.5, lon: -120 })
+        map?.mouseUp({ lat: 47.5, lon: -120 })
+      })
+
+      // A while later, the rider places a point. Google never sent the click that was expected.
+      act(() => {
+        vi.setSystemTime(Date.now() + 5_000)
+        map?.click({ lat: 48, lon: -121 })
+      })
+
+      expect(onMapClick).toHaveBeenCalledWith({ lat: 48, lon: -121 })
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('swallows the click Google emits after a drag, but only that one', async () => {
     // Releasing the line produces a click as well as a mouseup. Left alone it drops a new
     // waypoint wherever the drag finished. Swallowing every click afterwards would be the

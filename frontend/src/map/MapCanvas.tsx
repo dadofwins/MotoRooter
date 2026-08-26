@@ -279,6 +279,16 @@ export interface MapCanvasProps {
  */
 const DRAG_THRESHOLD_PX = 5
 
+/**
+ * How long after a release a click may still be the release's own.
+ *
+ * Generous against a slow frame and far short of a rider's next deliberate click, which is
+ * hundreds of milliseconds away at best. The API turns out not to send one at all after a drag,
+ * so in practice this expires unused — it exists so that the behaviour is correct if that ever
+ * changes back, rather than because it is load-bearing today.
+ */
+const POST_DRAG_CLICK_MS = 250
+
 /** Ground distance one screen pixel covers, at this latitude and zoom. */
 function metresPerPixel(latitude: number, zoom: number): number {
   return (156_543.033_92 * Math.cos((latitude * Math.PI) / 180)) / 2 ** zoom
@@ -387,10 +397,21 @@ export function MapCanvas({
     handle: AttachedMarker | null
   } | null>(null)
   /**
-   * Google emits a click after the mouseup that ended a drag. Without this, letting go of
-   * the line would also drop a new waypoint wherever the drag finished.
+   * When a drag ended, so the click that may follow it can be told from the rider's next one.
+   *
+   * **Measured against the live API, and it goes the other way.** A trusted press-release that
+   * stays put does emit a `click`; a trusted press-move-release does not — Maps suppresses it
+   * because the pointer travelled. Both halves were checked, since "no click after a drag" says
+   * nothing without a control confirming a click is producible at all.
+   *
+   * A boolean armed at drag-end therefore waited for something that never came, and swallowed
+   * the rider's *next deliberate* click instead: one lost waypoint per drag, silently, which is
+   * the failure the old comment here called the worse one.
+   *
+   * A timestamp rather than a flag, because it is right whichever way the API behaves. A real
+   * post-release click arrives in the same tick; an absent one simply expires.
    */
-  const justDragged = useRef(false)
+  const draggedAt = useRef<number | null>(null)
 
   // The camera the map is born with. Computed once: see the note about rebuilding above.
   const [initialOptions] = useState(() =>
@@ -449,7 +470,7 @@ export function MapCanvas({
       gesture.current = null
       // Only a release *over the map* is followed by a click; one outside it is not, and
       // arming the flag then would swallow the rider's next deliberate click instead.
-      justDragged.current = expectClick
+      draggedAt.current = expectClick ? Date.now() : null
       // Panning comes back on before the handler runs, so an exception in the caller
       // cannot leave the map dead to the touch.
       map.setOptions({ draggable: true })
@@ -479,8 +500,8 @@ export function MapCanvas({
         // drop a waypoint where the drag finished. Exactly one is swallowed: leaving the
         // flag set would stop the map accepting points at all, which is the worse failure
         // and a silent one.
-        if (justDragged.current) {
-          justDragged.current = false
+        if (draggedAt.current !== null && Date.now() - draggedAt.current <= POST_DRAG_CLICK_MS) {
+          draggedAt.current = null
           return
         }
         if (event.latLng === null) return

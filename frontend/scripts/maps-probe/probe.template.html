@@ -8,6 +8,15 @@ const results = [];
 const record = (name, verdict, detail) => results.push(name + '\t' + verdict + '\t' + (detail ?? ''));
 // Each check runs in its own try. The ranking says the silent failure is worth more than the loud
 // ones, and a loud one throwing must not take the quiet answer down with it.
+/** Ask the runner for a real gesture, and wait for it to land. */
+const drive = async (request) => {
+  await fetch('/ready', { method: 'POST', body: JSON.stringify(request) });
+  await new Promise((resolve) => {
+    window.__gestureDone = resolve;
+    setTimeout(resolve, 15000);
+  });
+};
+
 const check = async (name, body) => {
   try { await body() } catch (e) { record(name, 'ERROR', String(e)) }
 };
@@ -187,6 +196,11 @@ async function run() {
   // one the plan calls its hardest piece. Every failure here is quiet: a line that cannot be
   // grabbed reads as the map ignoring you, and a gesture that never ends leaves panning switched
   // off until a reload.
+  //
+  // Driven by **trusted** input over the DevTools protocol, not by synthesised MouseEvents.
+  // Measured: synthetic events reach a Polyline's own listeners and reach no Map-level listener
+  // at all, not even `mousedown`. That control is still below, because it is the thing that makes
+  // this distinction a fact rather than a guess.
   await check('drag gesture', async () => {
     const path = [{ lat: 47.44, lng: -120.62 }, { lat: 47.56, lng: -120.38 }];
     const line = new google.maps.Polyline({ map, path, strokeWeight: 12, strokeColor: '#1f6feb' });
@@ -199,48 +213,57 @@ async function run() {
     await new Promise((r) => setTimeout(r, 700));
 
     const box = document.getElementById('map').getBoundingClientRect();
-    const at = (dx, dy) => ({
-      x: Math.round(box.left + box.width / 2 + dx),
-      y: Math.round(box.top + box.height / 2 + dy),
-    });
-    const send = (type, point, extra) =>
-      document.elementFromPoint(point.x, point.y)?.dispatchEvent(new MouseEvent(type, {
-        bubbles: true, cancelable: true, clientX: point.x, clientY: point.y, ...extra,
-      }));
-
-    // A press on the line, a move away from it, a release. The order a real gesture arrives in.
-    send('pointerdown', at(0, 0), { button: 0 });
-    send('mousedown', at(0, 0), { button: 0 });
-    await new Promise((r) => setTimeout(r, 150));
-    // Sent to whatever is under the pointer *and* to the map container: after a press the target
-    // element can change, and a move that lands on a different node is not evidence about the API.
-    const container = document.getElementById('map');
-    const both = (type, point, extra) => {
-      send(type, point, extra);
-      container?.dispatchEvent(new MouseEvent(type, {
-        bubbles: true, cancelable: true, clientX: point.x, clientY: point.y, ...extra,
-      }));
+    const centre = {
+      x: Math.round(box.left + box.width / 2),
+      y: Math.round(box.top + box.height / 2),
     };
-    both('pointermove', at(40, 30), { buttons: 1 });
-    both('mousemove', at(40, 30), { buttons: 1 });
-    await new Promise((r) => setTimeout(r, 150));
-    both('pointerup', at(40, 30), { button: 0 });
-    both('mouseup', at(40, 30), { button: 0 });
-    await new Promise((r) => setTimeout(r, 400));
+
+    // **Panning off, exactly as the canvas does on grab.** Without this the probe asks a
+    // different question: Maps reads a press-and-move as a pan, consumes the moves itself, and
+    // reports no `mousemove` — which the first trusted run duly recorded as a failure. The app
+    // never drags with panning on, so a run that does is not measuring the app.
+    map.setOptions({ draggable: false });
+
+    // Hand the coordinates out and wait to be driven. The runner dispatches the gesture and
+    // then releases this.
+    await drive({ ...centre, gesture: 'drag' });
 
     const coords = (e) => (e && e.latLng ? e.latLng.lat().toFixed(4) + ',' + e.latLng.lng().toFixed(4) : 'no latLng');
-    record('polyline.mousedown', got.down ? 'PASS' : 'INCONCLUSIVE', got.down ? coords(got.down) : 'not delivered');
-    record('map.mousemove', got.move ? 'PASS' : 'INCONCLUSIVE', got.move ? coords(got.move) : 'not delivered');
-    record('map.mouseup', got.up ? 'PASS' : 'INCONCLUSIVE', got.up ? coords(got.up) : 'not delivered');
-    // The control. A map-level mouse event at the same offset point, dispatched the same way:
-    // if this arrives and move/up did not, the API is the answer; if it does not arrive either,
-    // the synthesis never reached the map and none of those three rows means anything.
-    record('CONTROL map.mousedown at the same point', got.mapDown ? 'PASS' : 'FAIL',
-      got.mapDown ? coords(got.mapDown) : 'no map-level mouse event arrived from synthesis');
-    // The belief the canvas *compensates* for: if no click follows a drag, the compensation eats
-    // the rider's next deliberate one instead.
-    record('click after a drag', got.click ? 'PASS' : 'INCONCLUSIVE',
-      got.click ? 'a click did follow the mouseup' : 'no click followed the mouseup');
+    record('polyline.mousedown', got.down ? 'PASS' : 'FAIL', got.down ? coords(got.down) : 'not delivered');
+    record('map.mousemove', got.move ? 'PASS' : 'FAIL', got.move ? coords(got.move) : 'not delivered');
+    record('map.mouseup', got.up ? 'PASS' : 'FAIL', got.up ? coords(got.up) : 'not delivered');
+    // The belief the canvas *compensates* for. `justDragged` swallows exactly one click after a
+    // drag so that releasing the line does not also drop a waypoint — if no click follows, that
+    // compensation eats the rider's next deliberate one instead.
+    record('click after a drag', got.click ? 'PASS' : 'FAIL',
+      got.click ? 'a click did follow the release at ' + coords(got.click) : 'no click followed the release');
+    // Mixed by design, and informative either way: `mouseup` landed on the map because the
+    // release was away from the line, while `mousedown` went to the Polyline that was under it.
+    // A hit-testing dispatcher behaving exactly as one should — and `mouseup` arriving is what
+    // proves trusted input reaches Map-level listeners at all.
+    record('CONTROL map-level events reachable', got.up ?? got.mapDown ? 'PASS' : 'FAIL',
+      'mousedown=' + Boolean(got.mapDown) + ' (went to the line) mouseup=' + Boolean(got.up));
+    map.setOptions({ draggable: true });
+  });
+
+  // Whether Maps emits a click at all from trusted input, when the pointer does not travel.
+  //
+  // Without this the drag result says nothing: "no click after a drag" is a finding only if a
+  // click *does* follow a press-release that stays put. One of those is the API suppressing a
+  // click because the pointer moved; the other is the harness never producing one.
+  await check('click without a drag', async () => {
+    let clicked = null;
+    const listener = map.addListener('click', (e) => { clicked ??= e; });
+    await new Promise((r) => setTimeout(r, 300));
+    const box = document.getElementById('map').getBoundingClientRect();
+    await drive({
+      x: Math.round(box.left + box.width / 2 - 120),
+      y: Math.round(box.top + box.height / 2 + 90),
+      gesture: 'click',
+    });
+    google.maps.event.removeListener(listener);
+    record('CONTROL click without a drag', clicked ? 'PASS' : 'FAIL',
+      clicked ? 'a still press-release does emit a click' : 'no click even from a still press-release');
   });
 
   await check('draggable toggles', async () => {

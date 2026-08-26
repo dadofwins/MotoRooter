@@ -207,6 +207,47 @@ class AddWaypoint(_TripTool):
         )
 
 
+class RemoveWaypointArguments(ToolArguments):
+    index: int = Field(ge=0, description="Which waypoint to remove, from describe_trip.")
+
+
+class RemoveWaypoint(_TripTool):
+    name: ClassVar[str] = "remove_waypoint"
+    description: ClassVar[str] = (
+        "Remove one waypoint by its index. Indices come from describe_trip or from the list "
+        "returned by the last edit — they shift whenever a waypoint is added or removed, "
+        "including by the rider, so never reuse an index from earlier in the conversation. "
+        "Returns the full numbered waypoint list."
+    )
+    arguments: ClassVar[type] = RemoveWaypointArguments
+
+    async def run(self, arguments: Any) -> ToolOutcome:  # noqa: ANN401 -- narrowed by base
+        trip = await self._trip()
+        if arguments.index >= len(trip.waypoints):
+            msg = (
+                f"there is no waypoint {arguments.index}; the trip has "
+                f"{len(trip.waypoints)}. Call describe_trip for the current list."
+            )
+            raise ToolCallFailed(msg)
+        if len(trip.waypoints) <= MINIMUM_WAYPOINTS:
+            msg = (
+                f"a trip needs at least {MINIMUM_WAYPOINTS} waypoints to be a route, and "
+                f"this one has {len(trip.waypoints)}"
+            )
+            raise ToolCallFailed(msg)
+
+        remaining = tuple(
+            point for index, point in enumerate(trip.waypoints) if index != arguments.index
+        )
+        saved = await edit_trip(
+            self._store, self._slug, waypoints=remaining, legs=_legs_for(trip, remaining)
+        )
+        return ToolOutcome(
+            content=f"Removed waypoint {arguments.index}.\n{_numbered(saved)}",
+            payload={"trip_changed": True},
+        )
+
+
 class AddPoiToRouteArguments(ToolArguments):
     place_id: str = Field(
         min_length=1,
@@ -359,6 +400,7 @@ class TripTools:
                 build(DescribeTrip),
                 build(FindPlaces),
                 build(AddWaypoint),
+                build(RemoveWaypoint),
                 build(AddPoiToRoute),
             ]
         )

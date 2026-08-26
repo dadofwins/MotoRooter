@@ -21,6 +21,7 @@ from motorooter.chat.tools import (
     AddWaypoint,
     DescribeTrip,
     FindPlaces,
+    RemoveWaypoint,
     TripTools,
 )
 from motorooter.llm.errors import ToolCallFailed
@@ -168,6 +169,47 @@ class TestAddWaypoint:
             await call(kit, AddWaypoint.name, '{"lat": 200.0, "lon": -121.0}')
 
 
+class TestRemoveWaypoint:
+    async def test_it_removes_by_index(self):
+        kit = await tools(
+            document=trip(
+                waypoints=(
+                    Waypoint(coordinate=coordinate(47.0, -121.0), name="Start"),
+                    Waypoint(coordinate=coordinate(47.05, -121.05), name="Middle"),
+                    Waypoint(coordinate=coordinate(47.1, -121.1), name="End"),
+                )
+            )
+        )
+        await call(kit, RemoveWaypoint.name, '{"index": 1}')
+        remaining = (await kit.store.get(SLUG)).waypoints
+        assert [w.name for w in remaining] == ["Start", "End"]
+
+    async def test_an_index_that_does_not_exist_is_reported_to_the_model(self):
+        kit = await tools()
+        with pytest.raises(ToolCallFailed):
+            await call(kit, RemoveWaypoint.name, '{"index": 9}')
+
+    async def test_a_trip_needs_two_waypoints(self):
+        """Removing down to one leaves something that cannot be routed at all."""
+        kit = await tools()
+        with pytest.raises(ToolCallFailed):
+            await call(kit, RemoveWaypoint.name, '{"index": 0}')
+
+    async def test_it_returns_the_numbered_list(self):
+        kit = await tools(
+            document=trip(
+                waypoints=(
+                    Waypoint(coordinate=coordinate(47.0, -121.0), name="Start"),
+                    Waypoint(coordinate=coordinate(47.05, -121.05), name="Middle"),
+                    Waypoint(coordinate=coordinate(47.1, -121.1), name="End"),
+                )
+            )
+        )
+        outcome = await call(kit, RemoveWaypoint.name, '{"index": 1}')
+        assert "Start" in outcome.content and "End" in outcome.content
+        assert "Middle" not in outcome.content
+
+
 class TestAddPoiToRoute:
     """M1 item five, and the root document names it as the test of the both-paths rule."""
 
@@ -257,6 +299,7 @@ class TestTheSetItself:
             "describe_trip",
             "find_places",
             "add_waypoint",
+            "remove_waypoint",
             "add_poi_to_route",
         }
 

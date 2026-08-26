@@ -193,8 +193,19 @@ function createFakeMaps() {
         click(): void {
           this.listeners.get('click')?.({})
         }
+        /**
+         * A right-click on the pin, as the real API delivers one — which is to say, on the
+         * content element and not through `addListener`.
+         *
+         * Verified live: `AdvancedMarkerElement` emits `click` and does not emit `contextmenu`.
+         * This fake used to deliver it anyway, so every menu test here passed against behaviour
+         * the browser does not have.
+         */
         contextMenu(): void {
-          this.listeners.get('contextmenu')?.({})
+          const content = this.options['content']
+          if (content instanceof HTMLElement) {
+            content.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }))
+          }
         }
       },
     },

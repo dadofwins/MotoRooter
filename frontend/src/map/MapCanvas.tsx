@@ -49,6 +49,40 @@ interface AttachedMarker {
   ) => google.maps.MapsEventListener | null
 }
 
+/**
+ * A right-click on an advanced marker, which the Maps API does not deliver.
+ *
+ * **Verified against the live API on 2026-08-26**, because every test of this feature ran against
+ * a fake that happily emitted the event. `AdvancedMarkerElement` emits `click` and does not emit
+ * `contextmenu`: same marker, same content, same dispatch, one line apart in the probe, with and
+ * without `gmpClickable`. So the whole right-click menu — remove a point, add a place to the
+ * route, hide it — was correct, tested, green, and did nothing at all wherever a Map ID is
+ * configured, which is production.
+ *
+ * The content is a real DOM node on this generation, and the probe confirmed the rest of the
+ * chain: the pin is hit-testable at its own screen position, and a right-click there reaches a
+ * listener on that node with the coordinates intact. So the event is taken from the DOM and
+ * wrapped in the shape the Maps API would have used, which keeps the shape of every caller.
+ *
+ * The plain-marker fallback keeps `addListener`: `google.maps.Marker` documents `contextmenu`,
+ * and the probe could not synthesise a click that reached one to check — recorded as unverified
+ * rather than assumed either way.
+ */
+function onPinContextMenu(
+  pin: HTMLElement,
+  handler: (event: unknown) => void,
+): google.maps.MapsEventListener {
+  const forward = (event: MouseEvent): void => {
+    handler({ domEvent: event })
+  }
+  pin.addEventListener('contextmenu', forward)
+  return {
+    remove: () => {
+      pin.removeEventListener('contextmenu', forward)
+    },
+  }
+}
+
 interface MarkerInput {
   readonly map: google.maps.Map
   readonly position: google.maps.LatLngLiteral
@@ -82,7 +116,10 @@ function createMarker(maps: GoogleMaps, input: MarkerInput): AttachedMarker {
       move: (position) => {
         marker.position = position
       },
-      on: (event, handler) => marker.addListener(event, handler),
+      on: (event, handler) =>
+        event === 'contextmenu'
+          ? onPinContextMenu(input.pin, handler)
+          : marker.addListener(event, handler),
     }
   }
 

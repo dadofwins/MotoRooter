@@ -175,18 +175,25 @@ function createFakeMaps({ withMarkerLibrary = true }: { withMarkerLibrary?: bool
           : { domEvent: { clientX: at.x, clientY: at.y, preventDefault: nativeMenu.preventDefault } },
       )
     }
+    /**
+     * A right-click on the pin, as the real API delivers one.
+     *
+     * **Dispatched on the content element, not through `addListener`.** Verified against the live
+     * Maps API on 2026-08-26: `AdvancedMarkerElement` emits `click` and does **not** emit
+     * `contextmenu` — same marker, same content, same dispatch, one line apart in the probe. The
+     * fake used to deliver it anyway, which is why the right-click menu passed every test and
+     * would have done nothing at all in production.
+     */
     contextMenu(at?: ScreenAt): void {
-      this.listeners.get('contextmenu')?.(
-        at === undefined
-          ? {}
-          : {
-              domEvent: {
-                clientX: at.x,
-                clientY: at.y,
-                preventDefault: nativeMenu.preventDefault,
-              },
-            },
-      )
+      const content = this.options['content']
+      if (!(content instanceof HTMLElement)) return
+      const event = new MouseEvent('contextmenu', {
+        bubbles: true,
+        cancelable: true,
+        ...(at === undefined ? {} : { clientX: at.x, clientY: at.y }),
+      })
+      event.preventDefault = nativeMenu.preventDefault
+      content.dispatchEvent(event)
     }
   }
 
@@ -1107,6 +1114,36 @@ describe('MapCanvas showing points of interest', () => {
  * corner instead of under the cursor is a menu about the wrong thing.
  */
 describe('MapCanvas reporting a right-click', () => {
+  it('hears a right-click the Maps API never emits', async () => {
+    // The one this whole layer got wrong. `AdvancedMarkerElement` emits `click` and not
+    // `contextmenu` — verified live, with and without `gmpClickable`, on the same marker one line
+    // apart. Nothing registered through `addListener` will ever fire, so the listener has to be
+    // on the pin's own DOM node. This test fails if that ever goes back through the Maps event
+    // system, which is exactly the change a reasonable person would make while tidying.
+    const fake = createFakeMaps()
+    const onContextMenu = vi.fn()
+
+    render(
+      <MapCanvas
+        mapId={MAP_ID}
+        loader={fake.loader}
+        waypoints={[waypoint(47)]}
+        onContextMenu={onContextMenu}
+      />,
+    )
+    await waitFor(() => expect(fake.waypointMarkers()).toHaveLength(1))
+
+    const marker = fake.waypointMarkers()[0]
+    // Nothing is listening through the Maps event system at all.
+    expect(marker?.listeners.has('contextmenu')).toBe(false)
+
+    act(() => {
+      marker?.contextMenu({ x: 10, y: 20 })
+    })
+
+    expect(onContextMenu).toHaveBeenCalled()
+  })
+
   it('reports a right-clicked point with where on screen it happened', async () => {
     const fake = createFakeMaps()
     const onContextMenu = vi.fn()

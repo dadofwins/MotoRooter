@@ -67,36 +67,59 @@ describe('useBrowserLocation', () => {
     await waitFor(() => expect(result.current.coordinate).toEqual({ lat: 47.61, lon: -122.33 }))
   })
 
+  /**
+   * Waits for one permission answer to land, with a second hook proving the wait was long enough.
+   *
+   * `canLocate` is false *before* the answer arrives and false again after a denial, so waiting
+   * for false cannot tell "denied" from "not asked yet" — a `waitFor` satisfies itself on the
+   * starting value and the test passes whatever the hook does. Rendering a permissive hook beside
+   * it is the control: the same wait turns that one true, so a false on the other is a state the
+   * hook settled in rather than one it started in.
+   */
+  async function settleAlongside(from: BrowserLocator) {
+    const control = locator()
+    const subject = renderHook(() => useBrowserLocation(from))
+    const permissive = renderHook(() => useBrowserLocation(control))
+    await waitFor(() => expect(permissive.result.current.canLocate).toBe(true))
+    return subject.result
+  }
+
   it('offers nothing where the answer is already no', async () => {
     // A control that can only fail is a control that lies. This also covers a plain-http origin,
     // which reports denied rather than prompt — measured, not assumed.
     const from = locator({ permission: () => Promise.resolve('denied') })
 
-    const { result } = renderHook(() => useBrowserLocation(from))
+    const result = await settleAlongside(from)
 
-    await waitFor(() => expect(result.current.canLocate).toBe(false))
+    expect(result.current.canLocate).toBe(false)
     expect(from.current).not.toHaveBeenCalled()
   })
 
   it('offers nothing where the browser has no such thing', async () => {
     const from = locator({ permission: () => Promise.resolve('unsupported') })
 
-    const { result } = renderHook(() => useBrowserLocation(from))
+    const result = await settleAlongside(from)
 
-    await waitFor(() => expect(result.current.canLocate).toBe(false))
+    expect(result.current.canLocate).toBe(false)
+    expect(from.current).not.toHaveBeenCalled()
   })
 
   it('takes a refusal as an answer rather than an error', async () => {
     // Denied is a normal outcome. No alarm, and nothing that would ask again.
+    //
+    // Waited on `canLocate` going false, not on `isLocating`. `isLocating` is false at both ends
+    // of the request, so a `waitFor` can satisfy itself on the initial false before `locate` has
+    // rendered anything — which made this test fail about one run in twelve, and made main red.
+    // `canLocate` is true at the gate below and false only once the refusal has landed.
     const from = locator({ current: () => Promise.resolve(null) })
     const { result } = renderHook(() => useBrowserLocation(from))
     await waitFor(() => expect(result.current.canLocate).toBe(true))
 
     result.current.locate()
 
-    await waitFor(() => expect(result.current.isLocating).toBe(false))
+    await waitFor(() => expect(result.current.canLocate).toBe(false))
     expect(result.current.coordinate).toBeNull()
-    expect(result.current.canLocate).toBe(false)
+    expect(result.current.isLocating).toBe(false)
   })
 
   it('asks once, however many times the control is pressed', async () => {

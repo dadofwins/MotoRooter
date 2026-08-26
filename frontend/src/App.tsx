@@ -37,7 +37,7 @@ import { Landing } from './landing/Landing'
 import { needsReplan, useReplan } from './trip/useReplan'
 import { useRouteLeg } from './trip/useRouteLeg'
 import { useRoutingCapabilities } from './trip/useRoutingCapabilities'
-import { hasTripInUrl, useStoredTrip, useTripSave } from './trip/useTripDocument'
+import { clearTripFromUrl, hasTripInUrl, useStoredTrip, useTripSave } from './trip/useTripDocument'
 import { useVisitedTrips } from './trip/useVisitedTrips'
 import { formatDistance, formatDuration } from './units/format'
 import { useDistanceUnit } from './units/useDistanceUnit'
@@ -85,22 +85,70 @@ export interface AppProps {
   readonly pois?: readonly Poi[]
 }
 
-export function App({
+/**
+ * Leaving a trip remounts rather than resets.
+ *
+ * The alternative was a `reset` on each of the three hooks that hold trip state — the stored
+ * document, the save, the replan — and the next piece of state added would have needed a
+ * fourth. Worse, missing one is silent and expensive: with the previous document still loaded,
+ * the first waypoint of the *next* trip was written to the *previous* trip's slug, replacing a
+ * trip the rider had just been looking at. A remount cannot forget a field.
+ *
+ * `autoOpenAllowed` is what stops the remount from undoing itself: the rider with one trip
+ * would otherwise be auto-opened straight back into the trip they just left.
+ */
+export function App(props: AppProps = {}): React.JSX.Element {
+  const [session, setSession] = useState(0)
+  return (
+    <TripSession
+      key={session}
+      {...props}
+      autoOpenAllowed={session === 0}
+      onLeave={() => setSession((previous) => previous + 1)}
+    />
+  )
+}
+
+interface TripSessionProps extends AppProps {
+  /** False after the rider has explicitly asked for a new trip. */
+  readonly autoOpenAllowed: boolean
+  readonly onLeave: () => void
+}
+
+function TripSession({
   mapLoader = loadMaps,
   mapId = MAP_ID,
   client = apiClient,
   pois = NO_POIS,
-}: AppProps = {}): React.JSX.Element {
+  autoOpenAllowed,
+  onLeave,
+}: TripSessionProps): React.JSX.Element {
   const { unit, setUnit } = useDistanceUnit()
   const visited = useVisitedTrips()
+
+  /**
+   * A trip to open without asking: the only one this browser knows, and only when the URL
+   * names none.
+   *
+   * Decided once, at mount. A link must still go to the trip it names, whatever this browser
+   * has seen — that is what the URL check is for, and dropping it makes two fetches race.
+   */
+  const [autoOpen] = useState<string | null>(() => {
+    if (!autoOpenAllowed || hasTripInUrl()) return null
+    const only = visited.trips.length === 1 ? visited.trips[0] : undefined
+    return only?.slug ?? null
+  })
 
   /**
    * Whether the rider has come through the front door yet.
    *
    * The landing screen is the entrance and the map is what is behind it. A URL naming a trip
-   * skips straight through, which is what makes a shared link work.
+   * skips straight through, which is what makes a shared link work — and so does a browser
+   * that knows exactly one trip.
    */
-  const [entered, setEntered] = useState(() => hasTripInUrl())
+  // Derived from the same decision rather than restating its condition: two expressions of one
+  // fact is how they come to disagree.
+  const [entered, setEntered] = useState(() => hasTripInUrl() || autoOpen !== null)
   /** The name typed at the front door, carried into the trip this session creates. */
   const [chosenName, setChosenName] = useState<string | null>(null)
 
@@ -111,6 +159,13 @@ export function App({
    * comparison below does the same job without one.
    */
   const { trip: stored, reload, open } = useStoredTrip(client)
+
+  // Reading this browser's list is an external system, so opening from it belongs in an
+  // effect. Runs once: the decision was made at mount and must not be revisited.
+  useEffect(() => {
+    if (autoOpen !== null) open(autoOpen)
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- once, at mount, by design
+  }, [])
   const [edit, setEdit] = useState<Edited>({ base: null, waypoints: [], pois, legs: null })
 
   /** The stored document, as an edit nobody has changed yet. */
@@ -354,12 +409,27 @@ export function App({
         />
       </main>
       <aside className="chat-pane" aria-label="Trip assistant">
-        {knownName !== null && (
-          // Which trip this is, whether it was arrived at by link or created here. Keyed on
-          // the name rather than on `stored`, which stays null for a trip created this
-          // session — so this heading never rendered on the path that actually creates trips.
-          <h1 className="trip-name">{knownName}</h1>
-        )}
+        <div className="trip-bar">
+          {knownName !== null && (
+            // Which trip this is, whether it was arrived at by link or created here. Keyed on
+            // the name rather than on `stored`, which stays null for a trip created this
+            // session — so this heading never rendered on the path that creates trips.
+            <h1 className="trip-name">{knownName}</h1>
+          )}
+          {/* Always reachable, which is what auto-opening the only trip costs: the rider who
+              has exactly one would otherwise have no way to start another. */}
+          <button
+            type="button"
+            className="trip-bar__new"
+            onClick={() => {
+              // The URL first: it names the current trip, and the remount reads it back.
+              clearTripFromUrl()
+              onLeave()
+            }}
+          >
+            New trip
+          </button>
+        </div>
         <p className="greeting">
           Describe your trip and I&rsquo;ll help plan it for you! Or set a start and end point on
           the map.

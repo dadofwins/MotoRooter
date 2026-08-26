@@ -1046,7 +1046,7 @@ describe('App arriving', () => {
     expect(screen.queryByRole('button', { name: /start a new trip/i })).not.toBeInTheDocument()
   })
 
-  it('lists a trip it has seen before, next time', async () => {
+  it('takes you back to a trip it has seen before, next time', async () => {
     const fake = createFakeMaps()
     const router = fakeRouter()
     router.getTrip.mockResolvedValue(tripFixture({ slug: 'wabdr-north', name: 'WABDR North' }))
@@ -1062,14 +1062,172 @@ describe('App arriving', () => {
       expect(localStorage.getItem('motorooter.visitedTrips')).toContain('wabdr-north')
     })
     first.unmount()
+    router.getTrip.mockClear()
 
-    // A fresh arrival with no trip in the URL: the door, now with a way back.
+    // A fresh arrival with no trip in the URL. This used to assert the door listed the trip;
+    // auto-select means the trip opens itself instead, which proves the same thing more
+    // strongly — the visit was recorded, and it is what got the rider back here.
     window.history.replaceState(null, '', '/')
-    render(<App mapLoader={createFakeMaps().loader} mapId="motorooter-test-vector" client={router} />)
+    const second = createFakeMaps()
+    render(<App mapLoader={second.loader} mapId="motorooter-test-vector" client={router} />)
 
-    // findBy, not getBy: the list is read from storage in an effect, so on a fresh mount there
-    // is a tick between rendering and the button existing. A synchronous assertion here passes
-    // only when it wins that race — which it did twice out of three.
-    expect(await screen.findByRole('button', { name: 'WABDR North' })).toBeInTheDocument()
+    await waitFor(() => {
+      expect(router.getTrip).toHaveBeenCalledWith('wabdr-north', expect.anything())
+    })
+  })
+})
+
+/**
+ * Auto-select, and the door staying reachable.
+ *
+ * Tim asked for the only trip to open itself, and paid for the dead-end it creates: a
+ * persistent New trip control, so "create is always reachable" even for the rider whose single
+ * trip would otherwise swallow the entrance.
+ */
+describe('App with one trip already', () => {
+  function withVisited(entries: readonly { slug: string; name: string }[]): void {
+    localStorage.setItem('motorooter.visitedTrips', JSON.stringify(entries))
+  }
+
+  it('opens the only trip without asking', async () => {
+    withVisited([{ slug: 'wabdr-north', name: 'WABDR North' }])
+    const fake = createFakeMaps()
+    const router = fakeRouter()
+    router.getTrip.mockResolvedValue(tripFixture({ slug: 'wabdr-north', name: 'WABDR North' }))
+
+    render(<App mapLoader={fake.loader} mapId="motorooter-test-vector" client={router} />)
+
+    await waitFor(() => expect(fake.maps).toHaveLength(1))
+    expect(router.getTrip).toHaveBeenCalledWith('wabdr-north', expect.anything())
+  })
+
+  it('asks when there is more than one, because there is a choice to make', async () => {
+    withVisited([
+      { slug: 'a', name: 'Cascades loop' },
+      { slug: 'b', name: 'WABDR North' },
+    ])
+    const fake = createFakeMaps()
+
+    render(<App mapLoader={fake.loader} mapId="motorooter-test-vector" client={fakeRouter()} />)
+
+    expect(await screen.findByRole('button', { name: 'Cascades loop' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /start a new trip/i })).toBeInTheDocument()
+  })
+
+  it('still honours a link, whatever is in the list', async () => {
+    withVisited([{ slug: 'mine', name: 'Mine' }])
+    window.history.replaceState(null, '', '/?trip=someone-elses')
+    const fake = createFakeMaps()
+    const router = fakeRouter()
+    router.getTrip.mockResolvedValue(tripFixture({ slug: 'someone-elses', name: "Someone else's" }))
+
+    render(<App mapLoader={fake.loader} mapId="motorooter-test-vector" client={router} />)
+
+    await waitFor(() => expect(fake.maps).toHaveLength(1))
+    // The link wins, and nothing else is opened. Asserting only that the link was fetched
+    // passed even with the URL guard removed: auto-select fetched 'mine' as well, and the two
+    // races were invisible to an assertion that just asked whether the link was among them.
+    await waitFor(() => {
+      expect(router.getTrip).toHaveBeenCalledWith('someone-elses', expect.anything())
+    })
+    expect(router.getTrip.mock.calls.map((call) => call[0])).toEqual(['someone-elses'])
+    expect(new URL(window.location.href).searchParams.get('trip')).toBe('someone-elses')
+  })
+
+  it('keeps creating a trip one click away from the map', async () => {
+    // The dead end auto-select would otherwise create: one trip, and no way back to the door.
+    withVisited([{ slug: 'wabdr-north', name: 'WABDR North' }])
+    const fake = createFakeMaps()
+    const router = fakeRouter()
+    router.getTrip.mockResolvedValue(tripFixture({ slug: 'wabdr-north', name: 'WABDR North' }))
+    render(<App mapLoader={fake.loader} mapId="motorooter-test-vector" client={router} />)
+    await waitFor(() => expect(fake.maps).toHaveLength(1))
+
+    fireEvent.click(screen.getByRole('button', { name: 'New trip' }))
+
+    expect(await screen.findByRole('button', { name: /start a new trip/i })).toBeInTheDocument()
+  })
+
+  it('does not write the new trip over the one it left', async () => {
+    // The bug this exists to catch: New trip left the previous document loaded, so the first
+    // waypoint of the *next* trip was PUT to the previous trip's slug — silently replacing a
+    // trip the rider had just been looking at.
+    window.history.replaceState(null, '', '/?trip=old-one')
+    const fake = createFakeMaps()
+    const router = fakeRouter()
+    router.getTrip.mockResolvedValue(
+      tripFixture({
+        slug: 'old-one',
+        name: 'Old one',
+        waypoints: [waypointFixture(47.5, -120.5)],
+      }),
+    )
+    render(<App mapLoader={fake.loader} mapId="motorooter-test-vector" client={router} />)
+    await mapReady(fake)
+    await screen.findByRole('heading', { name: 'Old one' })
+
+    fireEvent.click(screen.getByRole('button', { name: 'New trip' }))
+    fireEvent.click(await screen.findByRole('button', { name: /start a new trip/i }))
+    // The *second* map, not just any map: the remount builds a new one, and the fake's click
+    // handler belongs to whichever was built last. Waiting on `length >= 1` was already true
+    // from the first mount, so the click went to the tree that had just been thrown away.
+    await waitFor(() => {
+      expect(fake.maps).toHaveLength(2)
+    })
+    fake.clickMap(46.1, -121.1)
+
+    await waitFor(() => expect(router.createTrip).toHaveBeenCalled(), { timeout: 3000 })
+    // Written to the trip it just created, and to nothing else. Asserted positively as well:
+    // "never old-one" alone would hold just as well if no write happened at all.
+    const created = router.createTrip.mock.calls[0]?.[0].slug
+    await waitFor(() => expect(router.updateTrip).toHaveBeenCalled(), { timeout: 3000 })
+    for (const call of router.updateTrip.mock.calls) expect(call[0]).toBe(created)
+  })
+
+  it('starts the new trip empty rather than carrying the last one into it', async () => {
+    window.history.replaceState(null, '', '/?trip=old-one')
+    const fake = createFakeMaps()
+    const router = fakeRouter()
+    router.getTrip.mockResolvedValue(
+      tripFixture({
+        slug: 'old-one',
+        name: 'Old one',
+        waypoints: [
+          waypointFixture(47.5, -120.5),
+          waypointFixture(47.9, -120.1),
+        ],
+      }),
+    )
+    render(<App mapLoader={fake.loader} mapId="motorooter-test-vector" client={router} />)
+    await mapReady(fake)
+    await waitFor(() => expect(attachedPins(fake).length).toBeGreaterThanOrEqual(2))
+
+    fireEvent.click(screen.getByRole('button', { name: 'New trip' }))
+    fireEvent.click(await screen.findByRole('button', { name: /start a new trip/i }))
+
+    // A blank map: the previous trip's waypoints are not the new trip's waypoints.
+    await waitFor(() => {
+      expect(attachedPins(fake)).toHaveLength(0)
+    })
+    expect(screen.queryByRole('heading', { name: 'Old one' })).not.toBeInTheDocument()
+  })
+
+  it('does not auto-open again after the rider asked for a new one', async () => {
+    // Otherwise New trip bounces straight back into the trip it just left, which is the same
+    // dead end wearing a button.
+    withVisited([{ slug: 'wabdr-north', name: 'WABDR North' }])
+    const fake = createFakeMaps()
+    const router = fakeRouter()
+    router.getTrip.mockResolvedValue(tripFixture({ slug: 'wabdr-north', name: 'WABDR North' }))
+    render(<App mapLoader={fake.loader} mapId="motorooter-test-vector" client={router} />)
+    await waitFor(() => expect(fake.maps).toHaveLength(1))
+
+    fireEvent.click(screen.getByRole('button', { name: 'New trip' }))
+    await screen.findByRole('button', { name: /start a new trip/i })
+
+    // Still at the door a tick later, rather than having been pulled back.
+    await new Promise((resolve) => setTimeout(resolve, 50))
+    expect(screen.getByRole('button', { name: /start a new trip/i })).toBeInTheDocument()
+    expect(new URL(window.location.href).searchParams.get('trip')).toBeNull()
   })
 })

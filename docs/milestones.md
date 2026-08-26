@@ -40,10 +40,12 @@ remaining M1 item and the easiest to forget, because item 5 reads as done from t
 
 ### Also outstanding, not part of M1 but asked for
 
-- **Settings dialog** behind a gear icon, housing miles/km. Tim asked for this directly; it is
-  the last unaddressed item from his replan feedback. Do not let it keep slipping.
+- **Settings dialog** behind a gear icon, housing miles/km. **Low priority — Tim's call,
+  2026-08-25: "we can come back to it".** The miles/km toggle already works where it is, so
+  this is tidying rather than function. Do not spend M1 time on it.
 - Per-category discovery control, so "find me more restaurants" has a mouse equivalent at that
-  granularity. Belongs with the settings dialog.
+  granularity. This one is *not* low priority despite sharing a home with the settings dialog —
+  it is the third mouse-equivalence gap, and `find_places` is the tool Tim named himself.
 
 ### Resolved since this document was written
 

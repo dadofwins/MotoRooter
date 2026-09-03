@@ -16,13 +16,20 @@ integrator on `main`. You cannot see their chat — you talk to them by mail.
 
 **Do these four things first, in order:**
 
-1. Read `CLAUDE.md`, `frontend/CLAUDE.md`, and `docs/parallel-work.md`. They contain the
+1. **Get current before you read anything.** Your worktree is sitting on a merged branch whose
+   copy of these documents is out of date:
+
+   ```sh
+   git fetch origin && git switch -c fe/<task> origin/main
+   ```
+
+   Every queue item branches from `main` anyway, because stacked branches serialise merges even
+   when the code is independent. Do this first — reading the guidance off a stale checkout is
+   how you end up rebuilding something that shipped a week ago.
+2. Read `CLAUDE.md`, `frontend/CLAUDE.md`, and `docs/parallel-work.md`. They contain the
    architecture, your boundaries, and the protocol. Do not re-derive any of it. The root
    `CLAUDE.md` Status section is the current state of the world — if a scoped file disagrees
    with it, the root wins and the scoped file needs fixing.
-2. Start from `main`, not from whatever your worktree is sitting on:
-   `git fetch origin && git switch -c fe/<task> origin/main`. Every queue item branches from
-   `main`, because stacked branches serialise merges even when the code is independent.
 3. Run `make install`, then `make check` to confirm you start from green. Note the counts it
    prints rather than trusting a number written in a document. Then read
    `src/routing/dragScheduler.ts` — it is the most important file you own and everything about

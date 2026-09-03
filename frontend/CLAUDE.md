@@ -78,21 +78,30 @@ Do not hardcode a per-engine constant. `GET /api/routing/capabilities` returns
 straight line during the gesture and route only on release. Feed that value straight into
 `DragScheduler`.
 
-## Your queue, in dependency order
+## What is already built
 
-1. **API client.** Typed fetch wrapper over the generated types, with `ErrorResponse.code`
-   switching. Do not hand-write request or response shapes.
-2. **Google Maps canvas.** Vector maps, `VITE_GOOGLE_MAPS_BROWSER_KEY`. The browser key is
-   necessarily public — restrict it by HTTP referrer and by API, and keep it distinct from
-   the server-side key.
-3. **Drag-to-reroute.** The hardest piece in the plan. Google's `DirectionsRenderer`
-   supports `draggable` only for routes Google computed; ours are custom polylines, so this
-   is hand-built: drag handle → insert a via-point at the nearest point on the line →
-   re-request that leg only → splice the geometry. Never recompute the whole route.
-4. **POI pins and detail dialog.** Distinct iconography per `PoiCategory`, right-click
-   "add to route". The dialog is backed by `GET /api/places/{place_id}`, currently a 501
-   stub with a frozen schema — build against it and it will start returning data.
-5. **Chat rail with streaming tool calls**, and the Replan button with its dirty state.
+**Everything through M2.** The typed API client over the generated types; the Google Maps
+canvas; drag-to-reroute with per-leg routing and per-provider cadence; POI pins, the Places
+detail dialog and route-through; the chat rail with streaming tool calls; the Replan button
+with its dirty state; leg mode pickers; and GPX export. All merged, all green.
+
+Two files carry more weight than the rest and are worth reading before touching anything
+near them: `src/routing/dragScheduler.ts` (every guarantee the drag gesture makes) and
+`src/api/coverage.test.ts` (the tripwire that decides whether a contract field may go
+unread).
+
+The root `CLAUDE.md` Status section is the current state of the world. Trust it over this
+file if the two ever disagree, and fix this file when they do.
+
+## Your queue
+
+**Assigned by mail, not listed here.** A hardcoded queue in a file nobody rewrites is how
+this document came to list three items that had been merged for a week. The integrator
+assigns work to your box; `scripts/queue-status` is what tells them you are idle.
+
+If your box is empty and you have nothing in flight, say so by mail rather than picking
+something up — an engineer choosing their own next task is how two branches end up touching
+the same area.
 
 ## Boundaries
 

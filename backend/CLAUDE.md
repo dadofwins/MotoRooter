@@ -45,34 +45,30 @@ except the API contract (see Boundaries). Work on `be/*` branches in your own wo
 
 ## What is already built
 
-The routing layer is complete and green: domain models, `RoutingProvider` protocol, shared
-adapter contract suite, `FakeProvider`, ORS and Google adapters, polyline codec, registry,
-policy resolver, caching/retry/quota decorators, config factory. Trip models, slug
-validation, `TripStore` protocol with an in-memory implementation, and the REST API surface
-also exist.
+**Everything through M2.** The routing layer (domain models, `RoutingProvider` protocol,
+shared adapter contract suite, `FakeProvider`, ORS and Google adapters, polyline codec,
+registry, policy resolver, caching/retry/quota decorators, config factory); trips and
+persistence including `GcsTripStore`; leg stitching; GPX export; the LLM tool layer with six
+tools behind a streaming chat endpoint; and the four-stage discovery pipeline with Places
+enrichment. All merged, all green.
 
 Read `src/motorooter/routing/` before adding a provider — the patterns there are the house
-style, and `tests/routing/contract.py` is the bar every adapter must clear.
+style, and `tests/routing/contract.py` is the bar every adapter must clear. Read
+`src/motorooter/planning/discovery/` before adding a discovery stage; every stage there owes
+counts and a failure line for the reason recorded in the root `CLAUDE.md`.
 
-## Your queue, in dependency order
+The root `CLAUDE.md` Status section is the current state of the world. Trust it over this
+file if the two ever disagree, and fix this file when they do.
 
-1. **`GcsTripStore`.** Cloud Storage at `trips/<slug>/trip.json`. Must pass
-   `tests/trips/store_contract.py` unchanged — both `TripStoreContract` and
-   `TripStoreRoundTripContract`. The round-trip tests are the ones that matter: JSON
-   serialization is where tuple-vs-list drift and timezone loss creep in. Do not write to
-   the container filesystem; Cloud Run's disk is ephemeral and per-instance.
-2. **Leg stitching service.** Turn a multi-intent trip into one continuous geometry by
-   routing each leg through its resolved provider and joining them. Leg boundaries are
-   where the bugs live — test them directly, including the case where two adjacent legs use
-   different engines and their endpoints do not exactly coincide.
-3. **GPX export.** Track plus ordered waypoints. Garmin units have point-count limits;
-   decimate rather than truncate, and test the limit explicitly.
-4. **LLM tool layer.** OpenAI, server-side tool execution, streaming. Every tool must be a
-   thin wrapper over the same service function the REST endpoint calls — the mouse path and
-   the chat path must not diverge. Pin the model in config, never inline.
-5. **Discovery and Places enrichment.** LLM output is *candidates only*. It will invent
-   coordinates. Nothing reaches the map without resolving to a real `place_id` — the `Poi`
-   model already enforces that unverified suggestions cannot be pinned to the route.
+## Your queue
+
+**Assigned by mail, not listed here.** A hardcoded queue in a file nobody rewrites is how
+this document came to open with a task that had been merged for a week. The integrator
+assigns work to your box; `scripts/queue-status` is what tells them you are idle.
+
+If your box is empty and you have nothing in flight, say so by mail rather than picking
+something up — an engineer choosing their own next task is how two branches end up touching
+the same area.
 
 ## Boundaries
 
@@ -108,7 +104,7 @@ Never edit anything under `frontend/`.
 
 ## House rules
 
-- **TDD, no exceptions.** Test first, watch it fail, then implement. Every one of the 418
+- **TDD, no exceptions.** Test first, watch it fail, then implement. Every one of the
   existing tests was written this way.
 - `uv` for everything Python. Never `pip`, never a hand-rolled venv.
 - `make check` must pass before you hand anything over: ruff, `mypy --strict`,
@@ -120,11 +116,19 @@ Never edit anything under `frontend/`.
 - Misconfiguration raises `RoutingConfigError` at startup, not on first request. A policy
   that would route dirt through a paved-only engine must fail the deploy.
 
-## Known limitation worth fixing
+## Known limitation, measured and accepted
 
-Hosted ORS has no motorcycle profile, so dirt intents currently route through
-`cycling-mountain` — it reaches tracks a car profile refuses, but applies bicycle access
-rules. Before building much more on top, spike one known dirt section (a WABDR or OBDR
-segment) and look at whether the result is something you would actually ride. If it is not,
-self-hosted ORS with a custom moto profile is the fix, and `RoutingSettings(ors_base_url=)`
-already supports pointing at one.
+Hosted ORS has no motorcycle profile, so dirt intents route through `cycling-mountain` — it
+reaches tracks a car profile refuses, but applies bicycle access rules.
+
+**This was spiked and the answer is that it is good enough** (M0, 2026-08-25, WABDR Section 3
+via `scripts/routing_spike.py`). At realistic waypoint density the engine puts you on the same
+road: 8 intermediate waypoints gave 58% within 100 m of the published track and a 50 m median
+deviation; 20 gave 78% and 26 m. Self-hosted ORS with a custom moto profile is deprioritised
+until something else forces it, and `RoutingSettings(ors_base_url=)` still supports pointing
+at one.
+
+Two consequences of that profile choice are permanent and live in the code rather than here:
+its durations are bicycle times, so `reports_trustworthy_duration` is false for ORS and
+`speeds.py` derives the figure instead; and its elevation lookup emits an exact `0` on
+failure, which the adapter filters against the route's own median.

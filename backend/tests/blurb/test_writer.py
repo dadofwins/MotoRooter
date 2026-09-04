@@ -186,3 +186,52 @@ class TestFactsAreTheOnlySource:
         facts = facts_for(a_loop())
         assert facts.distance_km is not None
         assert facts.unsurveyed_share is not None
+
+
+class TestTheModelIsNeverAskedToGuessACategory:
+    """The join reaches the model, not just the facts.
+
+    `facts` pairing a name with its category is worth nothing if the evidence block renders
+    the two apart again, and that is exactly how this failed the first time. So the assertion
+    is on what the model actually reads.
+    """
+
+    def a_trip_of_mixed_places(self) -> Trip:
+        now = utc_now()
+        return Trip(
+            slug="mixed",
+            name="Mixed",
+            created_at=now,
+            edited_at=now,
+            pois=(
+                Poi(
+                    id="halfway-flat",
+                    name="Halfway Flat",
+                    category=PoiCategory.WILD_CAMP,
+                    coordinate=Coordinate(lat=47.5, lon=-120.6),
+                    source=PoiSource.PLACES,
+                ),
+                Poi(
+                    id="diner",
+                    name="South Cle Elum Diner",
+                    category=PoiCategory.FOOD,
+                    coordinate=Coordinate(lat=47.18, lon=-120.94),
+                    source=PoiSource.PLACES,
+                ),
+            ),
+        )
+
+    async def test_every_name_reaches_the_model_beside_its_own_category(self):
+        model = says("rad")
+        await BlurbWriter(model).write(self.a_trip_of_mixed_places())
+        told = sent(model)
+        assert "Halfway Flat (wild_camp)" in told
+        assert "South Cle Elum Diner (food)" in told
+
+    async def test_a_bare_name_never_reaches_the_model(self):
+        """A name with no category beside it is the shape that invited the guess."""
+        model = says("rad")
+        await BlurbWriter(model).write(self.a_trip_of_mixed_places())
+        for line in sent(model).splitlines():
+            if "Halfway Flat" in line:
+                assert "wild_camp" in line

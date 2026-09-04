@@ -49,7 +49,15 @@ class TripFacts:
 
     riding_modes: tuple[str, ...] = ()
     place_counts: Mapping[str, int] = dataclasses.field(default_factory=dict)
-    place_names: tuple[str, ...] = ()
+    named_places: tuple[tuple[str, str], ...] = ()
+    """Each name with its own category, never a bare list of names.
+
+    Paired because unpairing them shipped a defect: given the counts and the names as two
+    separate lists, the model had no way to know which name was the food one and said
+    "grab grub at Halfway Flat", a wild camp. The join is arithmetic we already hold, so
+    withholding it was asking the model to invent a fact — which is the one thing the
+    prompt forbids, and not something a prompt can forbid when the format invites it.
+    """
 
     @property
     def is_routed(self) -> bool:
@@ -75,7 +83,7 @@ def facts_for(trip: Trip) -> TripFacts:
         unsurveyed_share=unsurveyed,
         riding_modes=_modes(trip),
         place_counts=dict(counts),
-        place_names=tuple(poi.name for poi in trip.pois[:MAX_NAMED_PLACES]),
+        named_places=tuple((poi.name, poi.category.value) for poi in trip.pois[:MAX_NAMED_PLACES]),
     )
 
 

@@ -73,14 +73,6 @@ export function RoutePoints({
   if (waypoints.length === 0) return null
 
   /**
-   * Whether saying "placed by you" distinguishes anything.
-   *
-   * Every point a rider clicks is pinned, so on a route nobody has replanned the label appears on
-   * every row and tells them nothing — five identical annotations, which is how it looked once the
-   * rail was rendered and examined. It earns its place only when the list is mixed, which is
-   * exactly when a replan has added or moved points the rider did not place.
-   */
-  /**
    * A key that is both unique and stable, which the obvious two choices are not.
    *
    * The index remounts every row below a removal and costs a keyboard user the focus they were
@@ -99,6 +91,14 @@ export function RoutePoints({
     return `${place}#${String(repeat)}`
   })
 
+  /**
+   * Whether saying "placed by you" distinguishes anything.
+   *
+   * Every point a rider clicks is pinned, so on a route nobody has replanned the label appears on
+   * every row and tells them nothing — five identical annotations, which is how it looked once the
+   * rail was rendered and examined. It earns its place only when the list is mixed, which is
+   * exactly when a replan has added or moved points the rider did not place.
+   */
   const mixedProvenance =
     waypoints.some((waypoint) => waypoint.pinned) &&
     waypoints.some((waypoint) => !waypoint.pinned)

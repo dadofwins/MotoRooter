@@ -241,14 +241,6 @@ async function errorFor(response: Response): Promise<ApiError> {
 }
 
 /**
- * Decodes a success body.
- *
- * The contract says this is JSON of shape `T`, and the generated types are trusted rather
- * than re-validated at runtime. What is *not* trusted is that the response came from the
- * app at all: a proxy answering 200 with an HTML page would otherwise surface as a bare
- * `SyntaxError`, which no component can sensibly handle.
- */
-/**
  * A body that could not be read to completion — a stream that errored mid-download.
  *
  * Aborts pass through untouched; everything else becomes an `ApiNetworkError`, because the
@@ -277,6 +269,14 @@ function malformedJson(status: number, text: string, error: unknown): never {
   })
 }
 
+/**
+ * Decodes a success body.
+ *
+ * The contract says this is JSON of shape `T`, and the generated types are trusted rather
+ * than re-validated at runtime. What is *not* trusted is that the response came from the
+ * app at all: a proxy answering 200 with an HTML page would otherwise surface as a bare
+ * `SyntaxError`, which no component can sensibly handle.
+ */
 async function readJson<T>(response: Response): Promise<T> {
   let text: string
   try {

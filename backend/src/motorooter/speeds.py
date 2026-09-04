@@ -25,10 +25,15 @@ _METRES_PER_KM = 1000.0
 class RidingSpeeds:
     """Average speeds by surface, in km/h.
 
-    **These values are provisional.** They are informed guesses, not measurements, and they
-    deserve the treatment the routing-profile question got: a real ride compared against a
-    real clock. They live here, named and in one place, so that when someone has that data
-    the correction is a one-line change rather than a hunt through call sites.
+    **Checked against a real timed ride, 2026-08-26, and the table holds.** They began as
+    informed guesses and are no longer: a stopwatch is what settled them, which matters
+    because an OSM audit had implied untagged distance might behave more like 68 km/h than
+    55 and that inference did not survive contact with the ride. The root `CLAUDE.md`
+    constants table carries the working.
+
+    They still live here, named and in one place, so a future correction is a one-line change
+    rather than a hunt through call sites. That is why this was cheap to check and would be
+    cheap to revise — the reason for the shape outlasts the measurement that confirmed it.
 
     Averages over a riding day, not top speeds — they absorb fuel stops, photographs, gates,
     and the fact that nobody maintains 80 km/h for six hours.
@@ -71,7 +76,7 @@ class RidingSpeeds:
 
 
 DEFAULT_RIDING_SPEEDS = RidingSpeeds()
-"""The table in use. Provisional — see `RidingSpeeds`."""
+"""The table in use. Checked against a real ride — see `RidingSpeeds`."""
 
 
 def estimate_leg_duration_s(leg: RouteLeg, speeds: RidingSpeeds = DEFAULT_RIDING_SPEEDS) -> float:

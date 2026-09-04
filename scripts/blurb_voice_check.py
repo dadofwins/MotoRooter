@@ -186,18 +186,45 @@ def utah_dirt() -> Trip:
     )
 
 
-HISTORY = (
+SWIMMING = (
     Turn(role="user", content="somewhere to swim on this? it is going to be roasting"),
     Turn(role="assistant", content="I have added Blewett Pass. Want me to look for water?"),
 )
+"""Kept from the previous sample, so one line is comparable across both runs."""
+
+# Each of the three below names a place the trip does NOT contain. That is the failure mode
+# this configuration adds and neither earlier sample could have shown: history is
+# rider-authored text reaching a model whose one hard rule is to state nothing it was not
+# given, and a rider *asking* about Bend is not the route going there. A line that describes
+# any of these as though it were on the trip is a violation, not a matter of taste.
+ASKED_FOR_A_PLACE_NOT_ON_IT = (
+    Turn(role="user", content="three days of dirt starting and ending in leavenworth"),
+    Turn(role="assistant", content="Happy to. Where would you like to ride in between?"),
+)
+WANTS_TO_ADD_ONE = (
+    Turn(role="user", content="can we get blewett pass and cle elum in there too?"),
+    Turn(role="assistant", content="I can add those. Shall I?"),
+)
+ASKED_ABOUT_A_DETOUR = (
+    Turn(role="user", content="is it worth swinging by canyonlands or the needles district?"),
+    Turn(role="assistant", content="Both are a long way off this line. Want me to look?"),
+)
+
+LUNCH = (
+    Turn(role="user", content="anywhere decent for lunch on this one?"),
+    Turn(role="assistant", content="Nothing saved yet. Shall I search along the route?"),
+)
 
 CASES: tuple[tuple[str, Trip, tuple[Turn, ...]], ...] = (
-    ("empty trip, nothing placed", empty_trip(), ()),
-    ("one waypoint, nothing else", one_waypoint(), ()),
-    ("short paved out-and-back, no places saved", short_paved_out_and_back(), ()),
-    ("long dirt loop, 6 places saved", long_dirt_loop(), ()),
-    ("the same dirt loop, WITH chat history", long_dirt_loop(), HISTORY),
-    ("Moab, Utah — dirt, 1 place saved", utah_dirt(), ()),
+    # A rider who has typed a whole trip and placed nothing. The most direct test of the
+    # rule: everything about this trip exists only in the conversation.
+    ("empty trip, but the rider has described one in chat", empty_trip(), ASKED_FOR_A_PLACE_NOT_ON_IT),
+    ("one waypoint; chat names two more that are NOT on it", one_waypoint(), WANTS_TO_ADD_ONE),
+    ("short paved out-and-back, no places saved, asking about lunch", short_paved_out_and_back(), LUNCH),
+    # The control. Same trip as the next case, no history, so the two are comparable.
+    ("long dirt loop, 6 places saved, NO history", long_dirt_loop(), ()),
+    ("the same dirt loop, with the swimming conversation", long_dirt_loop(), SWIMMING),
+    ("Moab; chat names two parks that are NOT on it", utah_dirt(), ASKED_ABOUT_A_DETOUR),
 )
 
 

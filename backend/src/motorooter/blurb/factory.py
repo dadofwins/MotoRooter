@@ -20,18 +20,24 @@ The rail renders its static header immediately and swaps in the line if one arri
 budget longer than a rider's patience would buy nothing: a blurb that lands after they have
 started typing is worse than no blurb, because the header changes under them.
 
-**Partly measured, and the unmeasured half is the half a timeout is for.** Eleven live runs
-at `BLURB_EFFORT` across two spikes — five in `scripts/blurb_effort_spike.py`, six over
-varied trips in `scripts/blurb_voice_check.py` — landed between 1.0 s and 2.0 s, with trip
-size making no visible difference: an empty trip and a six-POI loop both answer in under two
-seconds. So 8.0 is roughly four times the slowest run ever observed and nothing has come
-close to it.
+**Partly measured, and the unmeasured half is the half a timeout is for.** Twenty-three live
+runs at `BLURB_EFFORT` across four spikes — five in `scripts/blurb_effort_spike.py` and three
+passes of six trips in `scripts/blurb_voice_check.py` — landed between 0.9 s and 3.6 s. Trip
+size makes no visible difference: an empty trip and a six-POI loop both answer in about a
+second.
 
-That says the budget is not tight in the normal case. It says nothing about the tail, which
-is what the timeout actually exists for: no run has yet hit a degraded API, a cold model or a
-rate-limited retry, so the number defending against those is still a guess. Eleven quiet runs
-cannot measure a bad day. Raising or lowering it wants latency from real traffic rather than
-more spikes, and until then this stays an admitted guess rather than a checked figure.
+**Twenty-two of those were under 2.0 s and one was 3.6 s.** That outlier is the only evidence
+here that the distribution has a tail at all. It carried chat history, but the other historied
+runs in the same pass came back in 1.1-1.3 s, so history is not the explanation and ordinary
+API variance is the honest reading of one observation. It matters because it moves the margin
+from about four times the worst case to about twice it.
+
+That still says the budget is not tight in the normal case. It says nothing about the tail
+the timeout actually exists for: no run has yet hit a degraded API, a cold model or a
+rate-limited retry, so the number defending against those remains a guess. Twenty-three quiet
+runs cannot measure a bad day, and the one slow run is a reminder that the quiet is the
+sample rather than the property. Raising or lowering it wants latency from real traffic rather
+than more spikes, and until then this stays an admitted guess rather than a checked figure.
 
 The one hard datum bounding it from below: at the default reasoning effort, two runs of five
 exceeded 8.0 s outright. Whatever this becomes, it is coupled to `BLURB_EFFORT`.

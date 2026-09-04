@@ -1,0 +1,183 @@
+<!--
+  Every class the dark @media block redefines, with representative content and the nesting it
+  really has.
+
+  Hand-written rather than dumped from the running app, for one reason: `run.py` asserts that
+  every class in that block appears here, so this file cannot quietly fall behind the
+  stylesheet. A dump of the app cannot make that promise — the first light-mode pass reached
+  31 of 55 classes precisely because a rich app dump never reaches the landing screen, the
+  Places pane or the error states.
+
+  Nesting matters and is not decoration. Contrast is computed against the *composited*
+  backdrop, so an entry that really sits inside `.chat__log` inside `.chat-pane` must sit
+  inside them here too, or the figure describes a surface that does not exist.
+-->
+<div class="landing">
+  <div class="landing__card">
+    <h1>MotoRooter</h1>
+    <p class="landing__blurb">Plan an adventure motorcycle trip: twisties, dirt, and somewhere to sleep.</p>
+    <label class="landing__field">Trip name<input value="WABDR North" /></label>
+    <button class="landing__open">Start a new trip</button>
+    <div class="landing__recent">
+      <h2>Recent trips</h2>
+      <button>WABDR North</button>
+      <button class="landing__forget" aria-label="Forget WABDR North">×</button>
+    </div>
+    <p class="landing__note">This list is kept in this browser only.</p>
+  </div>
+</div>
+
+<div class="app">
+  <!--
+    The map layer. These are plain DOM — a pin is an advanced marker's *content*, and the
+    overlay is a div — so none of it needs the Maps API, and the first version of this audit
+    was wrong to record the map as unreachable. What it does need is a busy ground: the map is
+    satellite imagery and terrain, and a figure computed against a flat pane colour describes a
+    surface that exists only while the map is loading.
+  -->
+  <!--
+    Two map panes, because the map has two grounds and only one of them is imagery.
+
+    `.map-canvas__overlay` is the *loading* surface: it fills the pane and covers whatever is
+    behind it, so anything measured on top of it is measured against a colour that exists only
+    while the map has not drawn. That is its own case, and it gets its own pane.
+
+    Everything else — pins, the locate button, a cluster — sits over satellite imagery for the
+    whole of the app's real life. Those go over the striped ground. Putting them in the pane
+    with the overlay was the first version of this fixture and it measured every pin against
+    the loading colour, which is precisely the mistake the house rule about rendering over a
+    real surface exists to stop.
+  -->
+  <div class="map-pane">
+    <p class="map-canvas__overlay" role="status">Loading map…</p>
+  </div>
+  <div class="map-pane" style="background:repeating-linear-gradient(38deg,#6b7a52 0 22px,#8a9463 22px 44px,#4e5c3c 44px 70px)">
+    <button class="map-locate" aria-label="Show where I am">◎</button>
+    <span class="pin pin--start">A</span>
+    <span class="pin pin--via">2</span>
+    <span class="pin pin--end">B</span>
+    <span class="poi"></span>
+    <span class="poi-cluster">7</span>
+  </div>
+  <ul class="context-menu">
+    <li><button class="context-menu__item">Add to route</button></li>
+    <li><button class="context-menu__item context-menu__item--destructive">Remove point</button></li>
+  </ul>
+  <div class="chat-pane">
+    <div class="trip-bar"><strong>WABDR North</strong><button class="trip-bar__new">New trip</button></div>
+
+    <div class="chat">
+      <div class="chat__log">
+        <p class="chat__greeting">Tight loop over Blewett — 41% unpaved and a few camps.</p>
+        <p class="chat__entry chat__entry--you">anywhere to swim?</p>
+        <p class="chat__entry chat__entry--assistant">There is a hole below the Teanaway crossing.</p>
+        <p class="chat__entry chat__entry--tool">Read the trip</p>
+        <p class="chat__entry chat__entry--tool-failed">'lone fir' matches 2 places:
+  ChIJN1t_tDeuEmsRUsoyG83frY4  Lone Fir Campground — Okanogan-Wenatchee, WA</p>
+        <p class="chat__entry chat__entry--unavailable">The assistant is not built yet.</p>
+        <p class="chat__entry chat__entry--error">The assistant could not be reached.</p>
+        <p class="chat__working">Scoring 10 places… · 16s</p>
+        <p class="chat__truncated">The assistant was cut off before it finished.</p>
+      </div>
+      <form class="chat__composer">
+        <label class="chat__field"><span class="chat__label">Ask the assistant</span>
+          <textarea rows="2"></textarea></label>
+        <button type="submit">Send</button>
+      </form>
+    </div>
+
+    <div class="click-mode">
+      <span class="click-mode__state click-mode__state--on">Browse</span>
+      <span class="click-mode__state">Add points</span>
+    </div>
+
+    <div class="route-summary">
+      <p>3 points placed · 50 mi · about 1h 30m</p>
+      <p class="route-summary__provenance">Time for the unpaved sections is our estimate, not the engine’s.</p>
+      <p class="route-warning">Two engines chose different roads here — the waypoint may be far from either.</p>
+      <button>Remove last point</button>
+    </div>
+
+    <div class="progress">
+      <div class="progress__meter"><div class="progress__bar"></div></div>
+      <details class="progress__history"><summary>What discovery did</summary>
+        <p>Searched 12 corridors.</p></details>
+    </div>
+
+    <div class="categories">
+      <p class="categories__group-title">Stays</p>
+      <span class="categories__chip categories__chip--on">Wild camp</span>
+      <span class="categories__chip">Hotel</span>
+      <p class="categories__cost">5 of 9 kinds · fewer searches, so a faster and cheaper run</p>
+    </div>
+
+    <div class="places">
+      <p class="places__title">Places on this route</p>
+      <p class="places__group-title">Stays</p>
+      <p class="places__meta">4.3 · 128 ratings</p>
+      <p class="places__note">Ignored Lone Fir Cemetery. <button class="places__undo">Undo</button></p>
+      <button class="places__ignore" aria-label="Ignore Lone Fir Campground">×</button>
+      <button class="places__route-through">Route through the best</button>
+      <button class="places__open">Lone Fir Campground</button>
+    </div>
+
+    <div class="best-route">
+      <button class="best-route__go">Route through the best</button>
+      <p class="best-route__error">No place on this route could be routed through.</p>
+    </div>
+
+    <div class="gpx">
+      <button>Download GPX</button>
+      <p class="gpx__contents">The route as a track, plus 3 places as waypoints.</p>
+      <p class="gpx__pending">Building…</p>
+      <p class="gpx__error">The GPX could not be built. Try again in a moment.</p>
+    </div>
+
+    <div class="place-search">
+      <form class="place-search__form"><label class="place-search__field">Add a place by name
+        <input placeholder="Leavenworth, Stevens Pass…" /></label><button>Search</button></form>
+      <ul><li class="place-search__result">Leavenworth, WA</li></ul>
+      <p class="place-search__error">That search could not be run.</p>
+    </div>
+
+    <ol class="points">
+      <li class="points__title">Route</li>
+      <li class="points__row"><span class="points__index">1</span> Leavenworth<span
+        class="points__pinned"> · placed by you</span>
+        <button class="points__remove" aria-label="Remove Leavenworth">×</button></li>
+    </ol>
+
+    <div class="units"><button>mi</button><button>km</button></div>
+
+    <div class="surface">
+      <p>41% dirt · 26% paved · 33% unsurveyed</p>
+      <p class="surface__distance">20 mi of 50 mi</p>
+    </div>
+
+    <div class="replan">
+      <button>Find places along the route</button>
+      <div class="replan__progress"><p class="progress__meta">Scoring 10 places</p>
+        <p class="progress__earlier">Searched 12 corridors</p></div>
+    </div>
+
+    <div class="leg-mode">
+      <label class="leg-mode__field">Mode
+        <select><option>Offroad</option></select></label>
+      <span class="leg-mode__label">Offroad</span>
+      <p class="leg-mode__note">Fast and Twisties cost you the dirt/paved/unsurveyed breakdown.</p>
+      <p class="leg-mode__provenance">Routed by google</p>
+    </div>
+  </div>
+
+  <div class="poi-pane">
+    <button class="poi-pane__close" aria-label="Close">×</button>
+    <h2>Lone Fir Campground</h2>
+    <p class="poi-pane__kind">Campground</p>
+    <p class="poi-pane__pending">Loading place details…</p>
+    <p class="poi-pane__coordinate">47.20000, -121.20000</p>
+    <p><span class="poi-pane__stars">★★★★</span>
+      <span class="poi-pane__rating-text">4.3 out of 5 · 128 ratings</span></p>
+    <ul class="poi-pane__reviews"><li>Quiet, and the creek is right there.</li></ul>
+    <div class="poi-pane__actions"><button>Add to route</button></div>
+  </div>
+</div>

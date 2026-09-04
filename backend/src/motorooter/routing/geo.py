@@ -22,6 +22,19 @@ EARTH_RADIUS_M = 6_371_008.8
 """IUGG mean Earth radius."""
 
 
+COINCIDENT_TOLERANCE_M = 1.0
+"""Below this, two points are the same place. Absorbs float and rounding jitter.
+
+One value for one idea, at the layer both callers already depend on. `planning.stitching`
+uses it to decide a leg boundary is a single point; `routing.decorators.coincident` uses it
+to decide a span has no length worth routing. Those are the same question asked about two
+things, so two constants would be a silent disagreement waiting for whoever tunes one.
+
+Not a rider-facing threshold. `GAP_REPORT_THRESHOLD_M` is the one that decides whether a
+boundary mismatch is worth telling somebody about, and it is measured and much larger.
+"""
+
+
 def haversine_m(a: Coordinate, b: Coordinate) -> float:
     """Great-circle distance in metres.
 

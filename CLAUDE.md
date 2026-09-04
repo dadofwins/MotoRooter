@@ -116,7 +116,9 @@ nobody changed the number on the strength of one audited section.
 rather than failing. `BLURB_TIMEOUT_S` belongs here until somebody has latency from real
 traffic, and anything added after it does too.
 
-None except the Garmin limit blocks anything, and all of them fail safely.
+None of them blocks anything, and all of them fail safely — including the new row: a blurb
+that times out produces no line and the header keeps its static copy, which is the safe
+direction.
 
 **Light mode has not been examined by eye.** The rail was rendered and inspected in dark mode
 only; a faithful light render was attempted and abandoned, because `:root` declares

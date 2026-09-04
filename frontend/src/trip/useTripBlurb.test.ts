@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { useTripBlurb } from './useTripBlurb'
 import { poi, routeLeg, trip as tripFixture, tripLeg } from '../api/fixtures'
 import { ApiNetworkError, ApiNotImplementedError } from '../api/errors'
-import type { Trip, Waypoint } from '../api/types'
+import type { ChatTurn, Trip, Waypoint } from '../api/types'
 
 /**
  * The rail header's line, and the two rules that govern it.
@@ -307,5 +307,107 @@ describe('useTripBlurb', () => {
       expect(result.current).toBe('a line')
     })
     expect(client.tripBlurb).toHaveBeenCalledWith('wabdr-north', {}, expect.anything())
+  })
+})
+
+describe('useTripBlurb and the conversation', () => {
+  /**
+   * History is context, not state.
+   *
+   * It is read at the moment a request is sent and at no other time — never a dependency,
+   * never part of the key. That is what keeps two things true at once: a blurb can be
+   * coloured by what the rider asked for, and a chat turn cannot by itself buy a model call.
+   * Passing a getter rather than a value is what makes that structural: there is no array
+   * identity for an effect to notice.
+   */
+  const TURNS: readonly ChatTurn[] = [
+    { role: 'user', content: 'anywhere to swim?' },
+    { role: 'assistant', content: 'There is a hole below the Teanaway crossing.' },
+  ]
+
+  it('sends the conversation so the line can answer what was actually asked', async () => {
+    const client = clientReturning('Tight loop, and a swim spot below the crossing.')
+
+    const { result } = renderHook(() =>
+      useTripBlurb(client, 'wabdr-north', withPoints('Ellensburg'), () => TURNS),
+    )
+
+    await waitFor(() => {
+      expect(result.current).toBe('Tight loop, and a swim spot below the crossing.')
+    })
+    expect(client.tripBlurb).toHaveBeenCalledWith(
+      'wabdr-north',
+      { history: [...TURNS] },
+      expect.anything(),
+    )
+  })
+
+  it('sends no history for a rider who never opened the rail', async () => {
+    // Chat is an accelerator, never a requirement. The endpoint works from the trip document
+    // alone and must, so an empty transcript sends no field rather than an empty one.
+    const client = clientReturning('a line')
+
+    const { result } = renderHook(() =>
+      useTripBlurb(client, 'wabdr-north', withPoints('Ellensburg')),
+    )
+
+    await waitFor(() => {
+      expect(result.current).toBe('a line')
+    })
+    expect(client.tripBlurb).toHaveBeenCalledWith('wabdr-north', {}, expect.anything())
+  })
+
+  it('does not buy a model call when only the conversation moved on', async () => {
+    // The constraint that decides the whole shape. A rider chatting without changing their
+    // trip would otherwise spend one call per turn, which is the churn just removed from the
+    // POI key arriving through the rail instead.
+    const client = clientReturning('Three days of dirt.')
+    const trip = withPoints('Ellensburg', 'Cashmere')
+    let turns: readonly ChatTurn[] = []
+
+    const { result, rerender } = renderHook(() =>
+      // A fresh closure every render over a growing transcript: if history reached a
+      // dependency array in any form, this fires.
+      useTripBlurb(client, 'wabdr-north', trip, () => turns),
+    )
+
+    await waitFor(() => {
+      expect(result.current).toBe('Three days of dirt.')
+    })
+
+    for (const content of ['one', 'two', 'three', 'four']) {
+      turns = [...turns, { role: 'user', content }]
+      rerender()
+    }
+
+    expect(client.tripBlurb).toHaveBeenCalledTimes(1)
+  })
+
+  it('sends the conversation as it stands when it asks, not as it stood when it was rendered', async () => {
+    // The other half of sampling at request time: the turns that arrived while the trip was
+    // being edited are the ones that matter, and a value captured at render would miss them.
+    const client = clientReturning('first', 'second')
+    let turns: readonly ChatTurn[] = []
+    const { rerender } = renderHook(({ trip }: { trip: Trip }) =>
+      useTripBlurb(client, 'wabdr-north', trip, () => turns),
+      { initialProps: { trip: withPoints('Ellensburg') } },
+    )
+
+    await waitFor(() => {
+      expect(client.tripBlurb).toHaveBeenCalledTimes(1)
+    })
+    expect(client.tripBlurb).toHaveBeenLastCalledWith('wabdr-north', {}, expect.anything())
+
+    turns = TURNS
+    rerender({ trip: withPoints('Ellensburg', 'Cashmere') })
+
+    await waitFor(() => {
+      expect(client.tripBlurb).toHaveBeenCalledTimes(2)
+    })
+    expect(client.tripBlurb).toHaveBeenLastCalledWith(
+      'wabdr-north',
+      { history: [...TURNS] },
+      expect.anything(),
+    )
   })
 })

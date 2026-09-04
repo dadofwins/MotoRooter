@@ -23,7 +23,16 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { apiClient } from './api/apiClient'
 import type { ApiClient } from './api/client'
-import type { Coordinate, GeocodeResult, LegIntent, Poi, Trip, TripLeg, Waypoint } from './api/types'
+import type {
+  ChatTurn,
+  Coordinate,
+  GeocodeResult,
+  LegIntent,
+  Poi,
+  Trip,
+  TripLeg,
+  Waypoint,
+} from './api/types'
 import {
   MapCanvas,
   type ContextTarget,
@@ -94,6 +103,7 @@ type AppClient = Pick<
 >
 
 const NO_POIS: readonly Poi[] = []
+const NO_TURNS: readonly ChatTurn[] = []
 
 /**
  * What the rider has changed, and the stored trip they changed it from.
@@ -856,6 +866,21 @@ function TripSession({
       : (untouched && (stored?.duration_is_estimated ?? false))
 
   /**
+   * The conversation, for the header line only.
+   *
+   * A ref, written by a memoised callback, so a chat turn causes no render here and cannot
+   * reach a dependency array. That is the shape the constraint demanded: history colours the
+   * blurb but must never buy one, and a rider asking five questions about a trip they have
+   * not touched should spend nothing. `ChatRail` stays the transcript's owner and only
+   * writer — this holds a copy for one read-only reader rather than lifting the state out.
+   */
+  const transcript = useRef<readonly ChatTurn[]>(NO_TURNS)
+  const rememberTranscript = useCallback((turns: readonly ChatTurn[]) => {
+    transcript.current = turns
+  }, [])
+  const recentTurns = useCallback(() => transcript.current, [])
+
+  /**
    * The rail header's line about this trip.
    *
    * Given the same triple `useTripSave` persists, which is what makes the quota guarantee
@@ -872,6 +897,7 @@ function TripSession({
     client,
     save.slug,
     useMemo(() => ({ waypoints, legs, pois: placed }), [waypoints, legs, placed]),
+    recentTurns,
   )
 
   // This browser's record of where it has been, updated whenever a trip is known — created
@@ -1015,7 +1041,13 @@ function TripSession({
             clicks. Chat was already above the outputs on the principle that an ask is an input
             rather than a result; this is the stronger reading of the same rule, putting it above
             the summary and above Replan as well. */}
-        <ChatRail client={client} resolveSlug={save.ensure} onTripChanged={reload} blurb={blurb} />
+        <ChatRail
+          client={client}
+          resolveSlug={save.ensure}
+          onTripChanged={reload}
+          onTranscript={rememberTranscript}
+          blurb={blurb}
+        />
 
         {/* Then what the *other* input does. Both sit above the summary because both are asks
             and the summary is an answer; chat leads because it is the primary one. */}

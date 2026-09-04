@@ -3591,3 +3591,128 @@ describe('App the rail header line during a drag', () => {
     })
   })
 })
+
+describe('App the rail header line and the conversation', () => {
+  /**
+   * End to end, because neither the hook's tests nor the rail's would notice if `App` never
+   * joined them — the failure this project keeps having.
+   */
+  /**
+   * A client whose chat turn genuinely edits the trip.
+   *
+   * `trip_changed` on its own is not enough and the first version of this test assumed it was:
+   * the rail reports the flag, `App` re-reads, and if the re-read returns the same document
+   * the trip has not changed shape and no line is owed. That is the feature behaving. The
+   * assistant has to actually add something.
+   */
+  function chattyClient(events: readonly ChatEvent[]) {
+    const before = tripFixture({
+      slug: 'wabdr-north',
+      waypoints: [waypointFixture(47.6, -120.7), waypointFixture(48.1, -120.2)],
+    })
+    const after = tripFixture({
+      slug: 'wabdr-north',
+      waypoints: [
+        waypointFixture(47.6, -120.7),
+        waypointFixture(47.9, -120.5, { name: 'Teanaway crossing' }),
+        waypointFixture(48.1, -120.2),
+      ],
+    })
+    let edited = false
+
+    return {
+      ...fakeRouter(),
+      ...stubUnbuilt(),
+      createTrip: vi.fn((_request: CreateTripRequest, _options?: RequestOptions) =>
+        Promise.resolve(before),
+      ),
+      getTrip: vi.fn((_slug: string, _options?: RequestOptions) =>
+        Promise.resolve(edited ? after : before),
+      ),
+      updateTrip: vi.fn((_slug: string, _request: UpdateTripRequest, _options?: RequestOptions) =>
+        Promise.resolve(edited ? after : before),
+      ),
+      tripBlurb: vi.fn((_slug: string, _request: TripBlurbRequest, _options?: RequestOptions) =>
+        Promise.resolve({ blurb: 'Three days of dirt.' }),
+      ),
+      chat: vi.fn(
+        // eslint-disable-next-line @typescript-eslint/require-await
+        async function* (
+          _slug: string,
+          _request: ChatRequest,
+          _options?: RequestOptions,
+        ): AsyncGenerator<ChatEvent, void, undefined> {
+          for (const item of events) {
+            if (item.trip_changed === true) edited = true
+            yield item
+          }
+        },
+      ),
+    }
+  }
+
+  async function twoPoints(client: ReturnType<typeof chattyClient>) {
+    window.history.replaceState(null, '', '/')
+    const fake = createFakeMaps()
+    render(<App mapLoader={fake.loader} mapId="motorooter-test-vector" client={client} />)
+    await mapReady(fake)
+    fake.clickMap(47.6, -120.7)
+    fake.clickMap(48.1, -120.2)
+    await screen.findByText(/2 points placed/)
+    await screen.findByText('Three days of dirt.')
+  }
+
+  async function ask(text: string): Promise<void> {
+    fireEvent.change(screen.getByRole('textbox', { name: /ask the assistant/i }), {
+      target: { value: text },
+    })
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: /send/i }))
+      await Promise.resolve()
+    })
+  }
+
+  it('spends nothing on a conversation that leaves the trip alone', async () => {
+    // A rider can ask as much as they like; only a changed trip buys a line.
+    //
+    // This is the wiring guard, not the proof. The structural version is in
+    // `useTripBlurb.test.ts` — "does not buy a model call when only the conversation moved
+    // on" — which hands the hook a fresh closure over a growing transcript and fails the
+    // moment history reaches a dependency array. Checked: that one fails under the mutation
+    // and this one does not, because `App` memoises the getter and so cannot see it. What
+    // this catches is the wiring changing so that a turn feeds the key at all.
+    const client = chattyClient([
+      { kind: 'message', message: 'There is a hole below the crossing.', tool: null, trip_changed: false, truncated: false },
+      { kind: 'done', message: '', tool: null, trip_changed: false, truncated: false },
+    ])
+    await twoPoints(client)
+    const asked = client.tripBlurb.mock.calls.length
+
+    await ask('anywhere to swim?')
+    expect(await screen.findByText(/hole below the crossing/)).toBeInTheDocument()
+
+    expect(client.tripBlurb).toHaveBeenCalledTimes(asked)
+  })
+
+  it('carries what was asked into the next line, once the trip really changes', async () => {
+    // A tool that edits the trip is what makes the conversation worth sending: the rider asked
+    // for something, the assistant did it, and the line describing the result should know why.
+    const client = chattyClient([
+      { kind: 'message', message: 'Added a swim stop below the crossing.', tool: null, trip_changed: true, truncated: false },
+      { kind: 'done', message: '', tool: null, trip_changed: true, truncated: false },
+    ])
+    await twoPoints(client)
+
+    await ask('anywhere to swim?')
+    expect(await screen.findByText(/Added a swim stop/)).toBeInTheDocument()
+
+    await waitFor(() => {
+      expect(client.tripBlurb.mock.calls.at(-1)?.[1]).toEqual({
+        history: [
+          { role: 'user', content: 'anywhere to swim?' },
+          { role: 'assistant', content: 'Added a swim stop below the crossing.' },
+        ],
+      })
+    })
+  })
+})

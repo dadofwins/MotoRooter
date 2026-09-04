@@ -259,9 +259,27 @@ Never edit anything under `backend/`.
   subject and waiting for it to flip is what makes the negative meaningful: the same wait turned
   one true, so the other's false is a state it settled in rather than one it started in.
 
-  This is the fourth of its kind — the map object versus the loading text, the preview request
-  versus the redraw, a rendered name versus a stored record, and now a flag that is false at both
-  ends. Each time the test waited on a proxy for the thing it needed.
+  This is the fifth of its kind — the map object versus the loading text, the preview request
+  versus the redraw, a rendered name versus a stored record, a flag that is false at both ends,
+  and a *second* preview waited for with the count the *first* one already moved. Each time the
+  test waited on a proxy for the thing it needed.
+
+  **The fifth was committed in a test whose own comment quoted this rule**, which is the thing
+  worth knowing about it: reading the bullet is demonstrably not enough. `waitFor` returning
+  instantly is indistinguishable from `waitFor` succeeding, so re-read the baseline immediately
+  before each step of a repeated gesture rather than capturing it once —
+
+  ```ts
+  //  ✗  const drawn = polylines.length; move(); move()
+  //     await waitFor(() => expect(polylines.length).toBeGreaterThan(drawn))  // the first move
+  //  ✓  const step = async () => { const drawn = polylines.length; move()
+  //       await waitFor(() => expect(polylines.length).toBeGreaterThan(drawn)) }
+  ```
+
+  And when a test passes that you expected to fail, **instrument it** — print the value the
+  assertion turns on. Both faults in that test were found by logging the key and watching the
+  effect fire *after* the assertion had already passed; neither was findable by reading the code
+  and reasoning about why green was green.
 
 - **Verify with the exit code, never by reading the output.** `make check` prints ruff's
   "All checks passed!" from the backend step and can still exit non-zero on the frontend

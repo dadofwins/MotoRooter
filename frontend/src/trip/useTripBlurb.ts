@@ -30,13 +30,33 @@
 import { useEffect, useRef, useState } from 'react'
 import { tripBlurbKey, type BlurbInput } from './tripBlurbKey'
 import type { ApiClient } from '../api/client'
+import type { ChatTurn } from '../api/types'
 
 export type BlurbClient = Pick<ApiClient, 'tripBlurb'>
+
+/**
+ * The conversation so far, read at the moment of asking.
+ *
+ * A getter rather than the turns themselves, and that is the whole design. History colours a
+ * blurb but must never *buy* one: a rider chatting without touching their trip would
+ * otherwise spend a model call per turn, which is the churn just taken out of the POI key
+ * arriving through the rail instead. Passing a function leaves no array identity for an
+ * effect to notice, so the rule is enforced by there being nothing to depend on rather than
+ * by remembering to leave something out of a dependency list.
+ *
+ * It also keeps the transcript where it belongs. `ChatRail` remains its owner and its only
+ * writer; this reads the latest value at the one instant it is wanted, which is what the
+ * endpoint means by history being optional colour rather than input.
+ */
+export type RecentTurns = () => readonly ChatTurn[]
+
+const NO_TURNS: readonly ChatTurn[] = []
 
 export function useTripBlurb(
   client: BlurbClient,
   slug: string | null,
   trip: BlurbInput | null,
+  recentTurns: RecentTurns = () => NO_TURNS,
 ): string | null {
   const [blurb, setBlurb] = useState<string | null>(null)
 
@@ -59,6 +79,13 @@ export function useTripBlurb(
     latestClient.current = client
   })
 
+  // Same treatment, same reason: read when a request fires, never depended upon. A caller
+  // writing this inline hands over a new closure every render, and that must not be an event.
+  const latestTurns = useRef(recentTurns)
+  useEffect(() => {
+    latestTurns.current = recentTurns
+  })
+
   // Nothing to describe: no document, or one with nowhere on it yet. The static greeting is
   // the better line there anyway — it names the map path, which a rider who has placed no
   // points is the one person who still needs.
@@ -69,14 +96,19 @@ export function useTripBlurb(
     if (key === null || slug === null) return undefined
 
     const controller = new AbortController()
-    // History is deliberately not sent. It is optional by contract — the trip document is the
-    // input and a rider who has never opened the rail still gets a line — and the transcript
-    // belongs to `ChatRail`, which owns it precisely so no other component has to. Lifting it
-    // out to colour a decoration would trade that for a header. Additive whenever it earns it.
+    // Sampled here, inside the effect, which is the only place the conversation is ever read.
+    // Omitted rather than sent empty when there is none: chat is an accelerator and never a
+    // requirement, so a rider who has not opened the rail is the ordinary case and an empty
+    // array would claim a transcript that does not exist. The backend truncates to its own
+    // `MAX_HISTORY_TURNS`, so nothing here has to.
+    const turns = latestTurns.current()
+    const request = turns.length === 0 ? {} : { history: [...turns] }
+
     // Wrapped so a *synchronous* throw lands in the same place as a rejection. `.catch` only
     // sees rejections, and this call must have exactly one failure outcome: no line. A
     // decoration that can take the rail down with it is worse than no decoration.
-    void (async () => latestClient.current.tripBlurb(slug, {}, { signal: controller.signal }))()
+    void (async () =>
+      latestClient.current.tripBlurb(slug, request, { signal: controller.signal }))()
       .then((response) => {
         // The stale-response rule the drag path already lives by. A slow first reply landing
         // after a fast second one would describe a trip the rider has moved on from — and it

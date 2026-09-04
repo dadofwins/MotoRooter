@@ -521,9 +521,15 @@ class RouteThroughBest(_TripTool):
 def _spare(left_out: tuple[Poi, ...], *, sep: str = " ") -> str:
     """What was good enough but did not fit, so a bound the rider cannot see is not silence.
 
-    `sep` is a newline when this follows the list rather than a sentence: the rider reads
-    this in a narrow rail, where a trailing clause on the last place reads as a note about
-    that place rather than about the result.
+    The model reads this string, not the rider. `ToolOutcome.content` becomes a `ToolMessage`
+    and goes back into the conversation; `tool_finished` carries no message, so nothing here
+    reaches the rail.
+
+    `sep` is a newline when this follows the list rather than a sentence, because a trailing
+    clause on the last place is one the model can take as a note about that place and then
+    repeat to the rider as one. A stray clause a rider can see is a blemish; one the model
+    believes is a wrong answer, which is why the separator still matters with no reader in
+    the rail.
     """
     if not left_out:
         return ""

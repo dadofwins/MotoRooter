@@ -192,5 +192,46 @@ class TestRidingModeAndPlaces:
     def test_it_names_a_few_places_so_the_line_can_be_specific(self):
         pois = tuple(poi(f"Camp {index}", PoiCategory.WILD_CAMP) for index in range(10))
         facts = facts_for(trip(pois=pois))
-        assert 0 < len(facts.place_names) <= 5
-        assert set(facts.place_names) <= {p.name for p in pois}
+        assert 0 < len(facts.named_places) <= 5
+        assert {name for name, _ in facts.named_places} <= {p.name for p in pois}
+
+
+class TestAPlaceNameNeverTravelsWithoutItsCategory:
+    """The join must be in the input, because a prompt cannot forbid a guess the format invites.
+
+    The blurb once said "grab grub at Halfway Flat", which is a wild camp. The model had been
+    handed the category counts and the place names as two unjoined lists, so the mapping was
+    not in its input and it filled one in. That is the project's own rule turned on us: both
+    halves were measured and the join between them was thrown away.
+
+    So these assert a name and its own category cannot be separated — not that some bracket
+    appears somewhere.
+    """
+
+    def a_trip_of_mixed_places(self) -> Trip:
+        return trip(
+            pois=(
+                poi("Halfway Flat", PoiCategory.WILD_CAMP),
+                poi("South Cle Elum Diner", PoiCategory.FOOD),
+                poi("Cle Elum Fuel", PoiCategory.FUEL),
+                poi("Blewett Summit Viewpoint", PoiCategory.VIEWPOINT),
+            )
+        )
+
+    def test_each_name_is_paired_with_its_own_category(self):
+        facts = facts_for(self.a_trip_of_mixed_places())
+        assert dict(facts.named_places) == {
+            "Halfway Flat": "wild_camp",
+            "South Cle Elum Diner": "food",
+            "Cle Elum Fuel": "fuel",
+            "Blewett Summit Viewpoint": "viewpoint",
+        }
+
+    def test_the_wild_camp_is_not_described_as_food(self):
+        """The exact confusion that shipped, as its own case."""
+        facts = facts_for(self.a_trip_of_mixed_places())
+        assert dict(facts.named_places)["Halfway Flat"] == "wild_camp"
+
+    def test_naming_is_still_capped(self):
+        pois = tuple(poi(f"Camp {index}", PoiCategory.WILD_CAMP) for index in range(10))
+        assert len(facts_for(trip(pois=pois)).named_places) <= 5

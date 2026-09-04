@@ -99,7 +99,9 @@ def _evidence(facts: TripFacts, history: Sequence[Turn]) -> str:
     if facts.place_counts:
         found = ", ".join(f"{count} {kind}" for kind, count in sorted(facts.place_counts.items()))
         lines.append(f"- places saved: {found}")
-        lines.append(f"- some of them: {', '.join(facts.place_names)}")
+        # Name and category together, never two lists to be joined by guesswork.
+        named = ", ".join(f"{name} ({kind})" for name, kind in facts.named_places)
+        lines.append(f"- some of them: {named}")
     else:
         lines.append("- places saved: none yet")
 

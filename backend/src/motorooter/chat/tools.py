@@ -509,17 +509,25 @@ class RouteThroughBest(_TripTool):
             f"  {place.name} — {place.note or 'no reason recorded'}" for place in result.added
         ]
         return ToolOutcome(
-            content="\n".join(lines) + _spare(result.left_out) + "\n" + _numbered(result.trip),
+            content="\n".join(lines)
+            + _spare(result.left_out, sep="\n")
+            + "\n"
+            + _numbered(result.trip),
             found=len(result.added),
             payload={"trip_changed": True},
         )
 
 
-def _spare(left_out: tuple[Poi, ...]) -> str:
-    """What was good enough but did not fit, so a bound the rider cannot see is not silence."""
+def _spare(left_out: tuple[Poi, ...], *, sep: str = " ") -> str:
+    """What was good enough but did not fit, so a bound the rider cannot see is not silence.
+
+    `sep` is a newline when this follows the list rather than a sentence: the rider reads
+    this in a narrow rail, where a trailing clause on the last place reads as a note about
+    that place rather than about the result.
+    """
     if not left_out:
         return ""
-    return f" {len(left_out)} more scored well; ask for a higher limit to include them."
+    return f"{sep}{len(left_out)} more scored well; ask for a higher limit to include them."
 
 
 class FindPlacesArguments(ToolArguments):

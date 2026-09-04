@@ -902,3 +902,61 @@ describe('ChatRail timing the step in front of you', () => {
     }
   })
 })
+
+describe('ChatRail composer placeholder', () => {
+  /**
+   * The example teaches a rider what they can type here. Once they have typed something it is
+   * a suggestion for a thing they have already done, so it goes.
+   *
+   * Nothing queries the field by its placeholder text, here or anywhere else in the suite —
+   * checked, because a test that found the textarea that way could not then assert the
+   * placeholder was gone: it would have nothing left to search by. The visible
+   * `<span class="chat__label">` inside the `<label>` is what names the field, and it is what
+   * every test uses.
+   */
+  it('offers an example before the rider has said anything', () => {
+    render(<ChatRail client={fakeClient([])} resolveSlug={() => Promise.resolve('wabdr-north')} onTripChanged={vi.fn()} />)
+
+    // The copy pinned literally rather than matched loosely. It is rider-facing wording that
+    // was specified, so a test is the right place for it to be written down.
+    expect(screen.getByRole('textbox', { name: /ask the assistant/i })).toHaveAttribute(
+      'placeholder',
+      'Three days of dirt out of Leavenworth…',
+    )
+  })
+
+  it('leaves an empty box once the conversation has started, still named', async () => {
+    const client = fakeClient([
+      event({ kind: 'message', message: 'Three days it is.' }),
+      event({ kind: 'done' }),
+    ])
+    render(<ChatRail client={client} resolveSlug={() => Promise.resolve('wabdr-north')} onTripChanged={vi.fn()} />)
+
+    await send('three days of dirt')
+
+    expect(await screen.findByText('Three days it is.')).toBeInTheDocument()
+    // Found by its accessible name with no placeholder present, which is the whole safety
+    // argument: the label names the field, so removing the placeholder cannot leave an
+    // unlabelled input. Asserting the name and the absence together is what proves it.
+    const field = screen.getByRole('textbox', { name: /ask the assistant/i })
+    expect(field).not.toHaveAttribute('placeholder')
+  })
+
+  it('stays empty after a turn that only produced a failure', async () => {
+    // The conversation has started even when the assistant never answered. `entries` is the
+    // right test for that because the rider's own line is appended the moment they send,
+    // before anything comes back.
+    const client = fakeClient([
+      event({ kind: 'tool_failed', tool: 'add_place', message: 'no such place' }),
+      event({ kind: 'done' }),
+    ])
+    render(<ChatRail client={client} resolveSlug={() => Promise.resolve('wabdr-north')} onTripChanged={vi.fn()} />)
+
+    await send('add somewhere that is not there')
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(/no such place/)
+    expect(screen.getByRole('textbox', { name: /ask the assistant/i })).not.toHaveAttribute(
+      'placeholder',
+    )
+  })
+})

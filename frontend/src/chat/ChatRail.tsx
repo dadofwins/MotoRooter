@@ -76,6 +76,14 @@ function formatWait(seconds: number): string {
   return `${String(Math.floor(seconds / 60))}m ${String(seconds % 60)}s`
 }
 
+/**
+ * The opening example in the composer.
+ *
+ * Teaches a rider what they can type, which only has a job to do while they have not typed
+ * anything. See where it is applied for why it goes away rather than being replaced.
+ */
+const EXAMPLE_PROMPT = 'Three days of dirt out of Leavenworth…'
+
 /** What the rider is told when a turn cannot run at all. */
 const UNREACHABLE = 'The assistant could not be reached. Check your connection and try again.'
 const NOT_BUILT = 'The assistant is not built yet — this is coming soon.'
@@ -398,7 +406,20 @@ export function ChatRail({ client, resolveSlug, onTripChanged }: ChatRailProps):
           <textarea
             value={draft}
             rows={2}
-            placeholder="Three days of dirt out of Leavenworth…"
+            // Only while the transcript is empty. After that it suggests something the rider
+            // has already done. Removed rather than swapped for "Type a message…", which would
+            // be a label pretending to be a hint.
+            //
+            // Safe to remove because the `<span class="chat__label">` inside the `<label>`
+            // names the field. That span is *visually hidden* — `.chat__label` clips it to
+            // 1px — so it is a name in the accessibility tree and nothing a sighted rider
+            // reads. The accessible name therefore survives; the only visible naming
+            // affordance is the one being removed here, deliberately, on Tim's ask.
+            //
+            // `entries` rather than a count of sent messages: the rider's own line is appended
+            // the moment they send, so this is true from the first send onward whatever the
+            // assistant does or fails to do afterwards.
+            {...(entries.length === 0 ? { placeholder: EXAMPLE_PROMPT } : {})}
             onChange={(changed) => setDraft(changed.target.value)}
             onKeyDown={(pressed) => {
               // Enter sends, shift+enter breaks the line: this is a message box, not a document.

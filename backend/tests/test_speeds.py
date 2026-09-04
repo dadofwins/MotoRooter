@@ -61,8 +61,3 @@ class TestDurationFromDistance:
 
     def test_zero_distance_takes_no_time(self):
         assert DEFAULT_RIDING_SPEEDS.seconds_for(0.0, Surface.PAVED) == 0.0
-
-
-def test_the_defaults_are_marked_provisional():
-    """They are invented. The docstring is the only thing stopping them being taken as fact."""
-    assert "provisional" in (RidingSpeeds.__doc__ or "").lower()

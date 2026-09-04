@@ -36,12 +36,16 @@ GARMIN_TRACK_POINT_LIMIT = 10_000
 
 Garmin's limits vary by unit and firmware, and the range is wide: older handhelds cut tracks
 at 500 points per segment, while zūmo-class motorcycle units handle far more. 10,000 is the
-figure most commonly documented for modern units and is the one to start from.
+figure most commonly documented for modern units, which is where this one started.
 
-**This wants checking against Tim's actual device before it is trusted**, which is why GPX
-sits where it does in the queue. It is a single constant precisely so that check changes one
-number rather than an algorithm — and the decimation below is correct at any limit, so being
-wrong here costs fidelity rather than correctness.
+**Checked on real hardware, 2026-08-26**: an exported route loaded onto Tim's own unit and
+read correctly, so this is a measurement rather than the documented figure it started as. The
+root `CLAUDE.md` constants table carries the working.
+
+It is still a single constant, and that is still the point: a unit that disagrees changes one
+number rather than an algorithm, and the decimation below is correct at any limit, so being
+wrong costs fidelity rather than correctness. That argument did not expire when the
+measurement landed — it is why the answer was cheap to accommodate.
 """
 
 

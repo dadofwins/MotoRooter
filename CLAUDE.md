@@ -131,18 +131,25 @@ None of them blocks anything, and all of them fail safely — including the new 
 that times out produces no line and the header keeps its static copy, which is the safe
 direction.
 
-**Light mode has not been examined by eye.** The rail was rendered and inspected in dark mode
-only; a faithful light render was attempted and abandoned, because `:root` declares
-`color-scheme: light dark` and a harness can strip the dark stylesheet without changing the UA
-preference — producing a state that cannot occur in reality. The reasoning holds without the
-screenshot (media query and UA preference derive from the same `prefers-color-scheme`, so they
-always agree), and four of the five defects found in dark mode were scheme-independent. But
-reasoned-about is not looked-at, and that distinction is the whole point of having rendered it.
+**Light mode has been examined by eye (2026-09-04), and in full.** The blocker recorded here
+was real and is gone: `:root` declares `color-scheme: light dark`, and forcing the scheme does
+*not* stop `@media (prefers-color-scheme: dark)` matching, so a harness doing only one of those
+renders a state that cannot occur. Both halves are needed — strip the dark block *and* force
+the scheme — and a non-matching media block contributes nothing to the cascade, so removing it
+is exactly what a light-preference browser computes rather than a cheat.
 
-**The harness fault that stopped it is now solved** (`frontend/CLAUDE.md`, 2026-09-04):
-`color-scheme: light !important` does not stop `@media (prefers-color-scheme: dark)` matching,
-so both halves are needed — strip the dark block *and* force the scheme. So this is doable now
-and was not before.
+All 55 classes the dark block redefines were rendered and looked at, checked by extracting the
+selectors from the block rather than by trusting a sweep of the app — the first pass reached
+only 31, because a dump of the rich app never reaches the landing screen, the Places pane, or
+the error states. **Contrast: zero failures**, audited in a browser over composited backdrops
+at the right bar for each element: 4.5:1 for text, 3:1 for labelled icon-only controls, and
+nothing for a disabled one. None of the 55 is a map overlay, so the map layer is
+scheme-independent and a harness that cannot load Maps leaves no gap here.
+
+Two things found are judgement rather than defect, and are Tim's: warning and error text sit
+closer together in light than in dark (`#7c4a02` against `#7f1d1d`, versus `#fcd34d` against
+`#fca5a5`), and the assistant's chat bubble at `rgb(0 0 0 / 0.05)` nearly vanishes on white
+while the rider's stays solid.
 
 ## Stack
 

@@ -274,9 +274,16 @@ async def _chat_stream(
 ) -> AsyncIterator[bytes]:
     """Agent events as `ChatEvent` lines.
 
-    `trip_changed` is sticky once set: the client re-reads the document when it sees it, and
-    an edit followed by three read-only events should not look like nothing happened. The
-    terminal `done` therefore always carries the truth about whether anything moved.
+    `trip_changed` marks the event that moved the document, and the terminal `done` if
+    anything moved during the turn. It answers two questions and they are not the same one:
+    "re-read now" and "did anything change this turn", the second being what a client reading
+    only the tail depends on.
+
+    It used to be sticky on every event after the first change, which made the first answer
+    wrong. The rule lived here, where no client can read it, while the schema description said
+    "the assistant edited the trip ... re-read it" — a statement about the event in hand. A
+    client that did exactly that re-read the document once per remaining event in the turn.
+    Both halves are in the schema description now, because that is the one a client sees.
 
     An unexpected failure becomes a final `done` rather than a truncated connection. A client
     seeing the stream stop mid-line cannot distinguish a crash from a dropped network.
@@ -284,14 +291,16 @@ async def _chat_stream(
     changed = False
     try:
         async for step in agent.run(_conversation(request, trip_name)):
-            changed = changed or bool(step.outcome and step.outcome.payload.get("trip_changed"))
+            # This event's own answer, not the turn's. `done` gets the accumulator below.
+            moved = bool(step.outcome and step.outcome.payload.get("trip_changed"))
+            changed = changed or moved
             event = ChatEvent(
                 kind=step.kind,
                 message=step.message,
                 tool=step.tool,
                 progress=step.progress,
                 truncated=step.truncated,
-                trip_changed=changed,
+                trip_changed=changed if step.kind == "done" else moved,
             )
             yield event.model_dump_json().encode() + b"\n"
     except Exception:

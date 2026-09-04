@@ -306,9 +306,14 @@ class ChatEvent(BaseModel):
     trip_changed: bool = Field(
         default=False,
         description=(
-            "The assistant edited the trip. The client should re-read it rather than "
-            "reconstruct the change from the event stream — the mouse path and the chat "
-            "path must converge on one document, not two models of it."
+            "This event changed the trip: re-read the document rather than reconstructing "
+            "the change from the stream — the mouse path and the chat path must converge on "
+            "one document, not two models of it.\n\n"
+            "Also true on the terminal `done` event if anything changed during the turn, "
+            "which is how a client reading only the tail learns that it did. So a turn with "
+            "one edit reports it twice: once on the event that made it, once at the end. "
+            "Re-reading on each is correct and is the intended reading; what it is not is "
+            "one report per event for the rest of the turn."
         ),
     )
 

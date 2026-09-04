@@ -167,6 +167,50 @@ class TestToolCalls:
         )
         assert any(event["trip_changed"] for event in events(post(client)))
 
+    def test_only_the_event_that_changed_it_says_so(self, client_with):
+        """A read-only event after an edit reports false; `done` still reports true.
+
+        The flag answers two questions and they are not the same one: "re-read now, this
+        event moved the document", and "did anything move during this turn", which is what a
+        client reading only the tail needs. Sticky on every event made the first answer wrong
+        — a client doing exactly what the schema says re-read the document once per remaining
+        event in the turn.
+        """
+        client, _ = client_with(
+            says(
+                AssistantMessage(
+                    content=None,
+                    tool_calls=(
+                        ToolCall(
+                            id="c1",
+                            name="add_waypoint",
+                            arguments='{"name": "Blewett Pass"}',
+                        ),
+                    ),
+                ),
+                AssistantMessage(content="Added. Anything else?"),
+            )
+        )
+        stream = events(post(client))
+        changed = [event["kind"] for event in stream if event["trip_changed"]]
+
+        assert "tool_finished" in changed, "the event that moved the document must say so"
+        assert "done" in changed, "a client reading only the tail must still learn it changed"
+        assert "message" not in changed, "a read-only event after an edit must not repeat it"
+
+    def test_a_turn_that_changed_nothing_says_so_on_every_event(self, client_with):
+        """The other direction, so the fix cannot be 'always false except done'."""
+        client, _ = client_with(
+            says(
+                AssistantMessage(
+                    content=None,
+                    tool_calls=(ToolCall(id="c1", name="describe_trip", arguments="{}"),),
+                ),
+                AssistantMessage(content="Two waypoints."),
+            )
+        )
+        assert not any(event["trip_changed"] for event in events(post(client)))
+
     def test_a_read_only_tool_does_not_set_trip_changed(self, client_with):
         client, _ = client_with(
             says(

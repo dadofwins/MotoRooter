@@ -19,6 +19,22 @@ BLURB_TIMEOUT_S = 8.0
 The rail renders its static header immediately and swaps in the line if one arrives. A
 budget longer than a rider's patience would buy nothing: a blurb that lands after they have
 started typing is worse than no blurb, because the header changes under them.
+
+**Partly measured, and the unmeasured half is the half a timeout is for.** Eleven live runs
+at `BLURB_EFFORT` across two spikes — five in `scripts/blurb_effort_spike.py`, six over
+varied trips in `scripts/blurb_voice_check.py` — landed between 1.0 s and 2.0 s, with trip
+size making no visible difference: an empty trip and a six-POI loop both answer in under two
+seconds. So 8.0 is roughly four times the slowest run ever observed and nothing has come
+close to it.
+
+That says the budget is not tight in the normal case. It says nothing about the tail, which
+is what the timeout actually exists for: no run has yet hit a degraded API, a cold model or a
+rate-limited retry, so the number defending against those is still a guess. Eleven quiet runs
+cannot measure a bad day. Raising or lowering it wants latency from real traffic rather than
+more spikes, and until then this stays an admitted guess rather than a checked figure.
+
+The one hard datum bounding it from below: at the default reasoning effort, two runs of five
+exceeded 8.0 s outright. Whatever this becomes, it is coupled to `BLURB_EFFORT`.
 """
 
 BLURB_EFFORT = "minimal"

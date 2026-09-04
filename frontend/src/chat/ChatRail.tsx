@@ -22,7 +22,8 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react
 import type { ApiClient } from '../api/client'
 import { isAbortError, isApiError, isNotImplemented } from '../api/errors'
 import type { ChatEvent, ChatTurn } from '../api/types'
-import { toolActivityLabel } from './chatEvents'
+import { entryText, toolActivityLabel } from './chatEvents'
+import type { EntryKind } from './chatEvents'
 
 export type ChatClient = Pick<ApiClient, 'chat'>
 
@@ -44,7 +45,11 @@ export interface ChatRailProps {
 /** One line in the transcript, as the rider sees it. */
 interface Entry {
   readonly id: number
-  readonly kind: 'you' | 'assistant' | 'tool' | 'tool-failed' | 'unavailable' | 'error'
+  /**
+   * Derived from `ENTRY_KINDS` rather than written out again here, so the list a styling sweep
+   * enumerates cannot fall behind the kinds the rail actually renders.
+   */
+  readonly kind: EntryKind
   readonly text: string
 }
 
@@ -75,7 +80,7 @@ function formatWait(seconds: number): string {
 const UNREACHABLE = 'The assistant could not be reached. Check your connection and try again.'
 const NOT_BUILT = 'The assistant is not built yet — this is coming soon.'
 
-function failureText(reason: unknown): { kind: Entry['kind']; text: string } {
+function failureText(reason: unknown): { kind: EntryKind; text: string } {
   // 501 is not a failure, it is a promise. Presenting it as an error trains a rider to
   // distrust the rail once it does work.
   if (isNotImplemented(reason)) return { kind: 'unavailable', text: NOT_BUILT }
@@ -182,8 +187,9 @@ export function ChatRail({ client, resolveSlug, onTripChanged }: ChatRailProps):
   )
 
   /** Allocated outside every state updater, so the updaters stay pure. */
-  const append = useCallback((kind: Entry['kind'], text: string) => {
-    const entry: Entry = { id: nextId.current++, kind, text }
+  const append = useCallback((kind: EntryKind, text: string) => {
+    // Tidied once, here, because every kind arrives through this one function.
+    const entry: Entry = { id: nextId.current++, kind, text: entryText(text) }
     setEntries((previous) => [...previous, entry])
   }, [])
 

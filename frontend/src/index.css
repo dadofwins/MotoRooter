@@ -89,7 +89,11 @@ body {
 .chat__log {
   display: flex;
   flex-direction: column;
-  gap: 0.5rem;
+  /* Matches the rail's own rhythm (`.chat` above) rather than being a new number. It was
+     0.5rem while entries were one or two lines, where it was proportionate. Now that a reply
+     carries its own internal line breaks, two tall filled bubbles 0.5rem apart read as one
+     panel with a seam across it — checked in a browser, both schemes, not reasoned about. */
+  gap: 0.75rem;
   /* Bounded rather than growing, for the same reason as the lists below: a long transcript
      scrolls inside its own section instead of pushing the route off the screen. */
   max-height: 18rem;
@@ -107,7 +111,15 @@ body {
   font-size: 0.875rem;
   line-height: 1.45;
   border-radius: 0.5rem;
-  /* Long place names and URLs must not widen the rail past the map. */
+  /* The backend sends multi-line strings — numbered waypoint lists, a place-disambiguation
+     list aligned with spaces — and the composer offers shift+enter on purpose. The default
+     `normal` collapses every one of those newlines to a space, which is what made the rail
+     read as a wall of text. `pre-wrap` rather than `pre-line` because the alignment is part
+     of the list: `pre-line` keeps the breaks and collapses the columns. */
+  white-space: pre-wrap;
+  /* Long place names and URLs must not widen the rail past the map. Load-bearing *because* of
+     the line above: preserved whitespace plus one unbroken token is exactly the pair that
+     pushes a fixed-width column wider than its track. */
   overflow-wrap: anywhere;
 }
 

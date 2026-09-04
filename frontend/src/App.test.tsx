@@ -3462,16 +3462,16 @@ describe('App the rail header line', () => {
   })
 })
 
+/**
+ * The quota guarantee, tested by dragging.
+ *
+ * The version of this in the describe above places two points and asserts one call, and the
+ * integrator showed it green against `legs: shownLegs` — the exact mistake its own comment
+ * warned about. It never dragged, so `preview` was never populated and `shownLegs` and
+ * `legs` were the same array throughout: the test could not see the difference it existed
+ * to catch. This one lets a preview land, which is what makes them diverge.
+ */
 describe('App the rail header line during a drag', () => {
-  /**
-   * The quota guarantee, tested by dragging.
-   *
-   * The version of this in the describe above places two points and asserts one call, and the
-   * integrator showed it green against `legs: shownLegs` — the exact mistake its own comment
-   * warned about. It never dragged, so `preview` was never populated and `shownLegs` and
-   * `legs` were the same array throughout: the test could not see the difference it existed
-   * to catch. This one lets a preview land, which is what makes them diverge.
-   */
   /**
    * Roughly how long a route through these points is.
    *
@@ -3592,11 +3592,11 @@ describe('App the rail header line during a drag', () => {
   })
 })
 
+/**
+ * End to end, because neither the hook's tests nor the rail's would notice if `App` never
+ * joined them — the failure this project keeps having.
+ */
 describe('App the rail header line and the conversation', () => {
-  /**
-   * End to end, because neither the hook's tests nor the rail's would notice if `App` never
-   * joined them — the failure this project keeps having.
-   */
   /**
    * A client whose chat turn genuinely edits the trip.
    *

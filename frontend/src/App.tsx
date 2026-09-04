@@ -266,20 +266,20 @@ function TripSession({
   )
 
   /**
-   * The mode a new segment starts on: the trip's own answer, or the fallback for a trip with none.
-   *
-   * One authoritative home for a question that used to have three constants answering it, two of
-   * them on the far side of the contract — which is how a request for "as much fun offroad as
-   * possible" came back paved.
-   */
-  /**
-   * The mode new segments start on, and the rider's own answer where they have given one.
+   * The rider's own answer for the mode new segments start on, where they have given one.
    *
    * `Trip.default_intent` was read here and set by nothing until the control below existed —
    * a field the app consumed and could not choose. Held locally as well as stored so a choice
    * applies to the very next click rather than after the save round-trips.
    */
   const [chosenIntent, setChosenIntent] = useState<LegIntent | null>(null)
+  /**
+   * The mode a new segment starts on: the rider's answer, the trip's, or the fallback.
+   *
+   * One authoritative home for a question that used to have three constants answering it, two of
+   * them on the far side of the contract — which is how a request for "as much fun offroad as
+   * possible" came back paved.
+   */
   const newLegIntent = chosenIntent ?? stored?.default_intent ?? DEFAULT_INTENT
 
   /**

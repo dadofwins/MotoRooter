@@ -75,6 +75,17 @@ Update this section as reality changes, and do not describe a component as exist
 does — this section has twice described work as unbuilt that had shipped, and once described the
 LLM layer as done when it had no tools.
 
+**Keep the reasoning and the status in separate sentences.** That instruction has been here a
+while and did not stop four stale claims being corrected in one day — `gpx.py`, `speeds.py`,
+the M2 line above, and the sentence under the constants table — so the mechanism is worth
+naming rather than the rule being repeated. Every one of the four interleaved two kinds of
+claim in a single paragraph: *why the thing is shaped this way*, which does not expire, and
+*what we currently know*, which does. A reader scanning a paragraph that opens with a sound
+architectural reason does not then audit the clause after it, so the perishable half went
+unread for a week inside an argument that was still correct. Separated, each was obvious in
+seconds. The constants table works precisely because a row is nothing but status — which is
+why its stale entries get caught and these did not.
+
 
 ### Numbers that work and that nobody has checked
 

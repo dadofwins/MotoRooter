@@ -1,4 +1,4 @@
-"""Ask a real browser what the light scheme's contrast actually is.
+r"""Ask a real browser what the light scheme's contrast actually is.
 
 Light mode went unexamined for over a week, and the reason recorded at the time was that a
 faithful render was thought impossible. It was not; the harness was wrong in a specific way,
@@ -60,6 +60,26 @@ caught two different versions of the same mistake:
   on that number was wrong, including "none of them is a map overlay" — four are. Hence
   `strip_dark` loops rather than finding once, and hence this paragraph.
 
+## What counts as a scheme-dependent class
+
+**A class name appearing in *selector position* inside a dark block** — in the text before a
+`{`, and nothing else. Compound parts count (`.poi-pane__kind .poi--mark` is two), and so does
+a modifier owning no declaration of its own but appearing in a selector: both change what a
+rider sees.
+
+**What it excludes, and it is the one that matters:** class-like tokens in *declaration* text.
+The obvious way to count is to scan the whole block for `\.[a-zA-Z0-9_-]+`, and that answers
+**108** rather than 88. Every one of the twenty extras is the fractional part of a number —
+`rgb(0 0 0 / 0.5)` gives `.5`, `0.12` gives `.12`, and so on through `.05 .06 .07 .08 .1 .12`
+`.14 .16 .2 .22 .25 .28 .4 .45 .5 .6 .7 .8 .85 .9`. Not one is a class. Checked the other
+direction too: the selector-position set is a strict *subset* of the naive one, so being
+stricter loses nothing real.
+
+Written down because the number is a tripwire, and a tripwire whose figure nobody else can
+reproduce gets silenced rather than investigated. Both figures print on every run for that
+reason, and `redefined_classes` exits loudly if it ever extracts a purely numeric name — which
+is what reading declarations by mistake looks like.
+
 **88 scheme-dependent classes across two blocks, measured 2026-09-04.** If the stylesheet grows
 an eighty-ninth and this still says 88, the extraction has broken rather than the stylesheet
 having stayed still.
@@ -116,12 +136,24 @@ def strip_dark(css: str) -> tuple[str, str]:
 
 
 def redefined_classes(block: str) -> set[str]:
-    """Every class name the dark block touches."""
+    """Class names in selector position — the text before a `{`. See the docstring for why."""
     rules = re.findall(r"(?:^|\})\s*((?:[^{}/]|/\*.*?\*/)+?)\{", block, re.S)
     names: set[str] = set()
     for rule in rules:
         names.update(re.findall(r"\.([a-zA-Z0-9_-]+)", re.sub(r"/\*.*?\*/", "", rule, flags=re.S)))
+    # A purely numeric name means the extraction has started reading declarations: the `0.5`
+    # in `rgb(0 0 0 / 0.5)` looks exactly like a class to a `.[\w-]+` pattern. Loud, rather
+    # than silently inflating the count by twenty — which is precisely the difference between
+    # this method and the obvious one.
+    numeric = sorted(n for n in names if n.isdigit())
+    if numeric:
+        sys.exit(f"extraction is reading declarations, not selectors: {', '.join(numeric)}")
     return names
+
+
+def class_like_tokens(block: str) -> set[str]:
+    """The obvious method, kept so its answer can be reconciled rather than argued about."""
+    return set(re.findall(r"\.([a-zA-Z0-9_-]+)", block))
 
 
 AUDIT = """
@@ -201,7 +233,14 @@ def main() -> None:
     fixture = (HERE / "fixture.html").read_text()
     missing = sorted(c for c in classes if not re.search(r'class="[^"]*\b' + re.escape(c) + r'\b', fixture))
 
+    naive = class_like_tokens(dark_block)
+    decimals = sorted(naive - classes)
     print(f"scheme-dependent classes: {len(classes)} (recorded: {EXPECTED_CLASSES})")
+    # Printed every run so the obvious method's answer reconciles itself on sight, rather
+    # than someone arriving at a bigger number and having to ask which of us is wrong.
+    shown = ", ".join("." + d for d in decimals[:6])
+    print(f"  a naive scan of the whole block finds {len(naive)}; the {len(decimals)} extras"
+          f" are decimals inside declarations rather than classes: {shown}…")
     if len(classes) != EXPECTED_CLASSES:
         print("  ! the count moved. Update EXPECTED_CLASSES and the docstring, deliberately.")
     if missing:

@@ -192,8 +192,14 @@ body {
   flex: 1 1 auto;
 }
 
-/* The label is for screen readers; the placeholder carries it visually, and the button beside
-   it says what the box is for. */
+/* The label is for screen readers only — clipped, not merely small — so this is the field's
+   whole accessible name and nothing may be done that costs it one.
+
+   It used to say the placeholder carried the name visually. That stopped being true when the
+   placeholder was made to retire after the first turn, which is most of the field's life: the
+   transcript above it and the Send button beside it are what say what the box is for, and
+   there is no visible text naming it. Raised with Tim as a consequence of that change rather
+   than an accident of it; he has left it. */
 .chat__label {
   position: absolute;
   width: 1px;

@@ -3333,6 +3333,38 @@ describe('App and the browser location', () => {
     expect(screen.queryByRole('button', { name: /where i am|locate/i })).not.toBeInTheDocument()
   })
 
+  it('shows the rider where they are on a route when they press the button', async () => {
+    // Tim's report: the button did nothing. Three gates each discarded the position once a trip
+    // was on the map, and every one was correct for "should the map *open* on the rider?" and
+    // wrong for "the rider pressed a button". This is the case that had none of them.
+    window.history.replaceState(null, '', '/?trip=wabdr-north')
+    const fake = createFakeMaps()
+    const router = fakeRouter()
+    router.getTrip.mockResolvedValue(
+      tripFixture({
+        slug: 'wabdr-north',
+        waypoints: [waypointFixture(47, -120), waypointFixture(48, -120)],
+      }),
+    )
+    render(
+      <App
+        mapLoader={fake.loader}
+        mapId="motorooter-test-vector"
+        client={router}
+        locator={locator('prompt')}
+      />,
+    )
+    await mapReady(fake)
+    await screen.findByText(/2 points placed/)
+    await waitFor(() => expect(fake.maps[0]?.fitted.length).toBeGreaterThan(0))
+    expect(fake.maps[0]?.centred).toHaveLength(0)
+
+    fireEvent.click(await screen.findByRole('button', { name: /where i am|locate/i }))
+
+    await waitFor(() => expect(fake.maps[0]?.centred).toHaveLength(1))
+    expect(fake.maps[0]?.centred[0]).toEqual({ lat: 47.61, lng: -122.33 })
+  })
+
   it('leaves a loaded trip where it is, wherever the rider happens to be', async () => {
     window.history.replaceState(null, '', '/?trip=wabdr-north')
     const fake = createFakeMaps()

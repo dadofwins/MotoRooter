@@ -178,6 +178,14 @@ function TripSession({
   const location = useBrowserLocation(locator)
 
   /**
+   * How many times the rider has pressed "show where I am".
+   *
+   * Zero means every camera move so far was the app's idea, which is the case the guards below
+   * are written for. Non-zero means they asked, and asking outranks all of them.
+   */
+  const [askedToBeShown, setAskedToBeShown] = useState(0)
+
+  /**
    * A trip to open without asking: the only one this browser knows, and only when the URL
    * names none.
    *
@@ -923,16 +931,24 @@ function TripSession({
   const mapClickHandler = placing ? { onMapClick: addWaypoint } : {}
 
   /**
-   * Whether to point the camera at the rider, which is a question about the *trip*.
+   * Whether to point the camera at the rider.
    *
-   * Withheld whenever a trip exists or is on its way. The canvas has its own guard — it ignores a
-   * focus once a route has framed — but that only covers a position arriving late. The race the
-   * other way is the visible one: a position resolving before a linked trip has loaded would
-   * swing the camera to where the rider is standing and then swing it back, and only the shell
-   * knows a trip is coming.
+   * Two questions were sharing this, and only one of them is about the trip. **Automatically**
+   * opening on the rider is withheld whenever a trip exists or is on its way: a position
+   * resolving before a linked trip has loaded would swing the camera to where they are standing
+   * and then swing it back, and only the shell knows a trip is coming. The canvas has its own
+   * guard for the same race from the other side.
+   *
+   * **An explicit press is not that question and must not inherit its answer.** Tim reported the
+   * button doing nothing, and this line was one of three reasons: with any waypoint on the map
+   * the coordinate was discarded here before it ever reached the canvas, so the control was
+   * visible and inert exactly when a rider most wants it — looking at a route and wondering
+   * where they are on it. Asking always wins; `focusRequestId` carries that to the canvas.
    */
   const showWhereTheyAre =
-    entered && !expectsTrip && waypoints.length === 0 ? location.coordinate : null
+    askedToBeShown > 0 || (entered && !expectsTrip && waypoints.length === 0)
+      ? location.coordinate
+      : null
 
   return (
     <div className="app">
@@ -952,6 +968,7 @@ function TripSession({
           onClusterOpen={onClusterOpen}
           onContextMenu={onMapContextMenu}
           {...(showWhereTheyAre === null ? {} : { focus: showWhereTheyAre })}
+          {...(askedToBeShown > 0 ? { focusRequestId: askedToBeShown } : {})}
         />
         {location.canLocate && (
           // On the map rather than in the rail: it moves the camera, and this is where a rider
@@ -960,7 +977,12 @@ function TripSession({
             type="button"
             className="map-locate"
             disabled={location.isLocating}
-            onClick={location.locate}
+            onClick={() => {
+              // Counted rather than flagged: a second press in the same place is a second
+              // request, and the coordinate is identical both times so it cannot say so.
+              setAskedToBeShown((asked) => asked + 1)
+              location.locate()
+            }}
           >
             {location.isLocating ? 'Finding you…' : 'Show where I am'}
           </button>

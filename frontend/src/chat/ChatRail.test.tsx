@@ -960,3 +960,70 @@ describe('ChatRail composer placeholder', () => {
     )
   })
 })
+
+describe('ChatRail header line', () => {
+  /**
+   * The static copy is not a hint that expires; it is the only place the *map* path is named.
+   * So the blurb replaces it once there is a trip to describe, and never before — a rider who
+   * has started nothing needs "or set a start and end point on the map" more than anyone.
+   */
+  const GREETING = /describe your trip/i
+
+  it('opens with the specified copy, word for word, when there is no trip', () => {
+    render(<ChatRail client={fakeClient([])} resolveSlug={() => Promise.resolve('wabdr-north')} onTripChanged={vi.fn()} />)
+
+    expect(screen.getByText(GREETING)).toBeInTheDocument()
+    expect(screen.getByText(/set a start and end point on the map/i)).toBeInTheDocument()
+  })
+
+  it('shows the blurb instead once there is a trip to describe', () => {
+    render(
+      <ChatRail
+        client={fakeClient([])}
+        resolveSlug={() => Promise.resolve('wabdr-north')}
+        onTripChanged={vi.fn()}
+        blurb="Three days of dirt and one hot shower."
+      />,
+    )
+
+    expect(screen.getByText('Three days of dirt and one hot shower.')).toBeInTheDocument()
+    expect(screen.queryByText(GREETING)).not.toBeInTheDocument()
+  })
+
+  it('keeps the static copy when there is no line, which is every way this can fail', () => {
+    // A model failure, a 501, an unusable reply and a request still in flight all arrive here
+    // as null. There is no error state and no spinner by design: the header is decoration on
+    // a component the fast path renders through, and a rider must never see it go wrong.
+    render(
+      <ChatRail
+        client={fakeClient([])}
+        resolveSlug={() => Promise.resolve('wabdr-north')}
+        onTripChanged={vi.fn()}
+        blurb={null}
+      />,
+    )
+
+    expect(screen.getByText(GREETING)).toBeInTheDocument()
+  })
+
+  it('keeps the transcript below it either way', async () => {
+    // The header is a header, not the first entry: a blurb must not displace what was said.
+    const client = fakeClient([
+      event({ kind: 'message', message: 'There is a campground at Lone Fir.' }),
+      event({ kind: 'done' }),
+    ])
+    render(
+      <ChatRail
+        client={client}
+        resolveSlug={() => Promise.resolve('wabdr-north')}
+        onTripChanged={vi.fn()}
+        blurb="Three days of dirt."
+      />,
+    )
+
+    await send('anywhere to camp?')
+
+    expect(await screen.findByText(/campground at Lone Fir/)).toBeInTheDocument()
+    expect(screen.getByText('Three days of dirt.')).toBeInTheDocument()
+  })
+})

@@ -40,6 +40,18 @@ export interface ChatRailProps {
   readonly resolveSlug: () => Promise<string>
   /** The assistant edited the trip. Re-read it; do not reconstruct it from the stream. */
   readonly onTripChanged: () => void
+  /**
+   * One line about the trip in front of the rider, in place of the opening copy.
+   *
+   * Passed in rather than fetched here, because this component deliberately owns no trip
+   * state and the line is derived from the trip document. Null means there is nothing to say
+   * — no trip yet, or the backend produced nothing usable — and the opening copy stands.
+   *
+   * That fallback is not a degraded state. The static line is the only place the *map* path
+   * is named, so a rider who has started nothing needs it more than anyone; it is a standing
+   * affordance the blurb supersedes, not a hint that expires.
+   */
+  readonly blurb?: string | null
 }
 
 /** One line in the transcript, as the rider sees it. */
@@ -100,7 +112,12 @@ function failureText(reason: unknown): { kind: EntryKind; text: string } {
   return { kind: 'error', text: UNREACHABLE }
 }
 
-export function ChatRail({ client, resolveSlug, onTripChanged }: ChatRailProps): React.JSX.Element {
+export function ChatRail({
+  client,
+  resolveSlug,
+  onTripChanged,
+  blurb = null,
+}: ChatRailProps): React.JSX.Element {
   const [entries, setEntries] = useState<readonly Entry[]>([])
   const [draft, setDraft] = useState('')
   const [isRunning, setRunning] = useState(false)
@@ -326,11 +343,21 @@ export function ChatRail({ client, resolveSlug, onTripChanged }: ChatRailProps):
         }}
       >
         {/* The opening state, specified rather than invented: it has to name both ways in, or
-            the rail reads as the only way to start. */}
-        <p className="chat__greeting">
-          Describe your trip and I&rsquo;ll help plan it for you! Or set a start and end point on
-          the map.
-        </p>
+            the rail reads as the only way to start. It is replaced only once there is a trip
+            worth describing — until then it is the one thing telling a rider they need not
+            type at all. */}
+        {blurb === null ? (
+          <p className="chat__greeting">
+            Describe your trip and I&rsquo;ll help plan it for you! Or set a start and end point
+            on the map.
+          </p>
+        ) : (
+          // The same class, deliberately: one slot in the layout, one treatment. Checked in a
+          // browser in both schemes — there is nothing about a line describing the trip that
+          // wants to look different from the line it replaces, and a modifier with no rule
+          // behind it would only be something for a reader to wonder about.
+          <p className="chat__greeting">{blurb}</p>
+        )}
 
         {entries.map((entry) => (
           <p

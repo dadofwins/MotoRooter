@@ -65,15 +65,6 @@ const UNREAD: Record<string, string> = {
   // a real gap rather than a decision, and it is written down here so it stays visible.
   prompt: 'no UI sends a free-text steer to discovery yet',
 
-  // STAGED BY THE INTEGRATOR, and it expires by itself. The producer landed on
-  // be/trip-blurb ahead of its consumer, which is the two-sided deadlock in
-  // docs/parallel-work.md: a response field with no reader fails this guard, and the backend
-  // cannot reach this file to say so. The rail-header branch reads it and deletes this line.
-  //
-  // Safe because the tripwire asserts an entry is still *unread*: the moment that branch
-  // lands, this entry goes stale and fails, which forces its removal. A temporary exemption
-  // that cannot be forgotten is a different thing from a permanent one.
-  blurb: 'produced by POST /trips/{slug}/blurb; the rail-header branch consumes it and removes this entry',
 }
 
 /**

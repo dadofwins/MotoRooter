@@ -34,6 +34,8 @@ import type {
   RouteLegResponse,
   RoutingCapabilitiesResponse,
   Trip,
+  TripBlurbRequest,
+  TripBlurbResponse,
   TripSummary,
   UpdateTripRequest,
 } from './types'
@@ -128,6 +130,18 @@ export interface ApiClient {
     options?: RequestOptions,
   ): Promise<RouteThroughBestResponse>
   /** GPX track plus ordered waypoints. Stubbed today (`ApiNotImplementedError`). */
+  /**
+   * One short line characterising the trip, for the rail header.
+   *
+   * Decoration. `blurb` is null whenever the backend produced nothing usable, and that is an
+   * ordinary answer rather than a failure — a caller treats null and a 501 identically and
+   * keeps whatever header it was already showing. Nothing may wait on this.
+   */
+  tripBlurb(
+    slug: string,
+    request: TripBlurbRequest,
+    options?: RequestOptions,
+  ): Promise<TripBlurbResponse>
   exportGpx(slug: string, options?: RequestOptions): Promise<Blob>
   /**
    * Places-backed display data for the POI dialog. Stubbed today
@@ -478,6 +492,20 @@ export function createApiClient(options: ApiClientOptions = {}): ApiClient {
       return readJson<RouteThroughBestResponse>(
         await send(
           `/api/trips/${segment(slug)}/route-through-best`,
+          { method: 'POST', json: request },
+          requestOptions,
+        ),
+      )
+    },
+
+    async tripBlurb(
+      slug: string,
+      request: TripBlurbRequest,
+      requestOptions?: RequestOptions,
+    ): Promise<TripBlurbResponse> {
+      return readJson<TripBlurbResponse>(
+        await send(
+          `/api/trips/${segment(slug)}/blurb`,
           { method: 'POST', json: request },
           requestOptions,
         ),

@@ -70,6 +70,7 @@ import { useDiscoveryCategories } from './trip/useDiscoveryCategories'
 import { needsReplan, useReplan } from './trip/useReplan'
 import { useRouteLegs } from './trip/useRouteLegs'
 import { useRoutingCapabilities } from './trip/useRoutingCapabilities'
+import { useTripBlurb } from './trip/useTripBlurb'
 import { clearTripFromUrl, hasTripInUrl, useStoredTrip, useTripSave } from './trip/useTripDocument'
 import { useVisitedTrips } from './trip/useVisitedTrips'
 import { formatClimb, formatDistance, formatDuration } from './units/format'
@@ -89,6 +90,7 @@ type AppClient = Pick<
   | 'exportGpx'
   | 'geocode'
   | 'routeThroughBest'
+  | 'tripBlurb'
 >
 
 const NO_POIS: readonly Poi[] = []
@@ -845,6 +847,25 @@ function TripSession({
       ? durationIsEstimated
       : (untouched && (stored?.duration_is_estimated ?? false))
 
+  /**
+   * The rail header's line about this trip.
+   *
+   * Given the same triple `useTripSave` persists, which is what makes the quota guarantee
+   * structural rather than a threshold. `legs`, never `shownLegs`: mid-drag geometry lives in
+   * the separate `preview` state above and only `onCommit` writes it into the edit, so a
+   * gesture in flight has no path to this at all. Keying a model call off `shownLegs` would
+   * spend a request per drag update — the failure `DragScheduler` exists to prevent, arriving
+   * through a door it does not watch.
+   *
+   * Not `stored`, which is only populated by a URL load or an explicit reload: a trip this
+   * session built would have no document to read and would never get a line.
+   */
+  const blurb = useTripBlurb(
+    client,
+    save.slug,
+    useMemo(() => ({ waypoints, legs, pois: placed }), [waypoints, legs, placed]),
+  )
+
   // This browser's record of where it has been, updated whenever a trip is known — created
   // here, or arrived at by link.
   const knownSlug = save.slug
@@ -972,7 +993,7 @@ function TripSession({
             clicks. Chat was already above the outputs on the principle that an ask is an input
             rather than a result; this is the stronger reading of the same rule, putting it above
             the summary and above Replan as well. */}
-        <ChatRail client={client} resolveSlug={save.ensure} onTripChanged={reload} />
+        <ChatRail client={client} resolveSlug={save.ensure} onTripChanged={reload} blurb={blurb} />
 
         {/* Then what the *other* input does. Both sit above the summary because both are asks
             and the summary is an answer; chat leads because it is the primary one. */}

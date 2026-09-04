@@ -41,6 +41,15 @@ function stubFetch(...responses: Response[]): ReturnType<typeof vi.fn<FetchLike>
   return fetchMock
 }
 
+/** The JSON body of the most recent request. */
+function sentBody(fetchMock: ReturnType<typeof vi.fn<FetchLike>>): unknown {
+  const body = lastCall(fetchMock)[1].body
+  // Narrowed rather than stringified: `BodyInit` includes shapes whose default stringification
+  // is `[object Object]`, and a test asserting against that would pass on nonsense.
+  if (typeof body !== 'string') throw new Error('expected a JSON string body')
+  return JSON.parse(body)
+}
+
 function lastCall(fetchMock: ReturnType<typeof vi.fn<FetchLike>>): [string, RequestInit] {
   const call = fetchMock.mock.lastCall
   if (call === undefined) throw new Error('fetch was never called')
@@ -797,5 +806,50 @@ describe('ApiClient.placeDetail and the category it needs', () => {
     await api.placeDetail('a/b?c', { category: 'food' }).catch(() => undefined)
 
     expect(lastCall(fetchMock)[0]).toBe('/api/places/a%2Fb%3Fc?category=food')
+  })
+})
+
+describe('createApiClient trip blurb', () => {
+  it('posts to the trip and returns the line', async () => {
+    const fetchMock = stubFetch(json({ blurb: 'Three days of dirt and one hot shower.' }))
+    const client = createApiClient({ fetch: fetchMock })
+
+    const result = await client.tripBlurb('wabdr-north', {})
+
+    expect(result.blurb).toBe('Three days of dirt and one hot shower.')
+    const [url, init] = lastCall(fetchMock)
+    expect(url).toBe('/api/trips/wabdr-north/blurb')
+    expect(init.method).toBe('POST')
+  })
+
+  it('passes a null line through rather than treating it as a failure', async () => {
+    // Null is the documented answer for "nothing worth saying", not an error. A client that
+    // threw here would turn the endpoint's own fallback into an error path.
+    const fetchMock = stubFetch(json({ blurb: null }))
+    const client = createApiClient({ fetch: fetchMock })
+
+    await expect(client.tripBlurb('wabdr-north', {})).resolves.toEqual({ blurb: null })
+  })
+
+  it('sends history when it is given some, and omits it when it is not', async () => {
+    const fetchMock = stubFetch(json({ blurb: null }), json({ blurb: null }))
+    const client = createApiClient({ fetch: fetchMock })
+
+    await client.tripBlurb('wabdr-north', { history: [{ role: 'user', content: 'more dirt' }] })
+    expect(sentBody(fetchMock)).toEqual({
+      history: [{ role: 'user', content: 'more dirt' }],
+    })
+
+    await client.tripBlurb('wabdr-north', {})
+    expect(sentBody(fetchMock)).toEqual({})
+  })
+
+  it('raises 501 as the not-implemented error, so a caller can tell it from a fault', async () => {
+    const fetchMock = stubFetch(json({ detail: 'no chat model configured' }, 501))
+    const client = createApiClient({ fetch: fetchMock })
+
+    await expect(client.tripBlurb('wabdr-north', {})).rejects.toBeInstanceOf(
+      ApiNotImplementedError,
+    )
   })
 })

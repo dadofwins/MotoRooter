@@ -29,6 +29,7 @@ import type {
   RouteLegInput,
   RouteLegResponse,
   RoutingCapabilitiesResponse,
+  TripBlurbRequest,
 } from './api/types'
 
 /**
@@ -56,6 +57,13 @@ function stubUnbuilt() {
     ),
     exportGpx: vi.fn((_slug: string, _options?: RequestOptions) =>
       Promise.reject(new ApiNotImplementedError({ detail: 'gpx export is not implemented yet' })),
+    ),
+    // 501, as the real endpoint answers with no model configured. Deliberately the default
+    // rather than a null answer: every test in this file then runs with the rail header
+    // failing, so the fallback to the static copy is exercised by all of them rather than by
+    // the one test that remembers to.
+    tripBlurb: vi.fn((_slug: string, _request: TripBlurbRequest, _options?: RequestOptions) =>
+      Promise.reject(new ApiNotImplementedError({ detail: 'no chat model configured' })),
     ),
     chat: vi.fn(
       // Annotated rather than inferred: a body that only throws infers `AsyncGenerator<never>`,
@@ -3349,5 +3357,75 @@ describe('App and the browser location', () => {
     // The route took the camera; the position did not take it back.
     await waitFor(() => expect(fake.maps[0]?.fitted.length).toBeGreaterThan(0))
     expect(fake.maps[0]?.centred).toHaveLength(0)
+  })
+})
+
+describe('App the rail header line', () => {
+  /**
+   * The end-to-end proof, and the reason it exists: this project's characteristic failure is
+   * a component merged correct, tested, green and called by nobody. `useTripBlurb` and the
+   * rail's `blurb` prop are each tested where they live, and neither test would notice if
+   * `App` never connected them. This one drives the map and reads the rail.
+   */
+  function clientWithBlurb(line: string | null) {
+    const saved = tripFixture({
+      slug: 'wabdr-north',
+      waypoints: [waypointFixture(47.6, -120.7), waypointFixture(48.1, -120.2)],
+    })
+    return {
+      ...fakeRouter(),
+      createTrip: vi.fn((_request: CreateTripRequest, _options?: RequestOptions) =>
+        Promise.resolve(saved),
+      ),
+      getTrip: vi.fn((_slug: string, _options?: RequestOptions) => Promise.resolve(saved)),
+      updateTrip: vi.fn((_slug: string, _request: UpdateTripRequest, _options?: RequestOptions) =>
+        Promise.resolve(saved),
+      ),
+      tripBlurb: vi.fn((_slug: string, _request: TripBlurbRequest, _options?: RequestOptions) =>
+        Promise.resolve({ blurb: line }),
+      ),
+    }
+  }
+
+  async function placedTwoPoints(client: ReturnType<typeof clientWithBlurb>) {
+    window.history.replaceState(null, '', '/')
+    const fake = createFakeMaps()
+    render(<App mapLoader={fake.loader} mapId="motorooter-test-vector" client={client} />)
+    await mapReady(fake)
+    fake.clickMap(47.6, -120.7)
+    fake.clickMap(48.1, -120.2)
+    await screen.findByText(/2 points placed/)
+  }
+
+  it('puts the line the backend produced into the rail', async () => {
+    const client = clientWithBlurb('Three days of dirt and one hot shower.')
+
+    await placedTwoPoints(client)
+
+    expect(await screen.findByText('Three days of dirt and one hot shower.')).toBeInTheDocument()
+    expect(screen.queryByText(/describe your trip/i)).not.toBeInTheDocument()
+  })
+
+  it('keeps the opening copy when the backend has nothing to say', async () => {
+    // Null is the documented answer for an unusable reply. The rider sees the line that names
+    // the map path, which is the right thing to be looking at, and never an error.
+    const client = clientWithBlurb(null)
+
+    await placedTwoPoints(client)
+
+    expect(screen.getByText(/describe your trip/i)).toBeInTheDocument()
+    expect(screen.getByText(/set a start and end point on the map/i)).toBeInTheDocument()
+  })
+
+  it('asks once for a trip, not once per render', async () => {
+    // The quota rule, asserted where the wiring is rather than only in the hook's own file:
+    // App re-renders constantly while a trip is being built, and passing `live` instead of
+    // `stored` here is the one mistake that would spend a model call per drag update.
+    const client = clientWithBlurb('Three days of dirt.')
+
+    await placedTwoPoints(client)
+    await screen.findByText('Three days of dirt.')
+
+    expect(client.tripBlurb).toHaveBeenCalledTimes(1)
   })
 })

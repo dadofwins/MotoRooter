@@ -20,6 +20,12 @@ class TestFakeProviderContract(RoutingProviderContract):
     def provider(self):
         return FakeProvider()
 
+    @pytest.fixture
+    def degenerate_upstream(self):
+        """None: there is no upstream. Fake builds its geometry, so it cannot be handed a
+        one-point reply — the failure this case guards is a parsing failure."""
+        return None
+
 
 @pytest.fixture
 def request_pdx_hood():

@@ -80,6 +80,15 @@ class TestGoogleContract(RoutingProviderContract):
         return GoogleDirectionsProvider(api_key="test-key")
 
     @pytest.fixture
+    def degenerate_upstream(self, mock_google):
+        """A single step whose polyline is one point — a zero-length route."""
+        one_point = encode_polyline((Coordinate(lat=47.5962, lon=-120.6615),))
+        mock_google.route(DIRECTIONS_URL).mock(
+            return_value=httpx.Response(200, json=google_response([one_point]))
+        )
+        return GoogleDirectionsProvider(api_key="test-key")
+
+    @pytest.fixture
     def routable_request(self):
         return RouteRequest(
             waypoints=(

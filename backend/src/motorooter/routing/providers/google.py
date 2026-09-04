@@ -174,7 +174,10 @@ class GoogleDirectionsProvider:
                         points = points[1:]  # steps share their boundary point
                     geometry.extend(points)
         except (TypeError, KeyError, IndexError, ValueError) as exc:
-            msg = f"could not parse Google response: {exc}"
+            # The exception itself goes to the operator on `__cause__`, never into the
+            # message: `ToolCallFailed` forwards this text to the rail, and a rider once
+            # read a pydantic validation report complete with its documentation URL.
+            msg = "could not parse the Google response"
             raise ProviderUnavailable(msg, provider=name) from exc
 
         if len(geometry) < 2:

@@ -269,6 +269,21 @@ class OrsProvider:
             summary = properties["summary"]
             # ORS positions are [lon, lat] or [lon, lat, elevation]; drop the third ordinate.
             geometry = tuple(Coordinate(lat=pos[1], lon=pos[0]) for pos in positions)
+        except (TypeError, KeyError, IndexError, ValueError) as exc:
+            # The exception itself goes to the operator on `__cause__`, never into the
+            # message: `ToolCallFailed` forwards this text to the rail, and a rider once
+            # read a pydantic validation report complete with its documentation URL.
+            msg = "could not parse the ORS response"
+            raise ProviderUnavailable(msg, provider=name) from exc
+
+        if len(geometry) < 2:
+            # A zero-length route is one point, which `RouteLeg.geometry` rightly refuses.
+            # Raised here rather than left to that refusal so it is reported as what it is:
+            # an answer about the road, deterministic and therefore not worth retrying.
+            msg = "ORS returned a degenerate route"
+            raise NoRouteFound(msg, provider=name)
+
+        try:
             return RouteLeg(
                 geometry=geometry,
                 distance_m=summary["distance"],
@@ -281,7 +296,8 @@ class OrsProvider:
                 intent=request.intent,
             )
         except (TypeError, KeyError, IndexError, ValueError) as exc:
-            msg = f"could not parse ORS response: {exc}"
+            # Same message and the same reason as above: the detail is the operator's.
+            msg = "could not parse the ORS response"
             raise ProviderUnavailable(msg, provider=name) from exc
 
     @staticmethod

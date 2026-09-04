@@ -13,7 +13,7 @@ import inspect
 
 import pytest
 
-from motorooter.routing.errors import InvalidRequest, RoutingError
+from motorooter.routing.errors import InvalidRequest, NoRouteFound, RoutingError
 from motorooter.routing.geo import haversine_m
 from motorooter.routing.models import (
     Coordinate,
@@ -28,7 +28,86 @@ SNAP_TOLERANCE_M = 2_000.0
 """How far an engine may move a waypoint to reach a routable way."""
 
 
-class RoutingProviderContract:
+class _DegenerateNotDeclared:
+    """Sentinel: the adapter has not said what its upstream does with a zero-length route."""
+
+
+class DegenerateRouteContract:
+    """What every adapter owes a zero-length route.
+
+    Split out only for readability; `RoutingProviderContract` includes it, so an adapter
+    that clears the suite clears this too.
+
+    A rider asking for a loop is the ordinary way to reach it. "Three days of dirt starting
+    and ending in Leavenworth" makes the trip briefly [Leavenworth, Leavenworth], and a leg
+    whose two ends are the same coordinate is a legitimate question with a degenerate
+    answer. Two adapters disagreed about it and the disagreement shipped: Google guarded,
+    ORS did not, so ORS turned a one-point reply into a pydantic validation error relabelled
+    as an unparseable response — and, being marked retryable, spent three metered requests
+    re-asking a question whose answer cannot change.
+    """
+
+    @pytest.fixture
+    def coincident_request(self) -> RouteRequest:
+        """Both ends the same place. Override only if the coordinate must be routable."""
+        point = Coordinate(lat=47.5962, lon=-120.6615)  # Leavenworth, WA
+        return RouteRequest(waypoints=(point, point), intent=LegIntent.UNPAVED)
+
+    @pytest.fixture
+    def degenerate_upstream(self) -> RoutingProvider | None:
+        """A provider whose upstream answers a coincident request with a single point.
+
+        There is no default, deliberately. Override it with such a provider, or with `None`
+        to declare that this provider synthesizes its own geometry and so can never receive
+        a degenerate reply. Both are answers; not having one is what shipped last time.
+        """
+        return _DegenerateNotDeclared()  # type: ignore[return-value]
+
+    async def test_a_coincident_span_never_leaks_a_non_routing_error(
+        self, provider, coincident_request
+    ):
+        """Both ends the same point is a question, not a crash.
+
+        Answering it with a leg is as valid as refusing it; what is not valid is a
+        `ValidationError` from building the leg reaching a caller as itself.
+        """
+        try:
+            leg = await provider.route(coincident_request)
+        except RoutingError:
+            return
+        except Exception as exc:  # noqa: BLE001
+            pytest.fail(f"leaked non-RoutingError: {type(exc).__name__}: {exc}")
+        assert len(leg.geometry) >= 2, "a leg must have two ends even when they coincide"
+
+    async def test_refusing_a_coincident_span_is_final_not_retryable(
+        self, provider, coincident_request
+    ):
+        """Retrying cannot change the answer, and each attempt is a metered request."""
+        try:
+            await provider.route(coincident_request)
+        except RoutingError as exc:
+            assert not exc.retryable, f"{type(exc).__name__} would burn quota re-asking"
+
+    async def test_a_degenerate_reply_is_no_route_found(
+        self, degenerate_upstream, coincident_request
+    ):
+        """One point back from upstream is an answer about the road, not a broken payload.
+
+        `NoRouteFound` rather than `ProviderUnavailable` because it is deterministic, which
+        is what stops `RetryingProvider` paying for it three times.
+        """
+        if isinstance(degenerate_upstream, _DegenerateNotDeclared):
+            pytest.fail(
+                "override the `degenerate_upstream` fixture: return a provider whose upstream "
+                "replies with one point, or None if this provider builds its own geometry"
+            )
+        if degenerate_upstream is None:
+            pytest.skip("provider synthesizes its geometry; no upstream reply to degenerate")
+        with pytest.raises(NoRouteFound):
+            await degenerate_upstream.route(coincident_request)
+
+
+class RoutingProviderContract(DegenerateRouteContract):
     """Behavioral guarantees shared by all providers."""
 
     @pytest.fixture

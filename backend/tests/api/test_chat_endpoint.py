@@ -305,3 +305,84 @@ class TestProgressInsideATurn:
         """`progress` is null except on a progress event; a client must not read it as zero."""
         others = [e for e in self._events(client_with) if e["kind"] != "tool_progress"]
         assert all(event["progress"] is None for event in others)
+
+
+class TestALoopUnderConstruction:
+    """A trip that starts and ends in the same town, at the moment it has only that town.
+
+    Tim's report: "three days of dirt starting and ending in Leavenworth" produced a
+    pydantic validation report in the rail. The model adds the start, adds the end, and
+    between those two calls the trip is `[Leavenworth, Leavenworth]` — a leg whose ends are
+    one coordinate. That is an ordinary step in building a loop, so the rider must see
+    nothing at all: not a warning, not a failed tool, not a chat line.
+    """
+
+    def a_trip_at(self, coordinate: Coordinate) -> Trip:
+        now = utc_now()
+        return Trip(
+            slug=SLUG,
+            name="Leavenworth Loop",
+            created_at=now,
+            edited_at=now,
+            waypoints=(Waypoint(coordinate=coordinate, name="Leavenworth"),),
+            legs=(),
+        )
+
+    def adds_the_same_place_again(self) -> FakeLlmClient:
+        return says(
+            AssistantMessage(
+                content=None,
+                tool_calls=(
+                    ToolCall(id="c1", name="add_waypoint", arguments='{"name": "Leavenworth"}'),
+                ),
+            ),
+            AssistantMessage(content="Where would you like to ride in between?"),
+        )
+
+    def stream(self, client_with):
+        # _StubLookup resolves any name to this coordinate, so adding it to a trip already
+        # sitting on it is exactly the coincident span.
+        client, _ = client_with(
+            self.adds_the_same_place_again(),
+            seed=self.a_trip_at(Coordinate(lat=47.34, lon=-120.58)),
+        )
+        return events(post(client, "three days of dirt starting and ending in Leavenworth"))
+
+    def test_the_turn_completes(self, client_with):
+        assert self.stream(client_with)[-1]["kind"] == "done"
+
+    def test_no_tool_fails(self, client_with):
+        assert not [event for event in self.stream(client_with) if event["kind"] == "tool_failed"]
+
+    def test_the_rider_is_told_nothing_about_it(self, client_with):
+        """Silent means silent. A message here would fire during ordinary loop-building."""
+        messages = " ".join(event["message"] for event in self.stream(client_with))
+        assert "could not be routed" not in messages
+        assert "pydantic" not in messages
+        assert "degenerate" not in messages
+
+    def test_the_waypoint_is_added_rather_than_refused(self, client_with):
+        client, store = client_with(
+            self.adds_the_same_place_again(),
+            seed=self.a_trip_at(Coordinate(lat=47.34, lon=-120.58)),
+        )
+        post(client, "three days of dirt starting and ending in Leavenworth")
+        assert len(asyncio.run(store.get(SLUG)).waypoints) == 2
+
+    def test_the_engine_was_never_asked(self, client_with):
+        """The assertion that discriminates, on the stack the app actually builds.
+
+        The other cases here would pass without the guard, because offline routing is
+        `FakeProvider` and it answers a coincident span happily — it is the ORS reply that
+        is degenerate, not the request. What no engine can produce is a two-point leg:
+        `FakeProvider` interpolates nine across this span, so two means the request was
+        answered above it and nothing was routed.
+        """
+        client, store = client_with(
+            self.adds_the_same_place_again(),
+            seed=self.a_trip_at(Coordinate(lat=47.34, lon=-120.58)),
+        )
+        post(client, "three days of dirt starting and ending in Leavenworth")
+        legs = asyncio.run(store.get(SLUG)).legs
+        assert [leg.routed is not None for leg in legs] == [True]
+        assert len(legs[0].routed.geometry) == 2

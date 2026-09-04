@@ -6,6 +6,7 @@ table are chosen. Everything downstream sees a `PolicyResolver`.
 
 import pytest
 
+from motorooter.routing.decorators.coincident import CoincidentSpanProvider
 from motorooter.routing.errors import RoutingConfigError
 from motorooter.routing.factory import RoutingSettings, build_routing
 from motorooter.routing.models import LegIntent
@@ -74,6 +75,28 @@ class TestDecoratorStack:
         first = await provider.route(request)
         second = await provider.route(request)
         assert first == second
+
+    async def test_a_coincident_span_is_answered_without_reaching_the_engine(self, registry):
+        """Every provider inherits the short-circuit, because every caller resolves one.
+
+        `FakeProvider` interpolates nine points across a zero-length span; two means the
+        request was answered above it and no metered call was made.
+        """
+        from motorooter.routing.models import Coordinate, RouteRequest
+
+        point = Coordinate(lat=47.5962, lon=-120.6615)
+        leg = await registry.get("fake").route(
+            RouteRequest(waypoints=(point, point), intent=LegIntent.UNPAVED)
+        )
+        assert len(leg.geometry) == 2
+
+    def test_every_live_provider_inherits_the_coincident_guard(self):
+        """Stated structurally as well as behaviourally: the requirement is that no caller
+        can miss it, and a caller reaches a provider only through this registry."""
+        registry, _ = build_routing(RoutingSettings(ors_api_key="k", google_api_key="k"))
+        providers = list(registry)
+        assert providers, "no providers registered, so the assertion below proves nothing"
+        assert all(isinstance(p, CoincidentSpanProvider) for p in providers)
 
     def test_providers_without_declared_quota_are_not_quota_guarded(self):
         """Google declares no daily cap; wrapping it in a guard would invent one."""

@@ -9,6 +9,10 @@ import pytest
 
 from motorooter.clock import FakeClock
 from motorooter.routing.decorators.caching import CachingProvider
+from motorooter.routing.decorators.coincident import (
+    COINCIDENT_SPAN_TOLERANCE_M,
+    CoincidentSpanProvider,
+)
 from motorooter.routing.decorators.quota import QuotaGuardProvider
 from motorooter.routing.decorators.retry import RetryingProvider
 from motorooter.routing.errors import (
@@ -35,17 +39,35 @@ class TestCachingSatisfiesContract(RoutingProviderContract):
     def provider(self):
         return CachingProvider(FakeProvider(), clock=FakeClock())
 
+    @pytest.fixture
+    def degenerate_upstream(self):
+        """None: wrapping `FakeProvider`, which builds its own geometry. A decorator
+        forwards whatever its inner provider raises rather than parsing a reply itself."""
+        return None
+
 
 class TestRetrySatisfiesContract(RoutingProviderContract):
     @pytest.fixture
     def provider(self):
         return RetryingProvider(FakeProvider(), clock=FakeClock())
 
+    @pytest.fixture
+    def degenerate_upstream(self):
+        """None: wrapping `FakeProvider`, which builds its own geometry. A decorator
+        forwards whatever its inner provider raises rather than parsing a reply itself."""
+        return None
+
 
 class TestQuotaSatisfiesContract(RoutingProviderContract):
     @pytest.fixture
     def provider(self):
         return QuotaGuardProvider(FakeProvider(), limit=1000, clock=FakeClock())
+
+    @pytest.fixture
+    def degenerate_upstream(self):
+        """None: wrapping `FakeProvider`, which builds its own geometry. A decorator
+        forwards whatever its inner provider raises rather than parsing a reply itself."""
+        return None
 
 
 class TestCaching:
@@ -293,3 +315,107 @@ class TestComposition:
             clock=FakeClock(),
         )
         assert stack.capabilities == caps
+
+
+class TestCoincidentSatisfiesContract(RoutingProviderContract):
+    @pytest.fixture
+    def provider(self):
+        return CoincidentSpanProvider(FakeProvider())
+
+    @pytest.fixture
+    def degenerate_upstream(self):
+        """None: wrapping `FakeProvider`, which builds its own geometry. A decorator
+        forwards whatever its inner provider raises rather than parsing a reply itself."""
+        return None
+
+
+def span(*points: tuple[float, float], intent: LegIntent = LegIntent.UNPAVED) -> RouteRequest:
+    return RouteRequest(
+        waypoints=tuple(Coordinate(lat=lat, lon=lon) for lat, lon in points), intent=intent
+    )
+
+
+def north_of(point: tuple[float, float], metres: float) -> tuple[float, float]:
+    """A point `metres` due north. One degree of latitude is ~111,320 m."""
+    return (point[0] + metres / 111_320.0, point[1])
+
+
+LEAVENWORTH = (47.5962, -120.6615)
+
+
+class TestCoincidentSpan:
+    """A leg whose two ends are the same place, which is how every loop trip begins.
+
+    "Three days of dirt starting and ending in Leavenworth" makes the trip briefly
+    [Leavenworth, Leavenworth] before the intermediate stops arrive. That is an ordinary
+    transient state, not a mistake, so it must cost nothing and say nothing.
+    """
+
+    async def test_it_does_not_spend_a_request_on_a_zero_length_span(self):
+        """The whole point: a metered call to be told what we already know."""
+        inner = FakeProvider()
+        await CoincidentSpanProvider(inner).route(span(LEAVENWORTH, LEAVENWORTH))
+        assert inner.call_count == 0
+
+    async def test_it_returns_a_leg_rather_than_raising(self):
+        """A rider building a loop sees nothing, so nothing may escape as an error."""
+        leg = await CoincidentSpanProvider(FakeProvider()).route(span(LEAVENWORTH, LEAVENWORTH))
+        assert len(leg.geometry) == 2
+
+    async def test_the_leg_is_honestly_two_coincident_points(self):
+        """Not a fabricated line. Stitching collapses coincident boundaries already."""
+        leg = await CoincidentSpanProvider(FakeProvider()).route(span(LEAVENWORTH, LEAVENWORTH))
+        assert leg.geometry[0] == leg.geometry[1]
+        assert leg.geometry[0] == Coordinate(lat=LEAVENWORTH[0], lon=LEAVENWORTH[1])
+
+    async def test_it_reports_no_distance_and_no_duration(self):
+        leg = await CoincidentSpanProvider(FakeProvider()).route(span(LEAVENWORTH, LEAVENWORTH))
+        assert leg.distance_m == 0.0
+        assert leg.duration_s == 0.0
+
+    async def test_it_claims_no_surface_it_did_not_survey(self):
+        leg = await CoincidentSpanProvider(FakeProvider()).route(span(LEAVENWORTH, LEAVENWORTH))
+        assert leg.surface_spans == ()
+        assert leg.ascent_m is None
+
+    async def test_the_leg_is_attributed_to_the_engine_it_stood_in_for(self):
+        """Otherwise a trip carries a leg whose provider nothing downstream recognizes."""
+        inner = FakeProvider()
+        leg = await CoincidentSpanProvider(inner).route(span(LEAVENWORTH, LEAVENWORTH))
+        assert leg.provider == inner.capabilities.name
+
+    async def test_it_preserves_the_requested_intent(self):
+        leg = await CoincidentSpanProvider(FakeProvider()).route(
+            span(LEAVENWORTH, LEAVENWORTH, intent=LegIntent.HIGHWAY_CONNECTOR)
+        )
+        assert leg.intent is LegIntent.HIGHWAY_CONNECTOR
+
+    async def test_a_real_span_is_routed_normally(self):
+        inner = FakeProvider()
+        await CoincidentSpanProvider(inner).route(span(LEAVENWORTH, (47.7, -120.3)))
+        assert inner.call_count == 1
+
+    async def test_jitter_below_the_tolerance_is_the_same_point(self):
+        """Rounding and float noise must not turn a loop into a metered request."""
+        inner = FakeProvider()
+        nudged = north_of(LEAVENWORTH, COINCIDENT_SPAN_TOLERANCE_M / 2)
+        await CoincidentSpanProvider(inner).route(span(LEAVENWORTH, nudged))
+        assert inner.call_count == 0
+
+    async def test_a_span_longer_than_the_tolerance_is_routed(self):
+        """The guard must not swallow a short but real leg."""
+        inner = FakeProvider()
+        nudged = north_of(LEAVENWORTH, COINCIDENT_SPAN_TOLERANCE_M * 10)
+        await CoincidentSpanProvider(inner).route(span(LEAVENWORTH, nudged))
+        assert inner.call_count == 1
+
+    async def test_every_waypoint_must_coincide_not_just_the_ends(self):
+        """A loop out to a via-point and back is a real route, not a zero-length span."""
+        inner = FakeProvider()
+        await CoincidentSpanProvider(inner).route(span(LEAVENWORTH, (47.7, -120.3), LEAVENWORTH))
+        assert inner.call_count == 1
+
+    async def test_more_than_two_coincident_waypoints_still_short_circuit(self):
+        inner = FakeProvider()
+        await CoincidentSpanProvider(inner).route(span(LEAVENWORTH, LEAVENWORTH, LEAVENWORTH))
+        assert inner.call_count == 0

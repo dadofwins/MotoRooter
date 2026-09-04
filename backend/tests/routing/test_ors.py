@@ -87,6 +87,14 @@ class TestOrsContract(RoutingProviderContract):
         mock_ors.route(DIRECTIONS_URL).mock(side_effect=echo_requested_coordinates)
         return OrsProvider(api_key="test-key")
 
+    @pytest.fixture
+    def degenerate_upstream(self, mock_ors):
+        """What hosted ORS actually returns for a zero-length route: one point."""
+        mock_ors.route(DIRECTIONS_URL).mock(
+            return_value=httpx.Response(200, json=ors_geojson([[-120.6615, 47.5962]]))
+        )
+        return OrsProvider(api_key="test-key")
+
 
 class TestRequestConstruction:
     async def test_sends_coordinates_in_geojson_lon_lat_order(self, provider, mock_ors, pdx_hood):
@@ -208,6 +216,26 @@ class TestResponseParsing:
         mock_ors.route(DIRECTIONS_URL).respond(json={"type": "FeatureCollection", "features": []})
         with pytest.raises(NoRouteFound):
             await provider.route(pdx_hood)
+
+    async def test_a_parse_failure_reads_as_a_sentence_not_an_exception_dump(
+        self, provider, mock_ors, pdx_hood
+    ):
+        """`ToolCallFailed` puts this text in front of a rider, via `tool_failed`.
+
+        A rider once saw a pydantic validation report, stack-trace URL and all, because the
+        adapter interpolated the raw exception into the message. The detail belongs to the
+        operator and is still on `__cause__` for the traceback and the log.
+        """
+        mock_ors.route(DIRECTIONS_URL).respond(
+            # Negative distance: `RouteLeg.distance_m` is ge=0, so the leg fails to build
+            # and pydantic's report is what the adapter must not pass on verbatim.
+            json=ors_geojson([[-120.6615, 47.5962], [-120.7, 48.0]], distance=-1.0)
+        )
+        with pytest.raises(ProviderUnavailable) as caught:
+            await provider.route(pdx_hood)
+        assert "pydantic" not in str(caught.value)
+        assert "\n" not in str(caught.value)
+        assert caught.value.__cause__ is not None
 
     async def test_malformed_payload_is_a_routing_error(self, provider, mock_ors, pdx_hood):
         """A shape change upstream must not surface as a raw KeyError."""

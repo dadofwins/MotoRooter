@@ -654,6 +654,21 @@ class TestRouteThroughBest:
         outcome = await call(kit, RouteThroughBest.name, '{"limit": 1}')
         assert "3 more" in outcome.content
 
+    async def test_what_it_left_out_is_its_own_line_not_glued_to_the_last_place(self):
+        """The sentence is about the whole result, so it must not read as part of one place.
+
+        Invisible in a log, where the whole tool output is one record. In the rail it lands
+        on the end of the final place's line, which reads as a note about that place.
+        """
+        found = tuple(
+            self._found(f"p{index}", 0.9 - index / 100, along=0.2 + index / 5) for index in range(4)
+        )
+        kit = await tools(document=trip(routed=True, pois=found))
+        outcome = await call(kit, RouteThroughBest.name, '{"limit": 1}')
+        spare = next(line for line in outcome.content.splitlines() if "3 more" in line)
+        assert spare.lstrip() == spare, "the spare sentence should not be indented as a place"
+        assert "p0" not in spare
+
     async def test_the_rider_can_ask_for_more_than_the_default(self):
         found = tuple(self._found(f"p{index}", 0.9, along=0.2 + index / 5) for index in range(4))
         kit = await tools(document=trip(routed=True, pois=found))

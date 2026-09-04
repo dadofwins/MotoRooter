@@ -41,6 +41,19 @@ export interface ChatRailProps {
   /** The assistant edited the trip. Re-read it; do not reconstruct it from the stream. */
   readonly onTripChanged: () => void
   /**
+   * The conversation, whenever a turn adds to it.
+   *
+   * The rail keeps ownership: it is still the only thing that *writes* the transcript, and
+   * this hands out a read-only copy of the same value the next `ChatRequest` will carry. The
+   * alternative — lifting the transcript into the shell — is the trade this component was
+   * built to refuse, because two components holding one conversation is two models of it, and
+   * they diverge exactly the way replaying `trip_changed` into local state would.
+   *
+   * Optional, and nothing here waits on it. A reader is a convenience for whoever wants to
+   * know what was said; the rail works identically with nobody listening.
+   */
+  readonly onTranscript?: (turns: readonly ChatTurn[]) => void
+  /**
    * One line about the trip in front of the rider, in place of the opening copy.
    *
    * Passed in rather than fetched here, because this component deliberately owns no trip
@@ -116,6 +129,7 @@ export function ChatRail({
   client,
   resolveSlug,
   onTripChanged,
+  onTranscript,
   blurb = null,
 }: ChatRailProps): React.JSX.Element {
   const [entries, setEntries] = useState<readonly Entry[]>([])
@@ -198,6 +212,14 @@ export function ChatRail({
 
   /** The conversation as the assistant will be shown it. Oldest first. */
   const history = useRef<readonly ChatTurn[]>([])
+
+  // Held rather than closed over, so `send` does not have to be rebuilt when a caller passes
+  // a fresh callback each render — which is the ordinary case, and rebuilding `send` mid-turn
+  // is how this codebase lost a drag gesture once already.
+  const latestOnTranscript = useRef(onTranscript)
+  useEffect(() => {
+    latestOnTranscript.current = onTranscript
+  })
   const nextId = useRef(0)
   const running = useRef<AbortController | null>(null)
 
@@ -255,6 +277,11 @@ export function ChatRail({
         // Recorded only once the turn is over, and only what the assistant actually said —
         // tool notes are for the rider to watch, not context for the next question.
         history.current = [...asked, { role: 'assistant', content: answers.join('\n') }]
+        // Published from the same statement that records it, so a reader cannot be handed a
+        // transcript the next request will not send. Read through the ref rather than closed
+        // over, because a rail whose reader changed identity mid-turn must still tell the
+        // current one.
+        latestOnTranscript.current?.(history.current)
       }
 
       const applyEvent = (item: ChatEvent, answers: string[]): void => {

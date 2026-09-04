@@ -1027,3 +1027,78 @@ describe('ChatRail header line', () => {
     expect(screen.getByText('Three days of dirt.')).toBeInTheDocument()
   })
 })
+
+describe('ChatRail reporting the conversation', () => {
+  /**
+   * The rail stays the transcript's owner and its only writer; this publishes a copy for one
+   * read-only reader. Lifting the transcript into `App` was the alternative and it is the
+   * trade this component was built to refuse — the history exists here because the server is
+   * stateless, and two components holding it is two models of one conversation.
+   */
+  it('reports the transcript after a turn, so a reader need not hold one of its own', async () => {
+    const onTranscript = vi.fn()
+    const client = fakeClient([
+      event({ kind: 'message', message: 'There is a hole below the crossing.' }),
+      event({ kind: 'done' }),
+    ])
+    render(
+      <ChatRail
+        client={client}
+        resolveSlug={() => Promise.resolve('wabdr-north')}
+        onTripChanged={vi.fn()}
+        onTranscript={onTranscript}
+      />,
+    )
+
+    await send('anywhere to swim?')
+
+    await waitFor(() => {
+      expect(onTranscript).toHaveBeenLastCalledWith([
+        { role: 'user', content: 'anywhere to swim?' },
+        { role: 'assistant', content: 'There is a hole below the crossing.' },
+      ])
+    })
+  })
+
+  it('reports only what the assistant actually said, as the transcript already does', async () => {
+    // Tool notes are for the rider to watch, not context for the next question. The reported
+    // copy is the same value the next `ChatRequest` carries — one transcript, not two.
+    const onTranscript = vi.fn()
+    const client = fakeClient([
+      event({ kind: 'tool_finished', tool: 'find_camps', message: 'Found 3 camps' }),
+      event({ kind: 'message', message: 'Three of them, all on the ridge.' }),
+      event({ kind: 'done' }),
+    ])
+    render(
+      <ChatRail
+        client={client}
+        resolveSlug={() => Promise.resolve('wabdr-north')}
+        onTripChanged={vi.fn()}
+        onTranscript={onTranscript}
+      />,
+    )
+
+    await send('find camps')
+
+    await waitFor(() => {
+      expect(onTranscript).toHaveBeenLastCalledWith([
+        { role: 'user', content: 'find camps' },
+        { role: 'assistant', content: 'Three of them, all on the ridge.' },
+      ])
+    })
+  })
+
+  it('runs a turn perfectly well with nobody listening', async () => {
+    // Optional, because the rail must not require a reader any more than the blurb requires
+    // a rail.
+    const client = fakeClient([
+      event({ kind: 'message', message: 'Three days it is.' }),
+      event({ kind: 'done' }),
+    ])
+    render(<ChatRail client={client} resolveSlug={() => Promise.resolve('wabdr-north')} onTripChanged={vi.fn()} />)
+
+    await send('three days of dirt')
+
+    expect(await screen.findByText('Three days it is.')).toBeInTheDocument()
+  })
+})

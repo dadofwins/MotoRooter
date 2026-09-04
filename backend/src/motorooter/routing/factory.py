@@ -10,6 +10,7 @@ from collections.abc import Mapping
 
 from motorooter.clock import Clock, SystemClock
 from motorooter.routing.decorators.caching import CachingProvider
+from motorooter.routing.decorators.coincident import CoincidentSpanProvider
 from motorooter.routing.decorators.quota import SECONDS_PER_MINUTE, QuotaGuardProvider
 from motorooter.routing.decorators.retry import RetryingProvider
 from motorooter.routing.errors import RateLimited, RoutingConfigError
@@ -107,8 +108,12 @@ def _decorate(
     """Wrap a provider in the standard stack.
 
     Order matters. Retry is innermost so each attempt is charged as the separate upstream
-    request it is; quota sits above it; caching is outermost so a hit costs no budget.
+    request it is; quota sits above it; caching sits above that so a hit costs no budget.
     Providers that declare no quota are not guarded — inventing a cap would be wrong.
+
+    The coincident-span guard is outermost of all: a zero-length span is answered from the
+    request itself, so it should not reach the cache either — there is nothing to remember
+    about a question that is decided by looking at it.
     """
     wrapped: RoutingProvider = RetryingProvider(
         provider,
@@ -130,11 +135,13 @@ def _decorate(
         )
     if provider.capabilities.daily_quota is not None:
         wrapped = QuotaGuardProvider(wrapped, clock=clock)
-    return CachingProvider(
-        wrapped,
-        clock=clock,
-        ttl_s=settings.cache_ttl_s,
-        max_entries=settings.cache_max_entries,
+    return CoincidentSpanProvider(
+        CachingProvider(
+            wrapped,
+            clock=clock,
+            ttl_s=settings.cache_ttl_s,
+            max_entries=settings.cache_max_entries,
+        )
     )
 
 

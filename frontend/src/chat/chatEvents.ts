@@ -37,3 +37,33 @@ export function toolActivityLabel(tool: string | null | undefined): string | nul
   if (name === '') return null
   return name.replaceAll('_', ' ')
 }
+
+/**
+ * The kinds of line the transcript can hold.
+ *
+ * Here rather than in the component for the same two reasons as `HANDLED_KINDS`: a runtime
+ * constant exported from a component file breaks fast refresh, and a sweep that has to
+ * enumerate every kind needs one list to enumerate. `Entry['kind']` is derived from this, so
+ * a kind added to the rail without being added here does not compile — which is what stops a
+ * styling rule from being verified against five of six kinds and assumed for the sixth.
+ */
+export const ENTRY_KINDS = ['you', 'assistant', 'tool', 'tool-failed', 'unavailable', 'error'] as const
+
+export type EntryKind = (typeof ENTRY_KINDS)[number]
+
+/**
+ * Text as the transcript should draw it.
+ *
+ * Entries preserve whitespace now, which turns whitespace at the edges of a string from
+ * something invisible into a blank line the rider can see. A model routinely ends a block with
+ * a newline and nobody meant that to be a gap under the answer, so the edges are tidied while
+ * the interior is left exactly alone.
+ *
+ * `.trim()` is the obvious call and it is the wrong one. Backend lists indent every row by two
+ * spaces, and trimming takes the indent off the *first* row only — so a list that arrived
+ * aligned would render with its first line out of step with the rest of it. Blank lines go;
+ * the first content line's own indentation stays.
+ */
+export function entryText(text: string): string {
+  return text.replace(/^(?:[^\S\n]*\n)+/, '').replace(/\s+$/, '')
+}

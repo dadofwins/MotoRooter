@@ -51,6 +51,11 @@ which generates `frontend/src/api/schema.ts`, which the frontend compiles agains
 - After any contract change: `make contract`, and commit the regenerated files in the same
   commit as the change. `make contract-check` fails CI otherwise.
 
+  **"The contract is out of date" can also mean "you have not committed yet."**
+  `contract-check` regenerates and diffs against `HEAD`, so an uncommitted regeneration is
+  indistinguishable from drift and fails with the same message — which sends you hunting for
+  a discrepancy that is not there. Commit the regenerated files and run it again.
+
 If the frontend needs a shape that does not exist, do not invent it locally. A
 locally-invented type that later disagrees with the backend is precisely the failure the
 generated contract exists to prevent.

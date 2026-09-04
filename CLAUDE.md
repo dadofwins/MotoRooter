@@ -88,6 +88,7 @@ queue rather than as footnotes.
 | ~~`RidingSpeeds` 80/40/55 km/h~~ | `speeds.py` | **Checked against a real timed ride, 2026-08-26**, and it holds. It governs almost every trip — the default being dirt sends them through ORS, which is the untrusted-duration provider — so this was the most load-bearing unmeasured number in the project. |
 | ~~`GAP_REPORT_THRESHOLD_M = 25.0`~~ | leg stitching | **Measured 2026-08-26.** Value unchanged, now known safe rather than hoped. Engine disagreement is bimodal: single-digit metres while both snap to the same road (1.8–5.2 m across a Google/ORS handover, up to 400 m off-road), then hundreds once they choose different roads. 25 sits in an empty band, so anything from ~10 m to ~400 m behaves identically — which is why a guess worked. |
 | discovery cost weights | `pipeline.py` | From one live corridor. Being wrong skews the progress bar rather than breaking it, which is why it is tolerable. |
+| `BLURB_TIMEOUT_S = 8.0` | `blurb/factory.py` | **Partly measured, and the unmeasured half is the half a timeout is for.** 23 live runs at `minimal` span 0.9–3.6 s, 22 of them under 2.0. Nothing has met a degraded API, a cold model or a rate-limited retry, so the number defending against those is a guess — quiet runs cannot measure a bad day, and the single 3.6 s run is the only evidence the distribution has a tail at all. Wants latency from real traffic, not more spikes. Coupled to `BLURB_EFFORT`: at the default effort, two runs of five exceeded 8.0 s outright. |
 
 A reported gap does not mean what the threshold implies, incidentally: it is not "the route has
 a small discontinuity" but "the two engines picked different roads", which for a rider means a
@@ -111,8 +112,9 @@ would have meant over-stating trip time. **A real timed ride says the table hold
 inference did not survive contact with a stopwatch — which is the correct order, and the reason
 nobody changed the number on the strength of one audited section.
 
-**Every constant in this table is now measured.** If a new one is added, it belongs here until it
-is not a guess.
+**Every constant here was measured, and then a new one arrived** — which is the rule working
+rather than failing. `BLURB_TIMEOUT_S` belongs here until somebody has latency from real
+traffic, and anything added after it does too.
 
 None except the Garmin limit blocks anything, and all of them fail safely.
 
@@ -122,8 +124,12 @@ only; a faithful light render was attempted and abandoned, because `:root` decla
 preference — producing a state that cannot occur in reality. The reasoning holds without the
 screenshot (media query and UA preference derive from the same `prefers-color-scheme`, so they
 always agree), and four of the five defects found in dark mode were scheme-independent. But
-reasoned-about is not looked-at, and that distinction is the whole point of having rendered it. Fix a number here rather
-than an algorithm when one turns out wrong — that is why each is a single constant.
+reasoned-about is not looked-at, and that distinction is the whole point of having rendered it.
+
+**The harness fault that stopped it is now solved** (`frontend/CLAUDE.md`, 2026-09-04):
+`color-scheme: light !important` does not stop `@media (prefers-color-scheme: dark)` matching,
+so both halves are needed — strip the dark block *and* force the scheme. So this is doable now
+and was not before.
 
 ## Stack
 

@@ -1181,6 +1181,51 @@ describe('MapCanvas', () => {
     expect(fake.maps[0]?.centred).toHaveLength(0)
   })
 
+  it('honours an explicit locate even when a route has already framed', async () => {
+    // The gate above is about a position *arriving*, which must not steal the camera. A rider
+    // pressing "show where I am" is the opposite question and the opposite answer: they asked,
+    // so they get it. `focusRequestId` is what tells the two apart — absent for a position that
+    // merely turned up, present and changing for a press.
+    const fake = createFakeMaps()
+    const props = {
+      mapId: MAP_ID,
+      loader: fake.loader,
+      waypoints: [waypoint(47), waypoint(47.02)],
+      legs: [leg(coords(3, 47))],
+    }
+    const { rerender } = render(<MapCanvas {...props} />)
+    await waitFor(() => expect(fake.maps[0]?.fitted).toHaveLength(1))
+
+    rerender(<MapCanvas {...props} focus={{ lat: 47.61, lon: -122.33 }} focusRequestId={1} />)
+
+    await waitFor(() => expect(fake.maps[0]?.centred).toHaveLength(1))
+    expect(fake.maps[0]?.centred[0]).toEqual({ lat: 47.61, lng: -122.33 })
+  })
+
+  it('honours a second press, at the same place', async () => {
+    // A rider pans away and presses it again. The coordinate has not changed, so nothing about
+    // the position can signal the intent — only the request can.
+    const fake = createFakeMaps()
+    const at = { lat: 47.61, lon: -122.33 }
+    // No `focus` on the first render: with one, the canvas centres before the route frames and
+    // the count starts at one rather than zero, which measures the wrong thing.
+    const props = {
+      mapId: MAP_ID,
+      loader: fake.loader,
+      waypoints: [waypoint(47), waypoint(47.02)],
+      legs: [leg(coords(3, 47))],
+    }
+    const { rerender } = render(<MapCanvas {...props} />)
+    await waitFor(() => expect(fake.maps[0]?.fitted).toHaveLength(1))
+
+    rerender(<MapCanvas {...props} focus={at} focusRequestId={1} />)
+    await waitFor(() => expect(fake.maps[0]?.centred).toHaveLength(1))
+
+    // Same coordinate object, so only the request can carry the intent.
+    rerender(<MapCanvas {...props} focus={at} focusRequestId={2} />)
+    await waitFor(() => expect(fake.maps[0]?.centred).toHaveLength(2))
+  })
+
   it('still frames a route that arrives after the rider has been located', async () => {
     // Being centred somewhere is not the same as having framed a route, so the trip the
     // assistant then plots must still take the camera.

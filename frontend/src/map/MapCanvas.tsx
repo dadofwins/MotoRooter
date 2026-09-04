@@ -238,6 +238,20 @@ export interface MapCanvasProps {
    * a route.
    */
   readonly focus?: Coordinate
+
+  /**
+   * Bumped when the rider *asked* to be shown where they are, rather than a position simply
+   * having arrived.
+   *
+   * The guard on `focus` is about the second case and is right about it: a fix resolving while
+   * a linked trip loads must not swing the camera and then swing it back. It was wrong about
+   * the first, which is how "show where I am" came to do nothing at all once a route had
+   * framed — the button was on screen and inert exactly when a rider most wants it.
+   *
+   * A number rather than a boolean because pressing it twice in the same place must work
+   * twice, and the coordinate cannot say so: it is the same coordinate.
+   */
+  readonly focusRequestId?: number
   readonly mapId?: string
   readonly colorScheme?: MapColorScheme
   /** A click on the basemap, in domain coordinates. The mouse path for setting points. */
@@ -357,6 +371,7 @@ export function MapCanvas({
   onPoiOpen,
   onClusterOpen,
   focus,
+  focusRequestId,
 }: MapCanvasProps): React.JSX.Element {
   const containerRef = useRef<HTMLDivElement>(null)
   const mapRef = useRef<google.maps.Map | null>(null)
@@ -367,6 +382,8 @@ export function MapCanvas({
    * but whether what is on screen is still the route that was framed — see `isReplacement`.
    */
   const framedOn = useRef<readonly string[] | null>(null)
+  /** The last `focusRequestId` acted on, so one press moves the camera once. */
+  const servedFocusRequest = useRef<number | undefined>(undefined)
   const onMapClickRef = useRef(onMapClick)
 
   const [maps, setMaps] = useState<GoogleMaps | null>(null)
@@ -883,12 +900,20 @@ export function MapCanvas({
   useEffect(() => {
     const map = mapRef.current
     if (maps === null || map === null || focus === undefined) return
+
+    // An explicit press always wins; a position that merely arrived defers to a framed route.
+    // Tracked as "which request has been served" rather than as a flag, so pressing it twice
+    // in the same place works twice — the coordinate is identical both times and cannot
+    // distinguish them.
+    const asked = focusRequestId !== undefined && focusRequestId !== servedFocusRequest.current
     // Only while the camera has no better claim. `framedOn` is the record of a route having
     // taken it, so this reads that rather than keeping a second flag that could disagree.
-    if (framedOn.current !== null) return
+    if (framedOn.current !== null && !asked) return
+
+    servedFocusRequest.current = focusRequestId
     map.setCenter(toLatLng(focus))
     map.setZoom(FOCUS_ZOOM)
-  }, [maps, focus])
+  }, [maps, focus, focusRequestId])
 
   useEffect(() => {
     const map = mapRef.current

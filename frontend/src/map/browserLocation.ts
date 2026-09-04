@@ -105,14 +105,26 @@ export function useBrowserLocation(given?: BrowserLocator): BrowserLocation {
   const [coordinate, setCoordinate] = useState<Coordinate | null>(null)
   const [canLocate, setCanLocate] = useState(false)
   const [isLocating, setLocating] = useState(false)
-  /** One request at a time, and never a second after an answer. */
-  const asked = useRef(false)
+  /**
+   * One request at a time.
+   *
+   * It used to mean "and never a second, ever", which was right while this only opened the map
+   * on load and wrong the moment it also backed a button. A rider presses "show where I am"
+   * again after riding somewhere, or after panning off themselves, and the second press did
+   * nothing at all — the control stayed on screen and stopped working after one use.
+   *
+   * Concurrency is the part worth keeping: two presses during one fix should be one request.
+   * What ends the offer permanently is a refusal, below, which is a different rule and still
+   * holds.
+   */
+  const inFlight = useRef(false)
 
   const ask = useCallback(() => {
-    if (asked.current) return
-    asked.current = true
+    if (inFlight.current) return
+    inFlight.current = true
     setLocating(true)
     void from.current().then((at) => {
+      inFlight.current = false
       setLocating(false)
       setCoordinate(at)
       // A refusal ends it. Re-offering the control would put the rider one click from a prompt

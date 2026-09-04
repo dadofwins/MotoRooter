@@ -227,6 +227,37 @@ class ChatTurn(BaseModel):
     content: str
 
 
+class TripBlurbRequest(BaseModel):
+    """Context for the rail's header line.
+
+    Every field is optional, and that is the point: the trip document is the input, and a
+    rider who has never opened the chat gets a blurb from their map alone. History only
+    colours it. The client owns the transcript, as it does for chat, so nothing about a
+    conversation is held server-side.
+    """
+
+    history: list["ChatTurn"] = Field(
+        default_factory=list,
+        description=(
+            "Recent turns from the rail, oldest first. Optional — the endpoint works with "
+            "none, and must, because chat is an accelerator and never a requirement."
+        ),
+    )
+
+
+class TripBlurbResponse(BaseModel):
+    """One line about this trip, or nothing to say about it."""
+
+    blurb: str | None = Field(
+        description=(
+            "A short line for the rail header, or null when none was produced. Null is not "
+            "an error: the header is decoration, so a model failure, an unusable reply or a "
+            "line too long for the rail all mean 'keep the static header'. Clients must "
+            "handle null and 501 the same way."
+        )
+    )
+
+
 class ChatEvent(BaseModel):
     """One streamed step of an assistant turn.
 

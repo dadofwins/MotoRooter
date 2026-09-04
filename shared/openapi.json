@@ -1127,6 +1127,43 @@
         "title": "Trip",
         "type": "object"
       },
+      "TripBlurbRequest": {
+        "description": "Context for the rail's header line.\n\nEvery field is optional, and that is the point: the trip document is the input, and a\nrider who has never opened the chat gets a blurb from their map alone. History only\ncolours it. The client owns the transcript, as it does for chat, so nothing about a\nconversation is held server-side.",
+        "properties": {
+          "history": {
+            "description": "Recent turns from the rail, oldest first. Optional \u2014 the endpoint works with none, and must, because chat is an accelerator and never a requirement.",
+            "items": {
+              "$ref": "#/components/schemas/ChatTurn"
+            },
+            "title": "History",
+            "type": "array"
+          }
+        },
+        "title": "TripBlurbRequest",
+        "type": "object"
+      },
+      "TripBlurbResponse": {
+        "description": "One line about this trip, or nothing to say about it.",
+        "properties": {
+          "blurb": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "A short line for the rail header, or null when none was produced. Null is not an error: the header is decoration, so a model failure, an unusable reply or a line too long for the rail all mean 'keep the static header'. Clients must handle null and 501 the same way.",
+            "title": "Blurb"
+          }
+        },
+        "required": [
+          "blurb"
+        ],
+        "title": "TripBlurbResponse",
+        "type": "object"
+      },
       "TripLeg": {
         "description": "One section of the route, spanning a pair of waypoints.\n\nEach leg carries its own intent and optional provider override, which is what makes\nper-road-type routing a property of the data rather than a branch in routing code.",
         "properties": {
@@ -2338,6 +2375,129 @@
           }
         },
         "summary": "Update Trip",
+        "tags": [
+          "trips"
+        ]
+      }
+    },
+    "/api/trips/{slug}/blurb": {
+      "post": {
+        "description": "A short, casual line characterising the trip the rider is looking at \u2014 the chat rail's header, in place of static copy.\n\n**Decoration, not information.** `blurb` is null whenever no usable line was produced, which is not an error: treat null and 501 identically and keep whatever header you were showing. Nothing else in the app should wait on this call.\n\n**Not a chat feature.** `history` is optional and the trip document is the input, so a rider who has never opened the rail still gets a line. Every figure the model may use is measured from the trip and handed to it; it is forbidden to state a number or a place it was not given. Answers 501 when no OpenAI key is configured.",
+        "operationId": "trip_blurb_api_trips__slug__blurb_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "slug",
+            "required": true,
+            "schema": {
+              "title": "Slug",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TripBlurbRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TripBlurbResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          },
+          "501": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Implemented"
+          },
+          "502": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Bad Gateway"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "summary": "One line about this trip, for the rail header",
         "tags": [
           "trips"
         ]

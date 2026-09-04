@@ -9,6 +9,7 @@ from typing import Annotated
 
 from fastapi import Depends, Request
 
+from motorooter.blurb.writer import BlurbWriter
 from motorooter.llm.protocol import LlmClient
 from motorooter.planning.discovery.details import PlaceDetails
 from motorooter.planning.discovery.lookup import PlaceLookup
@@ -17,7 +18,13 @@ from motorooter.routing.policy import PolicyResolver
 from motorooter.routing.registry import ProviderRegistry
 from motorooter.trips.store import TripStore
 
-OPTIONAL_SERVICES: tuple[str, ...] = ("discovery", "places", "chat_model", "place_lookup")
+OPTIONAL_SERVICES: tuple[str, ...] = (
+    "discovery",
+    "places",
+    "chat_model",
+    "place_lookup",
+    "blurb_writer",
+)
 """The `app.state` attributes that may legitimately be `None`, named in one place.
 
 Each of these disables one feature when its credentials are absent, rather than refusing to
@@ -63,6 +70,17 @@ def get_chat_model(request: Request) -> "LlmClient | None":
     return model
 
 
+def get_blurb_writer(request: Request) -> "BlurbWriter | None":
+    """The rail header's copywriter, or `None` without an OpenAI key.
+
+    Its own service rather than the chat model reused, because it wants a different budget:
+    a short timeout and its own reasoning effort. Gated on the same credential, so a
+    deployment without one keeps working and the header keeps its static line.
+    """
+    writer: BlurbWriter | None = getattr(request.app.state, "blurb_writer", None)
+    return writer
+
+
 def get_place_lookup(request: Request) -> "PlaceLookup | None":
     """Name-to-place search, or `None` without a Places key.
 
@@ -91,3 +109,4 @@ Discovery = Annotated["DiscoveryPipeline | None", Depends(get_discovery)]
 Places = Annotated["PlaceDetails | None", Depends(get_places)]
 ChatModel = Annotated["LlmClient | None", Depends(get_chat_model)]
 Lookup = Annotated["PlaceLookup | None", Depends(get_place_lookup)]
+Blurbs = Annotated["BlurbWriter | None", Depends(get_blurb_writer)]

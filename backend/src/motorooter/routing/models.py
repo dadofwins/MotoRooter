@@ -5,6 +5,7 @@ an adapter module. These models also generate the TypeScript types consumed by t
 frontend, so their invariants are the contract for both sides.
 """
 
+from collections.abc import Mapping
 from enum import StrEnum
 from functools import cached_property
 from typing import Self
@@ -65,6 +66,23 @@ class LegIntent(StrEnum):
     TECHNICAL_OFFROAD = "technical_offroad"
     MANUAL_TRACK = "manual_track"
     """User-drawn; routed as-is with no engine snapping."""
+
+
+RIDER_FACING_MODE: Mapping[LegIntent, str] = {
+    LegIntent.HIGHWAY_CONNECTOR: "Fast",
+    LegIntent.TWISTY_PAVED: "Twisties",
+    LegIntent.UNPAVED: "Offroad",
+}
+"""The three modes a rider is shown, keyed by the intent that expresses them.
+
+`technical_offroad` and `manual_track` are deliberately absent rather than mapped to a
+near-neighbour: the field expresses five intents and only three have been named, so a
+missing key is the honest answer for the other two and a caller decides what to do about it.
+
+Here because there was no canonical mapping anywhere — the labels existed only inside tool
+descriptions, as prose, in three places. Anything else needing them should read this rather
+than write a fourth copy that goes stale when the vocabulary changes.
+"""
 
 
 class SurfaceSpan(BaseModel):

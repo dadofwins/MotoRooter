@@ -138,13 +138,20 @@ renders a state that cannot occur. Both halves are needed — strip the dark blo
 the scheme — and a non-matching media block contributes nothing to the cascade, so removing it
 is exactly what a light-preference browser computes rather than a cheat.
 
-All 55 classes the dark block redefines were rendered and looked at, checked by extracting the
-selectors from the block rather than by trusting a sweep of the app — the first pass reached
-only 31, because a dump of the rich app never reaches the landing screen, the Places pane, or
-the error states. **Contrast: zero failures**, audited in a browser over composited backdrops
-at the right bar for each element: 4.5:1 for text, 3:1 for labelled icon-only controls, and
-nothing for a disabled one. None of the 55 is a map overlay, so the map layer is
-scheme-independent and a harness that cannot load Maps leaves no gap here.
+Every class either dark block redefines was rendered and looked at. **Contrast: zero
+failures**, audited in a browser over composited backdrops at the right bar for each element:
+4.5:1 for text, 3:1 for labelled icon-only controls, and nothing for a disabled one. The count
+lives in `frontend/scripts/contrast-audit/` with a tripwire on it, not here — see below for
+why this paragraph does not carry the number.
+
+**This paragraph twice said something false about its own completeness, and that is the part
+worth remembering.** It first claimed 55 classes and no map overlays. There are two
+`prefers-color-scheme: dark` blocks in `index.css`; the analysis behind that figure used
+`str.index`, found the first, and reported it as the whole — so a claim whose entire point was
+completeness was itself incomplete, and four map-layer classes reported as zero were real. The
+audit script's own coverage check is what caught it, by answering a question it was written to
+confirm. The renders were always faithful, because the harness stripped both blocks; only the
+coverage claim on top was wrong.
 
 Two things found are judgement rather than defect, and are Tim's: warning and error text sit
 closer together in light than in dark (`#7c4a02` against `#7f1d1d`, versus `#fcd34d` against

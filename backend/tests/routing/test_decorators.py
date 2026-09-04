@@ -9,10 +9,7 @@ import pytest
 
 from motorooter.clock import FakeClock
 from motorooter.routing.decorators.caching import CachingProvider
-from motorooter.routing.decorators.coincident import (
-    COINCIDENT_SPAN_TOLERANCE_M,
-    CoincidentSpanProvider,
-)
+from motorooter.routing.decorators.coincident import CoincidentSpanProvider
 from motorooter.routing.decorators.quota import QuotaGuardProvider
 from motorooter.routing.decorators.retry import RetryingProvider
 from motorooter.routing.errors import (
@@ -21,6 +18,7 @@ from motorooter.routing.errors import (
     QuotaExceeded,
     RoutingConfigError,
 )
+from motorooter.routing.geo import COINCIDENT_TOLERANCE_M
 from motorooter.routing.models import Coordinate, LegIntent, RouteRequest
 from motorooter.routing.protocol import RoutingProvider
 from motorooter.routing.providers.fake import FakeProvider
@@ -398,14 +396,14 @@ class TestCoincidentSpan:
     async def test_jitter_below_the_tolerance_is_the_same_point(self):
         """Rounding and float noise must not turn a loop into a metered request."""
         inner = FakeProvider()
-        nudged = north_of(LEAVENWORTH, COINCIDENT_SPAN_TOLERANCE_M / 2)
+        nudged = north_of(LEAVENWORTH, COINCIDENT_TOLERANCE_M / 2)
         await CoincidentSpanProvider(inner).route(span(LEAVENWORTH, nudged))
         assert inner.call_count == 0
 
     async def test_a_span_longer_than_the_tolerance_is_routed(self):
         """The guard must not swallow a short but real leg."""
         inner = FakeProvider()
-        nudged = north_of(LEAVENWORTH, COINCIDENT_SPAN_TOLERANCE_M * 10)
+        nudged = north_of(LEAVENWORTH, COINCIDENT_TOLERANCE_M * 10)
         await CoincidentSpanProvider(inner).route(span(LEAVENWORTH, nudged))
         assert inner.call_count == 1
 

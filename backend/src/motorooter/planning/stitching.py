@@ -37,12 +37,9 @@ from typing import Self
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from motorooter.routing.geo import haversine_m, path_length_m
+from motorooter.routing.geo import COINCIDENT_TOLERANCE_M, haversine_m, path_length_m
 from motorooter.routing.models import Coordinate, RouteLeg, Surface, SurfaceSpan
 from motorooter.trips.models import Trip
-
-COINCIDENT_TOLERANCE_M = 1.0
-"""Below this, two boundary vertices are the same point. Absorbs float and rounding jitter."""
 
 GAP_REPORT_THRESHOLD_M = 25.0
 """Above this, a boundary mismatch is worth telling someone about.

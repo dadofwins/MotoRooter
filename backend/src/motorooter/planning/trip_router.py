@@ -38,12 +38,12 @@ from pydantic import BaseModel, ConfigDict, Field
 from motorooter.api.error_codes import resolve
 from motorooter.error_codes import ErrorCode
 from motorooter.planning.stitching import (
-    COINCIDENT_TOLERANCE_M,
     GAP_REPORT_THRESHOLD_M,
     StitchedRoute,
     stitch,
 )
 from motorooter.routing.errors import RouteIncomplete, RoutingError
+from motorooter.routing.geo import COINCIDENT_TOLERANCE_M
 from motorooter.routing.models import (
     RouteLeg,
     RouteRequest,

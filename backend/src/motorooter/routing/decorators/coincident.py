@@ -17,19 +17,9 @@ other: this handles identical *input*, they handle a degenerate *reply*, which a
 also return for distinct points that snap to the same node.
 """
 
-from motorooter.routing.geo import haversine_m
+from motorooter.routing.geo import COINCIDENT_TOLERANCE_M, haversine_m
 from motorooter.routing.models import ProviderCapabilities, RouteLeg, RouteRequest
 from motorooter.routing.protocol import RoutingProvider
-
-COINCIDENT_SPAN_TOLERANCE_M = 1.0
-"""Below this, two waypoints are the same place. Absorbs float and rounding jitter.
-
-Deliberately the same value as `planning.stitching.COINCIDENT_TOLERANCE_M`, and deliberately
-not imported from it: routing does not depend on planning, and inverting that to share a
-float would be the more expensive mistake. They mean the same thing at two layers — a
-boundary this close is one point — so a span this short is one stitching would collapse
-anyway.
-"""
 
 
 class CoincidentSpanProvider:
@@ -73,6 +63,5 @@ class CoincidentSpanProvider:
         """True when every waypoint is the first one. A via-point makes it a real route."""
         start = request.waypoints[0]
         return all(
-            haversine_m(start, point) <= COINCIDENT_SPAN_TOLERANCE_M
-            for point in request.waypoints[1:]
+            haversine_m(start, point) <= COINCIDENT_TOLERANCE_M for point in request.waypoints[1:]
         )

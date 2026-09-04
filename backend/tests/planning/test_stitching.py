@@ -16,12 +16,16 @@ from math import pi
 import pytest
 
 from motorooter.planning.stitching import (
-    COINCIDENT_TOLERANCE_M,
     GAP_REPORT_THRESHOLD_M,
     StitchedRoute,
     stitch,
 )
-from motorooter.routing.geo import EARTH_RADIUS_M, haversine_m, path_length_m
+from motorooter.routing.geo import (
+    COINCIDENT_TOLERANCE_M,
+    EARTH_RADIUS_M,
+    haversine_m,
+    path_length_m,
+)
 from motorooter.routing.models import Coordinate, LegIntent, RouteLeg, Surface, SurfaceSpan
 
 M_PER_DEGREE_LAT = EARTH_RADIUS_M * pi / 180

@@ -17,6 +17,7 @@ import logging
 from typing import Any
 
 from motorooter.api.deps import OPTIONAL_SERVICES
+from motorooter.blurb.factory import build_blurb_writer
 from motorooter.chat.factory import build_chat_model
 from motorooter.planning.discovery.details import PlaceDetails
 from motorooter.planning.discovery.factory import DiscoverySettings, build_discovery
@@ -49,12 +50,21 @@ def build_optional_services(routing_config: RoutingSettings) -> dict[str, Any]:
 def _build(routing_config: RoutingSettings) -> dict[str, Any]:
     """Each service, or `None`. Every name in `OPTIONAL_SERVICES` must appear here."""
     if routing_config.offline:
-        return {"discovery": None, "chat_model": None, "places": None, "place_lookup": None}
+        return {
+            "discovery": None,
+            "chat_model": None,
+            "places": None,
+            "place_lookup": None,
+            "blurb_writer": None,
+        }
 
     settings = discovery_from_env()
     return {
         "discovery": build_discovery(settings),
         "chat_model": build_chat_model(settings),
+        # Needs only the OpenAI key, like chat, but its own client: a few seconds and
+        # minimal reasoning rather than chat's two-minute budget. See `blurb.factory`.
+        "blurb_writer": build_blurb_writer(settings),
         # Needs only the one key, unlike discovery, so it is built directly rather than
         # gated behind `settings.configured` — the POI dialog should work on a deployment
         # with a Maps key and no search credentials.

@@ -168,6 +168,30 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/trips/{slug}/blurb": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * One line about this trip, for the rail header
+         * @description A short, casual line characterising the trip the rider is looking at — the chat rail's header, in place of static copy.
+         *
+         *     **Decoration, not information.** `blurb` is null whenever no usable line was produced, which is not an error: treat null and 501 identically and keep whatever header you were showing. Nothing else in the app should wait on this call.
+         *
+         *     **Not a chat feature.** `history` is optional and the trip document is the input, so a rider who has never opened the rail still gets a line. Every figure the model may use is measured from the trip and handed to it; it is forbidden to state a number or a place it was not given. Answers 501 when no OpenAI key is configured.
+         */
+        post: operations["trip_blurb_api_trips__slug__blurb_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/trips/{slug}/chat": {
         parameters: {
             query?: never;
@@ -885,6 +909,33 @@ export interface components {
              * @default []
              */
             waypoints: components["schemas"]["Waypoint"][];
+        };
+        /**
+         * TripBlurbRequest
+         * @description Context for the rail's header line.
+         *
+         *     Every field is optional, and that is the point: the trip document is the input, and a
+         *     rider who has never opened the chat gets a blurb from their map alone. History only
+         *     colours it. The client owns the transcript, as it does for chat, so nothing about a
+         *     conversation is held server-side.
+         */
+        TripBlurbRequest: {
+            /**
+             * History
+             * @description Recent turns from the rail, oldest first. Optional — the endpoint works with none, and must, because chat is an accelerator and never a requirement.
+             */
+            history?: components["schemas"]["ChatTurn"][];
+        };
+        /**
+         * TripBlurbResponse
+         * @description One line about this trip, or nothing to say about it.
+         */
+        TripBlurbResponse: {
+            /**
+             * Blurb
+             * @description A short line for the rail header, or null when none was produced. Null is not an error: the header is decoration, so a model failure, an unusable reply or a line too long for the rail all mean 'keep the static header'. Clients must handle null and 501 the same way.
+             */
+            blurb: string | null;
         };
         /**
          * TripLeg
@@ -1780,6 +1831,104 @@ export interface operations {
             };
             /** @description Too Many Requests */
             429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Bad Gateway */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    trip_blurb_api_trips__slug__blurb_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                slug: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TripBlurbRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TripBlurbResponse"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Unprocessable Content */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Too Many Requests */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
                 headers: {
                     [name: string]: unknown;
                 };

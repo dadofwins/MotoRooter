@@ -14,7 +14,7 @@ from collections.abc import AsyncIterator, Sequence
 from fastapi import APIRouter, Response, status
 from fastapi.responses import StreamingResponse
 
-from motorooter.api.deps import ChatModel, Discovery, Lookup, Resolver, Trips
+from motorooter.api.deps import Blurbs, ChatModel, Discovery, Lookup, Resolver, Trips
 from motorooter.api.errors import NotImplementedYet
 from motorooter.api.schemas import (
     ERROR_RESPONSES,
@@ -26,8 +26,11 @@ from motorooter.api.schemas import (
     ReplanRequest,
     RouteThroughBestRequest,
     RouteThroughBestResponse,
+    TripBlurbRequest,
+    TripBlurbResponse,
     UpdateTripRequest,
 )
+from motorooter.blurb.models import Turn
 from motorooter.chat.prompt import CHAT_SYSTEM_PROMPT
 from motorooter.chat.routing import LegRoutingService
 from motorooter.chat.tools import TripTools
@@ -317,6 +320,39 @@ def _conversation(request: ChatRequest, trip_name: str) -> list[Message]:
         )
     messages.append(UserMessage(content=request.message))
     return messages
+
+
+@router.post(
+    "/{slug}/blurb",
+    response_model=TripBlurbResponse,
+    summary="One line about this trip, for the rail header",
+    description=(
+        "A short, casual line characterising the trip the rider is looking at — the chat "
+        "rail's header, in place of static copy.\n\n"
+        "**Decoration, not information.** `blurb` is null whenever no usable line was "
+        "produced, which is not an error: treat null and 501 identically and keep whatever "
+        "header you were showing. Nothing else in the app should wait on this call.\n\n"
+        "**Not a chat feature.** `history` is optional and the trip document is the input, "
+        "so a rider who has never opened the rail still gets a line. Every figure the model "
+        "may use is measured from the trip and handed to it; it is forbidden to state a "
+        "number or a place it was not given. Answers 501 when no OpenAI key is configured."
+    ),
+    responses={NOT_IMPLEMENTED: {"model": ErrorResponse}},
+)
+async def trip_blurb(
+    slug: str, request: TripBlurbRequest, store: Trips, blurbs: Blurbs
+) -> TripBlurbResponse:
+    """The rail header's line for this trip.
+
+    A missing trip is still a 404 rather than a null blurb: the client asked about something
+    that does not exist, which is a different answer from "nothing to say about this one".
+    """
+    trip = await store.get(validate_slug(slug))
+    if blurbs is None:
+        raise NotImplementedYet("trip blurbs (no OpenAI credentials configured)")
+
+    history = tuple(Turn(role=turn.role, content=turn.content) for turn in request.history)
+    return TripBlurbResponse(blurb=await blurbs.write(trip, history))
 
 
 @router.get(

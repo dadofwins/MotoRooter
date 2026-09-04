@@ -37,18 +37,20 @@ if the generated files drift.
 
 ## Status
 
-**M0 and M1 have passed. M2 (GPX export) is built and awaiting the hardware test.**
+**M0, M1 and M2 have all passed.** GPX export was verified on Tim's own unit on 2026-08-26.
 
 Everything in the plan is merged and green: the routing layer, trips and persistence, the
 four-stage discovery pipeline, the LLM tool layer with six tools behind a streaming chat
 endpoint, multi-leg trips with per-segment routing modes, drag-to-reroute, POI discovery and
 the Places detail dialog, and GPX export.
 
-**The one thing left is Tim's.** Load an exported GPX onto a real unit.
-`GARMIN_TRACK_POINT_LIMIT = 10_000` is the figure most commonly documented for modern units,
-not one anybody measured — older handhelds cut at 500 per segment. It is a single constant so
-that his answer changes a number rather than an algorithm, and decimation is correct at any
-limit, so being wrong costs fidelity rather than correctness.
+`GARMIN_TRACK_POINT_LIMIT = 10_000` was the last open assumption and is now measured: an
+exported route loaded onto Tim's own unit and read correctly. It stayed a single constant so
+that his answer would change a number rather than an algorithm, and decimation is correct at
+any limit, so being wrong would have cost fidelity rather than correctness.
+
+**Nothing is now blocked on Tim.** Work is assigned by mail; `scripts/queue-status` is what
+says an engineer is idle.
 
 ### The pattern that actually cost this project
 

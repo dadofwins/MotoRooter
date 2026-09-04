@@ -162,6 +162,14 @@ Never edit anything under `backend/`.
   render of a state that cannot exist: light CSS with dark selects and a black sticky heading.
   Inject `:root { color-scheme: light !important }` **after** the stylesheet.
 
+  **And strip the dark `@media` block as well — the override alone is not enough.**
+  `color-scheme` decides what the user agent paints; it does not stop
+  `@media (prefers-color-scheme: dark)` from matching, so the app's own dark rules keep
+  applying and you get light chrome over a dark palette. That is a second render of a
+  state that cannot exist, arrived at by fixing the first one. Removing the block is the
+  honest edit rather than a cheat: a non-matching media block contributes nothing, so a
+  sheet without it is exactly what a light browser computes.
+
   **A dumped `innerHTML` loses every value React set as a *property*.** `<select value=…>` is the
   one that bites: React assigns the DOM property, serialisation writes only attributes, so the
   dump shows each select on its *first* option. Both leg pickers rendered "Fast" over intents that

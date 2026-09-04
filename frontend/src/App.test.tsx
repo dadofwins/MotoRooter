@@ -3429,3 +3429,133 @@ describe('App the rail header line', () => {
     expect(client.tripBlurb).toHaveBeenCalledTimes(1)
   })
 })
+
+describe('App the rail header line during a drag', () => {
+  /**
+   * The quota guarantee, tested by dragging.
+   *
+   * The version of this in the describe above places two points and asserts one call, and the
+   * integrator showed it green against `legs: shownLegs` — the exact mistake its own comment
+   * warned about. It never dragged, so `preview` was never populated and `shownLegs` and
+   * `legs` were the same array throughout: the test could not see the difference it existed
+   * to catch. This one lets a preview land, which is what makes them diverge.
+   */
+  /**
+   * Roughly how long a route through these points is.
+   *
+   * The fake router elsewhere in this file answers a constant `distance_m`, and that constant
+   * is why the first version of this test was still green against `legs: shownLegs`: a preview
+   * replaces the single leg with a rerouted single leg, so with a fixed distance the key over
+   * preview geometry is *identical* to the key over committed geometry and there is nothing to
+   * detect. A router that returns the same length however far you drag the line is not a
+   * router. Dragging a leg 50 km west has to make it longer, or this test cannot see the
+   * difference it exists to see.
+   */
+  function roughMetres(points: readonly Coordinate[]): number {
+    let total = 0
+    for (let index = 1; index < points.length; index++) {
+      const from = points[index - 1]
+      const to = points[index]
+      if (from === undefined || to === undefined) continue
+      const northing = (to.lat - from.lat) * 111_320
+      const easting = (to.lon - from.lon) * 111_320 * Math.cos((from.lat * Math.PI) / 180)
+      total += Math.hypot(northing, easting)
+    }
+    return total
+  }
+
+  async function draggableTripWithBlurb() {
+    const fake = createFakeMaps()
+    const router = {
+      ...fakeRouter(),
+      routeLeg: vi.fn((request: RouteLegInput, _options?: RequestOptions) =>
+        Promise.resolve({
+          leg: {
+            ...ROUTE_RESPONSE.leg,
+            geometry: [...request.waypoints],
+            distance_m: roughMetres(request.waypoints),
+            routed_from: { intent: request.intent, waypoints: [...request.waypoints] },
+          },
+          live_update_interval_ms: 0,
+          estimated_duration_s: 900,
+        }),
+      ),
+      ...stubUnbuilt(),
+      tripBlurb: vi.fn((_slug: string, _request: TripBlurbRequest, _options?: RequestOptions) =>
+        Promise.resolve({ blurb: 'Three days of dirt.' }),
+      ),
+    }
+
+    render(<App mapLoader={fake.loader} mapId="motorooter-test-vector" client={router} />)
+    await mapReady(fake)
+    fake.clickMap(47.6, -120.7)
+    fake.clickMap(48.1, -120.2)
+    await waitFor(() => {
+      expect(fake.polylines).toHaveLength(1)
+    })
+    await screen.findByText('Three days of dirt.')
+    return { fake, router }
+  }
+
+  it('spends nothing on a gesture in flight, however many previews land', async () => {
+    const { fake, router } = await draggableTripWithBlurb()
+    const map = fake.maps[0]
+    const asked = router.tripBlurb.mock.calls.length
+
+    act(() => {
+      fake.polylines[0]?.mouseDown({ lat: 47.9, lon: -120.4 })
+    })
+
+    /**
+     * Move, and wait for *that* move's preview to be drawn.
+     *
+     * The baseline is re-read before every move rather than captured once. Waiting on
+     * `> drawnBefore` after the second move is satisfied by the *first* preview, so the
+     * assertion ran before the second had landed and the test passed without ever seeing the
+     * state it was written to inspect — the same "same at both ends" fault this codebase has
+     * now hit five times. Drawn rather than requested, because it is the re-render that puts
+     * preview geometry in front of the hook.
+     */
+    const moveAndSettle = async (lon: number): Promise<void> => {
+      const drawn = fake.polylines.length
+      act(() => {
+        map?.mouseMove({ lat: 47.9, lon })
+      })
+      await waitFor(() => {
+        expect(fake.polylines.length).toBeGreaterThan(drawn)
+      })
+    }
+
+    // Two moves, far enough apart that the previewed route is materially longer than the
+    // committed one — 67 km committed against 71 km and 84 km previewed. The second crosses a
+    // distance bucket, so preview geometry reaching the key would be visible here.
+    await moveAndSettle(-120.6)
+    await moveAndSettle(-120.8)
+
+    // Mid-gesture: previews have landed and been drawn, and not one of them bought a line.
+    expect(router.tripBlurb).toHaveBeenCalledTimes(asked)
+  })
+
+  it('asks once when the drag commits, because then the trip really did change', async () => {
+    // The other half, and what stops the fix for the above being "never ask again". A release
+    // adds a via-point, which is a different trip and worth a line.
+    const { fake, router } = await draggableTripWithBlurb()
+    const map = fake.maps[0]
+    const asked = router.tripBlurb.mock.calls.length
+
+    act(() => {
+      fake.polylines[0]?.mouseDown({ lat: 47.9, lon: -120.4 })
+    })
+    act(() => {
+      map?.mouseMove({ lat: 47.9, lon: -120.6 })
+      map?.mouseUp({ lat: 47.9, lon: -121.0 })
+    })
+
+    await waitFor(() => {
+      expect(screen.getByText(/3 points placed/i)).toBeInTheDocument()
+    })
+    await waitFor(() => {
+      expect(router.tripBlurb).toHaveBeenCalledTimes(asked + 1)
+    })
+  })
+})

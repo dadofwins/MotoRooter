@@ -4,11 +4,19 @@
  * Two rules govern everything here, and both are about what this must *not* do.
  *
  * **Nothing waits on it.** It is a model call decorating a component the fast path renders
- * through, so it never blocks, never reports, and has no error state. A failure, a 501, a
- * null answer and a request still in flight all resolve to the same thing: no line, and the
- * caller keeps the static header. `null` is the documented answer for "nothing usable was
- * produced", so treating it as a failure would turn the endpoint's own fallback into an error
- * path — which is why there is one branch rather than a happy one and a catch.
+ * through, so it never blocks, never reports, and has no error state. Nothing a rider can see
+ * ever goes wrong; what they are looking at simply does not change.
+ *
+ * Two outcomes rather than one, and the distinction is deliberate. A *failure* — a 501, a
+ * dropped connection, a model that fell over — leaves whatever line is on screen alone,
+ * because that line is still about their trip and a header that empties on a bad connection
+ * is a rider watching something break. A *null answer* takes the line down, because null is
+ * the contract's way of saying there is nothing to say about the trip as it now is, and
+ * leaving the old line standing over a changed trip is the feature lying. So null is not
+ * routed through the catch: it is an answer, and treating it as a failure would both invert
+ * that and turn the endpoint's own fallback into an error path.
+ *
+ * With no line yet, the two coincide: the static header stands either way.
  *
  * **It is not regenerated on every edit.** A drag emits route updates continuously, and one
  * model call per update is exactly the quota failure the drag throttle exists to prevent,

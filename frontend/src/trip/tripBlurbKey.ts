@@ -52,6 +52,18 @@ export interface BlurbInput {
  */
 const DISTANCE_BUCKET_M = 10_000
 
+/**
+ * How many of something, as coarsely as a rider would say it.
+ *
+ * The boundaries are the ones ordinary speech uses, which is the same vocabulary the blurb
+ * itself reaches for. Anything finer would distinguish counts nobody describes differently.
+ */
+function howMany(count: number): string {
+  if (count === 1) return 'one'
+  if (count <= 4) return 'a few'
+  return 'many'
+}
+
 export function tripBlurbKey(trip: BlurbInput): string {
   // In order: a route ridden the other way round is a different ride, and a set would call
   // the two the same.
@@ -61,11 +73,28 @@ export function tripBlurbKey(trip: BlurbInput): string {
   // default never moves can still turn from dirt into tarmac one leg at a time.
   const modes = trip.legs.map((leg) => leg.intent).join(',')
 
-  // Sorted, because discovery promises no order and a re-run returning the same places
-  // shuffled is not a different trip. Categories rather than a count: five campgrounds
-  // swapped for five hotels is the same number and a different ride, and the kind of place
-  // on a route is most of what the line is about.
-  const kinds = [...trip.pois].map((poi) => poi.category).sort().join(',')
+  // How many of each kind, coarsely. Three properties have to hold at once, and only a
+  // bucket per category has all three:
+  //
+  //   - five campgrounds swapped for five hotels is a different ride, so a bare count is out;
+  //   - one campground becoming several is a different ride too — a live blurb read "a few
+  //     camps" off three places, so the count genuinely reaches the prose and a bare set of
+  //     categories would leave "a camp" standing over five;
+  //   - five camps and six camps is *not* a different ride, and this is the one that bites:
+  //     `ReplanEvent.pois` is cumulative per stage and `useReplan` takes places incrementally,
+  //     so one entry per POI is one model call per event the day discovery streams them. That
+  //     is a header rewriting itself through a two-minute replan.
+  //
+  // Buckets are the model's own vocabulary rather than a scale invented here — it says "a few
+  // camps", not "three camps" — so they cost no fidelity the line was using.
+  const counted = new Map<string, number>()
+  for (const poi of trip.pois) counted.set(poi.category, (counted.get(poi.category) ?? 0) + 1)
+  const kinds = [...counted]
+    // Sorted, because discovery promises no order and a re-run returning the same places
+    // shuffled is not a different trip.
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([category, count]) => `${category}:${howMany(count)}`)
+    .join(',')
 
   // From the legs rather than `total_distance_m`, which the coverage allowlist records as
   // deliberately unread — the rail recomputes from legs so its figure stays live during an

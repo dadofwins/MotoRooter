@@ -101,11 +101,53 @@ describe('tripBlurbKey', () => {
     expect(tripBlurbKey(hotels)).not.toBe(tripBlurbKey(camping))
   })
 
-  it('changes when a place is added', () => {
+  it('changes when one place of a kind becomes several', () => {
+    // The count does reach the prose — a live line read "26% unpaved and a few camps" off one
+    // campground and two wild camps — so "a camp" standing while there are five would be the
+    // same lie as a stale blurb.
     const one = tripWith({ pois: [poi('campground', 'a')] })
-    const two = tripWith({ pois: [poi('campground', 'a'), poi('campground', 'b')] })
+    const several = tripWith({
+      pois: [poi('campground', 'a'), poi('campground', 'b'), poi('campground', 'c')],
+    })
 
-    expect(tripBlurbKey(two)).not.toBe(tripBlurbKey(one))
+    expect(tripBlurbKey(several)).not.toBe(tripBlurbKey(one))
+  })
+
+  it('does not change between two counts a rider would describe the same way', () => {
+    // Five camps and six camps is not a different ride, and this is what stops the header
+    // churning while discovery streams places in one at a time.
+    const five = tripWith({ pois: ['a', 'b', 'c', 'd', 'e'].map((id) => poi('campground', id)) })
+    const six = tripWith({
+      pois: ['a', 'b', 'c', 'd', 'e', 'f'].map((id) => poi('campground', id)),
+    })
+
+    expect(tripBlurbKey(six)).toBe(tripBlurbKey(five))
+  })
+
+  it('does not churn while a replan streams places in one at a time', () => {
+    // Backend's measurement, kept as a test rather than a note. `ReplanEvent.pois` is
+    // documented as cumulative per stage and `useReplan` is built for incremental arrival, so
+    // the day discovery streams them, one entry per POI would be one model call per event —
+    // a header rewriting itself through a two-minute replan.
+    const categories = ['campground', 'hotel', 'fuel', 'food', 'viewpoint', 'wild_camp'] as const
+    const arriving = Array.from({ length: 80 }, (_, index) =>
+      poi(categories[index % categories.length] as Poi['category'], `poi-${String(index)}`),
+    )
+
+    const keysFor = (count: number): Set<string> =>
+      new Set(
+        arriving
+          .slice(0, count)
+          .map((_, index) => tripBlurbKey(tripWith({ pois: arriving.slice(0, index + 1) }))),
+      )
+
+    // One entry per POI gives one key per arrival. Measured at 40 before this changed.
+    expect(keysFor(40).size).toBeLessThan(20)
+
+    // The property, rather than a figure to tune: doubling how many places arrive does not
+    // produce more regenerations. The ceiling is the number of *kinds* on the route times the
+    // buckets, so it is bounded by the vocabulary rather than by discovery's output.
+    expect(keysFor(80).size).toBe(keysFor(40).size)
   })
 
   it('does not change when the same places are listed in a different order', () => {
